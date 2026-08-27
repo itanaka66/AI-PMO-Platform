@@ -1,0 +1,34 @@
+# 名前付きクエリ / named queries.
+# テンプレートはここに定義された名前しか呼べない。生 SQL は渡せない。
+# Templates may only call names defined here; they cannot pass raw SQL.
+
+consent_level_by_tenant: |
+  SELECT level FROM tenant_consent WHERE tenant = :tenant
+
+overdue_tasks: |
+  SELECT id, summary, assignee, due_date
+  FROM tasks
+  WHERE tenant = :tenant AND due_date < :as_of AND status <> 'Done'
+  ORDER BY due_date
+
+pending_candidates: |
+  SELECT id, pattern_name, publicability_score, created_at
+  FROM knowledge_candidates
+  WHERE tenant = :tenant AND review_status = 'pending'
+  ORDER BY publicability_score DESC NULLS LAST
+
+record_run: |
+  INSERT INTO runs (id, tenant, template, trigger, status, started_at, idempotency_key)
+  VALUES (:id, :tenant, :template, :trigger, :status, :started_at, :idempotency_key)
+  ON CONFLICT (idempotency_key) DO NOTHING
+  RETURNING id
+
+save_candidate: |
+  INSERT INTO knowledge_candidates
+    (id, tenant, knowledge_level, category, pattern_name, body,
+     publicability_score, source_key)
+  VALUES
+    (:id, :tenant, :knowledge_level, :category, :pattern_name, :body,
+     :publicability_score, :idempotency_key)
+  ON CONFLICT (source_key) DO NOTHING
+  RETURNING id

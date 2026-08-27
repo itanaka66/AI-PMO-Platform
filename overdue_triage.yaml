@@ -1,0 +1,54 @@
+name: overdue_triage
+version: "1"
+industry: software
+description: |
+  遅延タスクを調べ、状況をまとめて報告する。
+  何を見るかは決め打ちせず、エージェントに判断させる。
+
+trigger: "schedule:0 9 * * MON-FRI"
+
+params:
+  jira_project: PROJ
+  slack_channel: "#project-updates"
+
+steps:
+  # 調査はエージェントに任せる。どのタスクを深掘りするかは
+  # 実際のデータを見ないと決まらないため。
+  # The investigation is the agent's: which tasks deserve attention cannot be
+  # decided without looking at the data.
+  - id: investigate
+    agent:
+      tools:
+        - jira.find_overdue
+      # 読むだけ。課題の起票も通知も、この工程では許さない。
+      # Read-only: neither creating issues nor notifying is permitted here.
+      allow_writes: false
+      max_iterations: 5
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt_inline: |
+      あなたは PMO 担当です。プロジェクト {{ params.jira_project }} の
+      遅延状況を調べ、報告してください。本日は {{ run.date }} です。
+
+      道具を使って実際のデータを確認してから答えてください。
+      推測で書かないこと。データに無いことは「不明」としてください。
+
+      報告に含めること:
+      - 遅延している件数
+      - 特に注意が要るもの（期限からの経過が長い、担当者が偏っている等）
+      - 分かった範囲での原因の見立て
+
+  # 通知は決め打ちの工程にする。何を送るかはエージェントが決めたが、
+  # 送るかどうかはテンプレートが決める。
+  # Sending is a fixed step: the agent decided what to say, the template
+  # decides whether it goes out.
+  - id: notify
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        遅延状況 ({{ run.date }})
+
+        {{ steps.investigate.output.answer }}

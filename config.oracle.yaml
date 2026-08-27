@@ -1,0 +1,42 @@
+# Oracle Always Free + Aiven PostgreSQL 構成
+# Oracle Always Free + Aiven PostgreSQL deployment
+
+tenant: my_company
+lang: ja
+
+llm:
+  # クラウド AI。base_url を書き換えれば自前の推論サーバーにも向けられる。
+  # Cloud AI. Point base_url at your own inference server to move it in-house.
+  default:
+    provider: openai
+    model: gpt-4o-mini
+  fast:
+    provider: openai
+    model: gpt-4o-mini
+
+prompts_dir: prompts
+
+web:
+  # Caddy が前段にいるので、待ち受けはコンテナ内部だけでよい。
+  # Caddy sits in front, so this only needs to listen inside the container.
+  host: 0.0.0.0
+  port: 8765
+  templates_dir: templates
+
+adapters:
+  mode: mock
+  postgres:
+    # DSN は .env から環境変数で渡す。config には資格情報を書かない。
+    # The DSN arrives from .env; no credentials live in this file.
+    dsn: ${AIPMO_PG_DSN}
+    queries_file: queries.yaml
+    # アイドル停止からの復帰を待つ / wait out a cold start after idle power-off
+    connect_attempts: 4
+    connect_backoff: 3.0
+  qdrant:
+    url: http://qdrant:6333
+    public_collection: public_pmo_knowledge
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimension: 1536

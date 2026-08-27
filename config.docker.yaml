@@ -1,0 +1,30 @@
+# Docker 版 / Docker build
+# ローカル LLM を既定にする。会議 Transcript は機微情報を含むため、
+# 外部に出さない構成を既定とする。
+# Local LLM by default. Meeting transcripts contain sensitive material,
+# so the default posture keeps them inside the network.
+
+tenant: company_a
+
+llm:
+  default:
+    provider: ollama
+    model: qwen2.5:14b
+  fast:
+    provider: ollama
+    model: qwen2.5:7b
+
+prompts_dir: prompts
+
+adapters:
+  mode: mock          # Step 2 で real に切替 / switch to real in Step 2
+  postgres:
+    dsn: postgresql://aipmo:aipmo@postgres:5432/aipmo
+    queries_file: queries.yaml
+  qdrant:
+    url: http://qdrant:6333
+    public_collection: public_pmo_knowledge
+    embedding:
+      provider: ollama
+      model: bge-m3
+      dimension: 1024

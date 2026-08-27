@@ -1,0 +1,71 @@
+name: meeting_minutes
+version: "1"
+industry: software
+description: |
+  Teams 会議の Transcript から議事録と TODO を生成し、
+  Jira に登録して Slack に要約を投稿する。
+
+trigger: "event:teams:meeting_ended"
+
+params:
+  jira_project: PROJ
+  slack_channel: "#project-updates"
+  min_todo_confidence: 0.6
+
+steps:
+  - id: fetch_transcript
+    adapter: teams
+    action: get_transcript
+    inputs:
+      meeting_id: "{{ trigger.meeting_id }}"
+    retry:
+      max_attempts: 3
+      backoff_seconds: 5
+
+  - id: minutes
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt: minutes_ja
+    inputs:
+      transcript: "{{ steps.fetch_transcript.output.text }}"
+      participants: "{{ steps.fetch_transcript.output.participants }}"
+      date: "{{ run.date }}"
+    output_format: json
+    output_schema:
+      required: [title, decisions, action_items]
+
+  - id: todos
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: todo_extract_ja
+    inputs:
+      action_items: "{{ steps.minutes.output.action_items }}"
+      participants: "{{ steps.fetch_transcript.output.participants }}"
+      today: "{{ run.date }}"
+    output_format: json
+    output_schema:
+      required: [items]
+
+  - id: register_jira
+    adapter: jira
+    action: create_issues
+    when: "{{ steps.todos.output.items }}"
+    inputs:
+      project: "{{ params.jira_project }}"
+      issues: "{{ steps.todos.output.items }}"
+
+  - id: notify
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        *{{ steps.minutes.output.title }}* ({{ run.date }})
+
+        決定事項:
+        {{ steps.minutes.output.decisions }}
+
+        起票した課題: {{ steps.register_jira.output.count }} 件

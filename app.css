@@ -1,0 +1,341 @@
+/* AI-PMO — スマホ向け画面 / mobile interface
+ *
+ * 視覚の出発点は製図図面。WBS もガントも工程表も、元をたどれば図面の記法。
+ * 等幅書体を構造の声にし、散文だけをサンセリフにしている。
+ * 識別子・時刻・工程名は等幅で、注記のように並ぶ。
+ *
+ * The visual reference is a drafting sheet: WBS charts, gantt bars and
+ * schedules all descend from drawing notation. Monospace carries the
+ * structure — identifiers, times, step names read as annotations — and the
+ * sans face is reserved for prose.
+ */
+
+:root {
+  --ground: #edf0f3;
+  --surface: #ffffff;
+  --ink: #17222c;
+  --muted: #5b6c79;
+  --rule: #c7d2da;
+  --accent: #1f5f8b;
+
+  --ok: #2e6b4f;
+  --fail: #a8322a;
+  --warn: #8a6100;
+  --skip: #8494a0;
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo,
+          Consolas, "Noto Sans Mono CJK JP", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", "Noto Sans JP", sans-serif;
+
+  --gap: 16px;
+  --tap: 44px;   /* 指で押せる最小寸法 / minimum comfortable tap target */
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* 図面の方眼 / the drafting grid */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(31, 95, 139, .05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(31, 95, 139, .05) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ---------- 見出し / header ---------- */
+
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  padding: 12px var(--gap);
+  padding-top: max(12px, env(safe-area-inset-top));
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.wordmark {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: .06em;
+}
+
+.tenant {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--skip);
+  align-self: center;
+}
+.pulse[data-state="ok"]   { background: var(--ok); }
+.pulse[data-state="down"] { background: var(--fail); }
+
+/* ---------- 版面 / layout ---------- */
+
+main {
+  position: relative;
+  padding: var(--gap);
+  padding-bottom: max(var(--gap), env(safe-area-inset-bottom));
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+h2 {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 28px 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+}
+h2:first-of-type { margin-top: 4px; }
+
+/* ---------- テンプレート / templates ---------- */
+
+.card {
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.card:active { background: #f5f8fa; }
+.card[disabled] { opacity: .55; cursor: default; }
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.card-name {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  padding: 1px 5px;
+}
+
+.card-note {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.card-note.error { color: var(--fail); font-family: var(--mono); font-size: 12px; }
+
+/* ---------- 工程バー / the step bar ----------
+ * この画面の中心。各実行の工程を、所要時間に比例した帯として並べる。
+ * 工程表そのものの記法なので、説明なしで読める。
+ * The centre of the screen: each run's steps as segments proportional to
+ * their duration — the notation of a schedule, legible without a legend.
+ */
+
+.spine {
+  position: relative;
+  padding-left: 18px;
+}
+.spine::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--rule);
+}
+
+.run {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  margin-bottom: 8px;
+}
+.run::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 18px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+}
+.run[data-status="success"]::before { border-color: var(--ok);   background: var(--ok); }
+.run[data-status="failed"]::before  { border-color: var(--fail); background: var(--fail); }
+
+.run-summary {
+  display: block;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 12px 14px;
+  background: none;
+  border: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.run-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.run-name { color: var(--ink); font-size: 13px; font-weight: 600; }
+.run-time { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+.bar {
+  display: flex;
+  height: 10px;
+  gap: 1px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--ground);
+}
+.seg { min-width: 3px; }
+.seg[data-status="success"] { background: var(--ok); }
+.seg[data-status="failed"]  { background: var(--fail); }
+.seg[data-status="skipped"] {
+  /* 実行されなかった工程は、図面の破線と同じ扱いにする
+     Skipped work reads as a dashed run on a drawing. */
+  background: repeating-linear-gradient(
+    45deg, var(--skip) 0 2px, transparent 2px 4px);
+}
+
+.steps {
+  border-top: 1px solid var(--rule);
+  padding: 4px 14px 12px;
+  margin: 0;
+  list-style: none;
+}
+.steps li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 5px 0;
+  border-bottom: 1px dotted var(--rule);
+}
+.steps li:last-child { border-bottom: 0; }
+.steps .dur { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.steps .mark { width: 1em; text-align: center; }
+.steps [data-status="success"] .mark { color: var(--ok); }
+.steps [data-status="failed"]  .mark { color: var(--fail); }
+.steps [data-status="skipped"] .mark { color: var(--skip); }
+.step-error { color: var(--fail); font-size: 11px; padding: 4px 0 0 1.5em; }
+
+/* ---------- 状態 / states ---------- */
+
+.empty {
+  border: 1px dashed var(--rule);
+  border-radius: 3px;
+  padding: 22px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.toast {
+  position: fixed;
+  left: var(--gap);
+  right: var(--gap);
+  bottom: max(var(--gap), env(safe-area-inset-bottom));
+  background: var(--ink);
+  color: var(--surface);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 12px 14px;
+  border-radius: 3px;
+  z-index: 20;
+}
+.toast[data-kind="error"] { background: var(--fail); }
+.toast[hidden] { display: none; }
+
+.busy {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: spin .7s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- 品質の下限 / quality floor ---------- */
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #121a21;
+    --surface: #1a242d;
+    --ink: #e3eaef;
+    --muted: #93a4b1;
+    --rule: #2f3f4c;
+    --accent: #6aa9d4;
+    --ok: #5fa87f;
+    --fail: #d97066;
+    --warn: #c79a4a;
+    --skip: #6b7c88;
+  }
+  .card:active { background: #22303a; }
+}

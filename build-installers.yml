@@ -1,0 +1,62 @@
+name: Build installers
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $env:PATH += ";${env:ProgramFiles(x86)}\Inno Setup 6"
+          .\installer\build.ps1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/*.exe
+
+  unix-smoke-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run the installer
+        # stdin を閉じてウィザードを飛ばす / close stdin so the wizard is skipped
+        run: bash scripts/install.sh < /dev/null
+
+      - name: Verify the installed command works
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          cd "$HOME/.local/share/ai-pmo"
+          printf 'tenant: ci\nllm:\n  default:\n    provider: echo\nprompts_dir: prompts\nadapters:\n  mode: mock\n' > config.yaml
+          aipmo validate templates/examples/meeting_minutes.yaml
+          aipmo adapters
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q

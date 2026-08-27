@@ -1,0 +1,91 @@
+# Oracle Cloud Always Free (Ampere A1, arm64) 向け構成
+# Deployment for Oracle Cloud Always Free (Ampere A1, arm64)
+#
+# 前提 / Assumptions:
+#   - Always Free 枠は 2 OCPU / 12GB（2026年6月15日に半減）
+#     The Always Free allowance is 2 OCPU / 12GB since 15 June 2026.
+#   - PostgreSQL は Aiven の無料プラン（外部・1GB・アイドルで停止）
+#     PostgreSQL is Aiven's free plan: external, 1GB, powered off while idle.
+#   - AI はクラウドまたは別途用意した推論サーバー
+#     The AI runs in the cloud or on an inference server you provide.
+#
+# ここに Ollama は入れない / There is deliberately no Ollama service here.
+#   12GB・GPU なしの ARM で 7B 量子化モデルは 5-8 tok/s 程度。
+#   1時間の会議 Transcript は数万トークンあるので、議事録1本に数十分かかる。
+#   実用にならないので、この構成では最初から外す。
+#   On 12GB of GPU-less ARM a quantised 7B model runs at roughly 5-8 tok/s.
+#   An hour of meeting transcript is tens of thousands of tokens, so a single
+#   set of minutes would take tens of minutes. It is not viable, so it is not
+#   offered here.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    depends_on:
+      - aipmo
+    restart: unless-stopped
+    # TLS はここで終端する。アプリ側は TLS を持たない。
+    # TLS terminates here; the application does not implement it.
+    deploy:
+      resources:
+        limits: { memory: 256M }
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # ベクトル検索はメモリを食う。上限を切らないと、
+    # 12GB しかない機械で OOM Killer が別のサービスを落としに来る。
+    # Vector search is memory-hungry. Without a ceiling the OOM killer on a
+    # 12GB machine will pick a victim, and it will not be this one.
+    deploy:
+      resources:
+        limits: { memory: 3G }
+
+  aipmo:
+    build:
+      context: ../..
+      dockerfile: deploy/oracle/Dockerfile
+    env_file: .env
+    environment:
+      AIPMO_CONFIG: /app/config.yaml
+      AIPMO_WEB_TOKEN: ${AIPMO_WEB_TOKEN:?set AIPMO_WEB_TOKEN in .env}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
+    volumes:
+      - ../../templates:/app/templates:ro
+      - ../../prompts:/app/prompts:ro
+      - ./config.oracle.yaml:/app/config.yaml:ro
+      - ./aiven-ca.pem:/app/aiven-ca.pem:ro
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    # 公開はしない。Caddy 経由でのみ届く。
+    # Not published: reachable only through Caddy.
+    expose:
+      - "8765"
+    command: ["serve", "--host", "0.0.0.0", "--port", "8765"]
+    deploy:
+      resources:
+        limits: { memory: 2G }
+
+volumes:
+  caddy_data:
+  caddy_config:
+  qdrant_data:
