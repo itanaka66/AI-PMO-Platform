@@ -96,6 +96,8 @@ aipmo validate templates/examples/meeting_minutes.yaml
 OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件
 ```
 
+`ステップ 5 件` 은 “5단계”라는 뜻입니다. 도구의 출력은 일본어입니다.
+
 ---
 
 ## 템플릿이란
@@ -131,6 +133,8 @@ aipmo validate <파일>   # 템플릿에 잘못이 없는지 확인
 aipmo run <파일>        # 실행
 aipmo adapters    # 연결된 외부 도구 목록
 aipmo doctor      # 연결이 되는지 확인
+aipmo serve       # 휴대폰용 화면 열기
+aipmo schedule    # 정해진 시각의 자동 실행 시작
 ```
 
 ---
@@ -181,5 +185,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 - [JIRA-SLACK.md](../JIRA-SLACK.md) — Jira 등록과 Slack 알림
 - [SCHEDULER.md](../SCHEDULER.md) — 정해진 시각에 자동으로 실행하기
 - [AGILE.md](../AGILE.md) — 스프린트 상황 보고하기
+- [INDUSTRIES.md](../INDUSTRIES.md) — 건설·마케팅 등 업종별 활용
 - [README.md](../../README.md) — 구조와 설계 (개발자용)
 - `templates/examples/` — 템플릿 실제 예

@@ -97,6 +97,8 @@ This means it worked:
 OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件
 ```
 
+The `ステップ 5 件` part means “5 steps”; the tool's output is in Japanese.
+
 ---
 
 ## What a template is
@@ -132,6 +134,8 @@ aipmo validate <file>   # check a template for mistakes
 aipmo run <file>        # run it
 aipmo adapters    # list the connected tools
 aipmo doctor      # check that connections work
+aipmo serve       # open the interface for your phone
+aipmo schedule    # start running things on a schedule
 ```
 
 ---
@@ -182,5 +186,6 @@ More detail is in [INSTALL.md](../../INSTALL.md).
 - [JIRA-SLACK.md](../JIRA-SLACK.md) — filing issues in Jira, notifying in Slack
 - [SCHEDULER.md](../SCHEDULER.md) — running things automatically on a schedule
 - [AGILE.md](../AGILE.md) — reporting on sprints
+- [INDUSTRIES.md](../INDUSTRIES.md) — construction, marketing and other fields
 - [README.md](../../README.md) — how it works, for developers
 - `templates/examples/` — worked template examples

@@ -1,0 +1,117 @@
+name: construction_site_meeting
+version: "1"
+industry: construction
+description: |
+  工程会議の記録から議事録と是正事項を作る。
+  安全に関わる指摘は、日次のまとめとは別に、その場で知らせる。
+
+trigger: "event:teams:meeting_ended"
+
+params:
+  organiser: ""
+  jira_project: SITE
+  # 工程・共有用 / for progress and general sharing
+  site_channel: "#site-updates"
+  # 安全用。まとめ通知と混ぜない。
+  # Safety only; never mixed into the digest.
+  safety_channel: "#safety"
+
+steps:
+  - id: meeting
+    adapter: teams
+    action: find_meeting
+    inputs:
+      join_url: "{{ trigger.join_url }}"
+      organiser_id: "{{ params.organiser }}"
+
+  - id: transcript
+    adapter: teams
+    action: get_transcript
+    inputs:
+      meeting_id: "{{ steps.meeting.output.meeting_id }}"
+      organiser_id: "{{ params.organiser }}"
+      wait_seconds: 300
+
+  - id: minutes
+    when: "{{ steps.transcript.output.utterance_count }} > 0"
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt: minutes_construction_ja
+    inputs:
+      transcript: "{{ steps.transcript.output.text }}"
+      participants: "{{ steps.transcript.output.participants }}"
+      date: "{{ run.date }}"
+    output_format: json
+    output_schema:
+      required: [title, safety_items, safety_lines, corrections]
+
+  # 安全事項は、いちばん先に、単独で送る。
+  #
+  # 「本日の議事録」の見出しの下に他の報告と並べて書くと、流し読みで飛ばされます。
+  # 工程の遅れは明日取り戻せますが、けがは取り戻せません。
+  # 順番と宛先を、その差のとおりに変えています。
+  #
+  # Safety goes first and alone. Placed under a "today's minutes" heading among
+  # other items it gets skimmed past. A schedule slip can be made up tomorrow;
+  # an injury cannot. The ordering and the destination reflect that difference.
+  - id: safety_alert
+    when: "{{ steps.minutes.output.safety_items }}"
+    for_each: "{{ steps.minutes.output.safety_items }}"
+    as: item
+    where: "{{ item.urgency }} == 'immediate'"
+    max_items: 20
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.safety_channel }}"
+      text: |
+        【安全】{{ run.date }} の工程会議より
+
+        {{ item.description }}
+
+        場所: {{ item.location }}
+        指摘者: {{ item.raised_by }}
+
+        現地の状況を確認してください。
+
+  # 予定して直すものは、まとめて1通にする。
+  # Items that can be scheduled are batched into one message.
+  - id: safety_digest
+    when: "{{ steps.minutes.output.safety_items }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.safety_channel }}"
+      text: |
+        安全に関する指摘一覧 ({{ run.date }})
+
+        {{ steps.minutes.output.safety_lines }}
+
+  - id: register_corrections
+    when: "{{ steps.minutes.output.corrections }}"
+    adapter: jira
+    action: create_issues
+    inputs:
+      project: "{{ params.jira_project }}"
+      issues: "{{ steps.minutes.output.corrections }}"
+
+  - id: share_progress
+    when: "{{ steps.minutes.output.title }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.site_channel }}"
+      text: |
+        *{{ steps.minutes.output.title }}* ({{ run.date }})
+
+        進捗:
+        {{ steps.minutes.output.progress }}
+
+        決定事項:
+        {{ steps.minutes.output.decisions }}
+
+        天候の影響: {{ steps.minutes.output.weather_impact }}

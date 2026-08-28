@@ -75,3 +75,99 @@ def test_index_lists_every_language():
     index = (GUIDE_DIR / "README.md").read_text(encoding="utf-8")
     for lang in CATALOG:
         assert f"{lang}.md" in index, f"索引に {lang} がありません"
+
+
+# --- 記述が実装とずれていないか / documentation against the implementation ---
+
+ROOT = GUIDE_DIR.parents[1]
+
+
+def test_documented_commands_exist():
+    """ガイドに載っているコマンドが、実際に存在すること。
+
+    無いコマンドを案内されると、そこで手が止まる。
+    A command that does not exist stops the reader dead.
+    """
+    import re
+
+    from aipmo import cli
+
+    parser_source = Path(cli.__file__).read_text(encoding="utf-8")
+    available = set(re.findall(r'sub\.add_parser\(\s*"(\w+)"', parser_source))
+
+    documented = set(re.findall(r"^aipmo (\w+)", guide("ja").read_text(encoding="utf-8"),
+                                re.M))
+    assert documented, "ガイドにコマンドの記載がありません"
+    assert documented <= available, f"存在しないコマンド: {documented - available}"
+
+
+def test_every_command_is_documented_somewhere():
+    """実装したのに案内していないコマンドを残さない。
+
+    serve と schedule が8言語すべてで抜けていたことがある。
+    Both `serve` and `schedule` were once missing from all eight guides.
+    """
+    import re
+
+    from aipmo import cli
+
+    parser_source = Path(cli.__file__).read_text(encoding="utf-8")
+    available = set(re.findall(r'sub\.add_parser\(\s*"(\w+)"', parser_source))
+
+    text = "\n".join(
+        (ROOT / name).read_text(encoding="utf-8")
+        for name in ("README.md", "INSTALL.md")
+    ) + guide("ja").read_text(encoding="utf-8")
+
+    missing = {name for name in available if f"aipmo {name}" not in text}
+    assert not missing, f"案内されていないコマンド: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("path", sorted((ROOT / "docs").rglob("*.md"))
+                         + [ROOT / "README.md", ROOT / "INSTALL.md"],
+                         ids=lambda p: p.stem)
+def test_internal_links_resolve(path):
+    """壊れた案内ほど質の悪いものはない。"""
+    import re
+
+    for target in re.findall(r"\]\(([^)#]+)\)", path.read_text(encoding="utf-8")):
+        if target.startswith(("http", "mailto")):
+            continue
+        assert (path.parent / target).resolve().exists(), \
+            f"{path.name} のリンク切れ: {target}"
+
+
+def test_every_shipped_template_is_listed_in_the_readme():
+    """作ったのに案内していないテンプレートを残さない。"""
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for template in (ROOT / "templates").rglob("*.yaml"):
+        assert template.stem in readme, f"README に無い: {template.stem}"
+
+
+def test_every_documentation_file_is_linked_from_the_readme():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    for doc in (ROOT / "docs").glob("*.md"):
+        assert doc.name in readme, f"README から辿れない: {doc.name}"
+
+
+def test_the_documented_test_count_matches_reality():
+    """数字を手で書くと必ずずれる。実際に一度ずれた。
+
+    Hand-written counts drift; this one already had.
+    """
+    import re
+
+    collected = sum(
+        len(re.findall(r"^def test_", path.read_text(encoding="utf-8"), re.M))
+        for path in (ROOT / "tests").glob("test_*.py")
+    )
+
+    for name in ("README.md", "MANIFEST.md"):
+        for stated in re.findall(r"(\d{3}) ?(?:件|tests)", 
+                                 (ROOT / name).read_text(encoding="utf-8")):
+            # パラメータ化で実数は増えるので、下回っていないことだけ見る。
+            # Parametrisation inflates the real number, so only the floor is checked.
+            assert int(stated) >= collected * 0.5, (
+                f"{name} の記載 {stated} 件が、定義済みテスト {collected} 件と"
+                f"大きく食い違っています"
+            )

@@ -22,6 +22,8 @@ from aipmo.llm.registry import LLMRegistry
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "templates" / "examples"
+INDUSTRIES = ROOT / "templates" / "industries"
+ALL_TEMPLATES = sorted((ROOT / "templates").rglob("*.yaml"))
 
 
 class Scripted(EchoProvider):
@@ -62,14 +64,12 @@ def build(replies=()):
 
 # --- 全テンプレート共通 / every shipped template ---------------------------
 
-@pytest.mark.parametrize("path", sorted(TEMPLATES.glob("*.yaml")),
-                         ids=lambda p: p.stem)
+@pytest.mark.parametrize("path", ALL_TEMPLATES, ids=lambda p: p.stem)
 def test_every_shipped_template_loads(path):
     loader.load_file(path)
 
 
-@pytest.mark.parametrize("path", sorted(TEMPLATES.glob("*.yaml")),
-                         ids=lambda p: p.stem)
+@pytest.mark.parametrize("path", ALL_TEMPLATES, ids=lambda p: p.stem)
 def test_referenced_prompts_exist(path):
     """プロンプト名の打ち間違いは、実行するまで気づけない。"""
     library = PromptLibrary(ROOT / "prompts")
@@ -451,3 +451,173 @@ def test_no_estimates_at_all_prompts_a_configuration_check():
     """
     _, slack = run_sprint(reply=HEALTHY_REPLY, points_total=None)
     assert any("項目" in m["text"] for m in slack.posted)
+
+
+# --- 業界別 / industry templates --------------------------------------------
+
+@pytest.mark.parametrize("path", ALL_TEMPLATES, ids=lambda p: p.stem)
+def test_every_template_declares_its_industry(path):
+    """業界が分からないと、どれを使えばよいか選べない。"""
+    assert loader.load_file(path).industry
+
+
+# --- 建設 / construction ----------------------------------------------------
+
+CONSTRUCTION_REPLY = json.dumps({
+    "title": "C工区 工程会議",
+    "summary": "躯体工事の進捗を確認",
+    "progress": ["3階躯体 出来高 60%"],
+    "decisions": ["4階の型枠に着手"],
+    "safety_lines": ["[即時] 4階north — 足場の手すり欠落（鈴木）",
+                     "[予定] 1階 — 資材置場の通路が狭い（田中）"],
+    "safety_items": [
+        {"description": "足場の手すり欠落", "location": "4階north",
+         "raised_by": "鈴木", "urgency": "immediate"},
+        {"description": "通路が狭い", "location": "1階",
+         "raised_by": "田中", "urgency": "scheduled"},
+    ],
+    "corrections": [{"assignee": "鈴木", "task": "足場手すりの是正",
+                     "due_hint": "本日中"}],
+    "weather_impact": "金曜は降雨予報",
+    "open_questions": [],
+}, ensure_ascii=False)
+
+SAFE_REPLY = json.dumps({
+    "title": "C工区 工程会議", "summary": "確認", "progress": [],
+    "decisions": [], "safety_lines": [], "safety_items": [],
+    "corrections": [], "weather_impact": None, "open_questions": [],
+}, ensure_ascii=False)
+
+
+def run_site_meeting(reply=CONSTRUCTION_REPLY):
+    adapters = AdapterRegistry()
+    adapters.register(FakeTeams())
+    jira, slack = MockJiraAdapter(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "construction" / "site_meeting.yaml"),
+        params={"organiser": "t@example.com"},
+        trigger={"join_url": "https://teams.microsoft.com/l/x"})
+    return ctx, jira, slack
+
+
+def test_urgent_safety_goes_to_the_safety_channel_on_its_own():
+    """工程の遅れは明日取り戻せるが、けがは取り戻せない。
+
+    ほかの報告に混ぜると流し読みで飛ばされるので、単独で送る。
+    A schedule slip can be made up tomorrow; an injury cannot. Mixed in with
+    other items it gets skimmed past, so it is sent alone.
+    """
+    _, _, slack = run_site_meeting()
+    urgent = [m for m in slack.posted if "【安全】" in m["text"]]
+
+    assert len(urgent) == 1
+    assert urgent[0]["channel"] == "#safety"
+    assert "足場の手すり欠落" in urgent[0]["text"]
+
+
+def test_only_immediate_items_raise_an_alert():
+    """予定して直すものまで即時通知にすると、即時の重みが失われる。"""
+    _, _, slack = run_site_meeting()
+    urgent = [m for m in slack.posted if "【安全】" in m["text"]]
+
+    assert "通路が狭い" not in urgent[0]["text"]
+
+
+def test_safety_never_goes_to_the_progress_channel():
+    _, _, slack = run_site_meeting()
+    progress = [m for m in slack.posted if m["channel"] == "#site-updates"]
+
+    assert progress
+    assert all("足場" not in m["text"] for m in progress)
+
+
+def test_the_safety_digest_is_readable_not_json():
+    """現場で読まれるもの。生の JSON を貼らない。"""
+    _, _, slack = run_site_meeting()
+    digest = [m for m in slack.posted if "指摘一覧" in m["text"]][0]
+
+    assert "[即時] 4階north" in digest["text"]
+    assert '{"' not in digest["text"]
+
+
+def test_corrections_become_issues():
+    _, jira, _ = run_site_meeting()
+    assert jira.created[0]["assignee"] == "鈴木"
+
+
+def test_a_meeting_without_safety_items_raises_no_alert():
+    """指摘が無いのに安全チャンネルへ送らない。"""
+    _, _, slack = run_site_meeting(reply=SAFE_REPLY)
+    assert [m for m in slack.posted if m["channel"] == "#safety"] == []
+
+
+# --- マーケティング / marketing ---------------------------------------------
+
+CAMPAIGN_REPLY = json.dumps({
+    "assessment": "注意",
+    "headline": "承認待ちが3件たまっています。",
+    "blocked_by_approval": [
+        {"item": "MKT-12", "waiting_days": 6, "who_to_ask": "法務"},
+    ],
+    "at_risk": ["MKT-12 のバナー差し替え"],
+    "concerns": [],
+}, ensure_ascii=False)
+
+HEALTHY_CAMPAIGN = json.dumps({
+    "assessment": "順調", "headline": "予定どおりです。",
+    "blocked_by_approval": [], "at_risk": [], "concerns": [],
+}, ensure_ascii=False)
+
+
+class SearchingJira(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [{"key": "MKT-12", "summary": "バナー差し替え"}],
+                "count": 1}
+
+
+SearchingJira.search = action()(SearchingJira.search)
+
+
+def run_campaign(reply=CAMPAIGN_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJira(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "marketing" / "campaign_check.yaml"))
+    return ctx, slack
+
+
+def test_days_to_launch_are_counted_not_left_to_the_model():
+    """日付だけ渡すと、モデルが自分で数えることになる。"""
+    ctx, _ = run_campaign()
+    assert isinstance(ctx.results["days_left"].output, int)
+
+
+def test_approval_waits_are_reported_separately_from_late_work():
+    """遅れている作業は担当者に聞けば動くが、承認待ちは動かない。
+    同じ文面で送ると、動かせない人を責めることになる。
+
+    Chasing the assignee cannot move an approval, and the wording used for late
+    work would be blaming someone with no means to act.
+    """
+    _, slack = run_campaign()
+    approval = [m for m in slack.posted if "承認待ち" in m["text"]]
+
+    assert approval
+    assert "作業側は手を離れています" in approval[0]["text"]
+
+
+def test_a_healthy_campaign_says_nothing():
+    _, slack = run_campaign(reply=HEALTHY_CAMPAIGN)
+    assert slack.posted == []

@@ -20,14 +20,26 @@ Written for people who are not comfortable with a terminal. Pick one.
 3. 画面の指示に従う / follow the prompts
 
 管理者権限は不要です。インストール後にセットアップ画面が開くので、
-OpenAI の API キーを貼り付けてください。
+AI の提供元を選んで API キーを貼り付けてください。
 
-No administrator rights required. A setup screen opens afterwards; paste your
-OpenAI API key into it.
+No administrator rights required. A setup screen opens afterwards; choose an AI
+provider and paste your API key into it.
 
 **API キーの取得 / Getting an API key**
-https://platform.openai.com/api-keys で作成できます。`sk-` で始まる文字列です。
-Create one at the link above; it starts with `sk-`.
+選んだ提供元のサイトで作成します。迷ったら OpenAI で構いません。
+Create one with the provider you chose; OpenAI is a fine default.
+
+- OpenAI — https://platform.openai.com/api-keys
+- Gemini — https://aistudio.google.com
+- Groq — https://console.groq.com/keys
+- OpenRouter — https://openrouter.ai/keys
+
+提供元ごとの違いは [docs/PROVIDERS.md](docs/PROVIDERS.md) にあります。
+Groq と OpenRouter には埋め込み API が無いため、ベクトル検索を使う場合は
+鍵が2つ要ります。ウィザードがその場で知らせます。
+
+Groq and OpenRouter have no embeddings API, so vector search needs a second
+key; the wizard says so at the time.
 
 ### インストーラを自分でビルドする / Building the installer yourself
 
@@ -118,15 +130,22 @@ aipmo setup
 聞かれること / What it asks:
 
 1. **AI をどこで動かすか / where the AI runs** — クラウドかローカルか
-2. **API キー / API key** — クラウドを選んだ場合のみ / cloud only
-3. **組織名 / organization name** — データの保管先を分ける識別子。
+2. **提供元 / provider** — OpenAI / Gemini / Groq / OpenRouter（クラウドの場合）
+3. **API キー / API key** — クラウドを選んだ場合のみ / cloud only
+4. **組織名 / organization name** — データの保管先を分ける識別子。
    英小文字・数字・アンダースコアのみ /
    an identifier that separates where your data is stored; lowercase, digits and
    underscore only
-4. **データベース連携 / data layer** — 分からなければ N で構いません /
+5. **データベース連携 / data layer** — 分からなければ N で構いません /
    answer N if you are unsure
 
-API キーは `config.yaml` ではなく `.env` に保存され、本人しか読めない権限に
+ウィザードは画面の言語に合わせて日本語・英語・中国語・韓国語・スペイン語・
+フランス語・ドイツ語・ポルトガル語で表示されます。
+
+The wizard follows your system language across eight languages.
+
+API キーは `config.yaml` ではなく `.env` に、提供元ごとの正しい変数名
+（`OPENAI_API_KEY`、`GEMINI_API_KEY` など）で保存され、本人しか読めない権限に
 設定されます。`config.yaml` はチームで共有したりコミットしたりする前提なので、
 キーが混ざらないように分けてあります。
 
@@ -138,12 +157,22 @@ Config files get shared and committed; keys should not ride along.
 ## 動作確認 / Verifying it works
 
 ```bash
-aipmo validate templates/examples/meeting_minutes.yaml
+aipmo validate templates/examples/meeting_to_tasks.yaml
 aipmo adapters
-aipmo doctor          # データベース連携を有効にした場合 / if you enabled the data layer
+aipmo doctor          # 接続確認 / connection check
 ```
 
-`OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件`
+続けて使うもの / What you will use next:
+
+```bash
+aipmo serve --host 0.0.0.0   # スマホ向け画面 / mobile interface
+aipmo schedule --list        # 定時実行の予定 / scheduled runs
+```
+
+スマホからの利用と権限分離は [docs/MOBILE.md](docs/MOBILE.md)、
+定時実行は [docs/SCHEDULER.md](docs/SCHEDULER.md) にあります。
+
+`OK  templates/examples/meeting_to_tasks.yaml  [software] ステップ 6 件`
 と表示されれば成功です。
 
 Seeing that line means it worked.

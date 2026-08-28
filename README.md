@@ -1,32 +1,35 @@
-# AI-PMO Platform — Step 1: DSL + Execution Engine
+# AI-PMO Platform
 
 PMO 業務のノウハウを「実行可能なテンプレート」として記述し、LLM と外部ツール連携を
 組み合わせて自動実行する基盤。
 
 A runtime that encodes PMO know-how as executable templates and runs them by
-combining LLM calls with integrations into the tools a team already uses.
+combining LLM calls with the tools a team already uses.
 
-Step 1 の範囲は **基盤のみ**。Teams / Jira / Slack の実アダプタは Step 2 以降で、
-現時点ではモックアダプタが入っている。PostgreSQL と Qdrant のアダプタは実装済み。
+はじめての方は **[はじめてのガイド](docs/guide/README.md)**（8言語）をどうぞ。
+New here? Start with the **[getting-started guide](docs/guide/README.md)**.
 
-Step 1 covers **the runtime only**. Real Teams / Jira / Slack adapters land in
-Step 2; mocks stand in for now. The PostgreSQL and Qdrant adapters are real.
+---
+
+## できること / What it does
+
+| テンプレート | 内容 |
+|---|---|
+| `meeting_to_tasks` | 会議 → 議事録 → TODO → Jira 起票 → Slack 通知 |
+| `meeting_task_update` | 会議の内容から既存課題を更新（確信度で選別） |
+| `overdue_chase` | 期限超過の担当者へ個別に催促 |
+| `overdue_triage` | 遅延状況をエージェントが調査して報告 |
+| `sprint_health` | スプリントの状況確認（問題があるときだけ通知） |
+| `wbs_from_meeting` | 会議の決定事項から WBS の草案 |
+| `construction/site_meeting` | 工程会議 → 是正起票・安全指摘の即時通知 |
+| `marketing/campaign_check` | キャンペーン進行（承認待ちを分けて扱う） |
+
+連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL · Qdrant
+AI: OpenAI · Gemini · Groq · OpenRouter · Ollama · vLLM · LM Studio
 
 ---
 
 ## Quick start
-
-はじめての方は **[はじめてのガイド](docs/guide/README.md)** をどうぞ。
-日本語・English・简体中文・한국어・Español・Français・Deutsch・Português の8言語。
-
-New here? Start with the **[getting-started guide](docs/guide/README.md)**,
-available in eight languages.
-
-PC に不慣れな方は [INSTALL.md](INSTALL.md) を見てください。
-Windows インストーラ、Mac/Linux スクリプト、Docker の3通りがあります。
-
-If you are not comfortable with a terminal, see [INSTALL.md](INSTALL.md) —
-there is a Windows installer, a macOS/Linux script, and a Docker option.
 
 ```bash
 # インストーラ / installers
@@ -35,18 +38,16 @@ scripts\install.bat           # Windows
 ./scripts/install-docker.sh   # Docker (local AI)
 
 # 開発者向け / from source
-pip install -e ".[dev]"          # 基盤のみ / runtime only
-pip install -e ".[cloud,data]"   # クラウド LLM + Postgres/Qdrant
+pip install -e ".[dev]"
+pip install -e ".[cloud,data,web]"   # 全部入り / everything
 
-aipmo setup                      # 初回設定 / first-run setup
-aipmo serve --host 0.0.0.0       # スマホ向け画面 / mobile interface
-
-aipmo validate templates/examples/meeting_minutes.yaml
-aipmo --config config.dev.yaml run templates/examples/meeting_minutes.yaml \
-      --trigger '{"meeting_id":"MTG-001"}' --json
-aipmo adapters                   # 登録済みアダプタとアクション / registered actions
-aipmo --config config.docker.yaml doctor   # 接続確認 / connection check
-pytest
+aipmo setup                          # 初回設定 / first-run setup
+aipmo validate templates/examples/meeting_to_tasks.yaml
+aipmo run templates/examples/overdue_triage.yaml
+aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
+aipmo schedule                       # 定時実行 / the scheduler
+aipmo doctor                         # 接続確認 / connection check
+pytest                               # 516 件
 ```
 
 ---
@@ -87,210 +88,206 @@ steps:
       issues: "{{ steps.todos.output.items }}"
 ```
 
-ステップ種別は `adapter` / `llm` / `expression` のどれを書いたかで自動判定される。
-`kind:` を明示することもできる。
+ステップ種別は `adapter` / `llm` / `agent` / `expression` のどれを書いたかで
+自動判定される。`kind:` を明示することもできる。
 
-The step kind is inferred from which of `adapter` / `llm` / `expression` is
-present. `kind:` can also be stated explicitly.
-
-### 繰り返し / Iteration
-
-値の並びに対して、同じ工程を1件ずつ実行します。
-担当者ごとに1通ずつ送る、といった処理はこれが無いと書けません。
-
-Runs a step once per element — work like "one message per assignee" cannot be
-expressed without it.
-
-```yaml
-- id: chase
-  for_each: "{{ steps.compose.output.messages }}"
-  as: message
-  max_items: 30          # 上限。誤って大量に送らないための歯止め
-  adapter: slack
-  action: post_message
-  inputs:
-    channel: "{{ message.channel }}"
-    text: "{{ message.text }}"
-```
-
-1件の失敗で全体を止めません。5人に催促を送るとき、3人目で失敗したせいで
-4人目と5人目に届かないのは困るためです。結果は
-`{{ steps.chase.output.count }}` と `.failed` で受け取れます。
-
-One failure does not stop the rest: when chasing five people, a failure on the
-third must not prevent the fourth and fifth from being told.
-
-繰り返しの中では `{{ loop.number }}`（1始まり・表示用）、`{{ loop.index }}`
-（0始まり・計算用）、`{{ loop.total }}` が使えます。
-
-要素ごとに実行するかを決めるには `where` を使います。`when` はループの前に
-一度しか評価されないため、要素自身の値では絞り込めません。
-
-Use `where` to decide per element: `when` is evaluated once before the loop and
-cannot filter on an element's own values.
-
-```yaml
-- id: apply
-  for_each: "{{ steps.propose.output.updates }}"
-  as: change
-  where: "{{ change.confidence }} >= {{ params.apply_above }}"
-```
-
-飛ばした件数は `{{ steps.apply.output.skipped }}` で受け取れます。
-判定できなかった要素も、書き込まずに飛ばして数に残します。
+The step kind is inferred from which of `adapter` / `llm` / `agent` /
+`expression` is present.
 
 参照できる名前空間 / Available namespaces:
 
-| 名前空間 / Namespace | 内容 / Contents |
+| 名前空間 | 内容 |
 |---|---|
 | `params.*` | 実行時パラメータ / runtime parameters |
 | `trigger.*` | 起動イベントのペイロード / trigger payload |
 | `run.*` | `id` / `template` / `started_at` / `date` |
 | `steps.<id>.output` | 先行ステップの出力 / output of a preceding step |
 
----
+### 繰り返し / Iteration
 
-## データ層 / Data layer
+値の並びに対して、同じ工程を1件ずつ実行する。担当者ごとに1通ずつ送る、
+といった処理はこれが無いと書けない。
 
-| | 用途 / Purpose |
-|---|---|
-| **PostgreSQL** | 実行履歴、ナレッジ昇格ワークフロー、テナント利用許諾レベル / run history, knowledge promotion workflow, per-tenant consent level |
-| **Qdrant** | テナント別の非公開ナレッジと、一般化済みの公開ナレッジ / per-tenant private knowledge and generalized public knowledge |
-
+```yaml
+- id: chase
+  for_each: "{{ steps.compose.output.messages }}"
+  as: message
+  where: "{{ message.confidence }} >= {{ params.threshold }}"
+  max_items: 30
+  adapter: slack
+  action: post_message
 ```
-Qdrant
-├── tenant_company_a        非公開 / private
-├── tenant_company_b        非公開 / private
-└── public_pmo_knowledge    公開 / public
+
+1件の失敗で全体を止めない。結果は `.count` / `.failed` / `.skipped` で受け取る。
+`{{ loop.number }}`（1始まり・表示用）、`{{ loop.index }}`（0始まり）、
+`{{ loop.total }}` が使える。
+
+`when` はループの前に一度しか評価されないため、要素自身の値で絞るには `where`
+を使う。
+
+One failure does not stop the rest. `when` is evaluated once before the loop, so
+filtering on an element's own values needs `where`.
+
+### エージェント / Agents
+
+決められた工程を流すのではなく、AI が道具を選んで自分で呼ぶ。
+手順が事前に決まらない仕事に向く。
+
+```yaml
+- id: investigate
+  agent:
+    tools: [jira.find_overdue]   # 使ってよい道具を列挙する
+    allow_writes: false          # 既定。外の世界は変えさせない
+    max_iterations: 5
+  prompt_inline: 遅延の状況を調べて報告してください
 ```
 
-`sql/schema.sql` にスキーマ、`queries.yaml` に名前付きクエリがある。
-
-Schema lives in `sql/schema.sql`; named queries in `queries.yaml`.
+詳しくは [docs/AGENTS.md](docs/AGENTS.md)。
 
 ---
 
 ## 設計上の判断 / Design decisions
 
-### プロンプトを YAML から分離した / Prompts are separated from the YAML
+### プロンプトを YAML から分離した
 
 業界別テンプレートの差分は、ほぼプロンプトに集中する。構造を共通化しておけば、
-プロンプトだけ差し替えて別業界向けテンプレートを作れる。
-ソフトウェア開発版 → 建設版の展開コストがここで決まる。
+プロンプトだけ差し替えて別業界向けを作れる。
 
-What differs between industry templates is almost entirely the prompt. Keeping
-the structure shared means a new industry variant is a prompt swap. The cost of
-going from the software build to the construction build is decided here.
+What differs between industry templates is almost entirely the prompt.
 
-### LLM は論理プロファイル名で指定する / LLMs are named by logical profile
+### LLM は論理プロファイル名で指定する
 
-テンプレートには `profile: default` としか書かない。実際の割り当ては config 側:
+テンプレートには `profile: default` としか書かない。実際の割り当ては config 側。
+提供元を乗り換えてもテンプレートは変わらない。
 
-- `config.docker.yaml` → ollama (ローカル LLM)
-- `config.laptop.yaml` → openai (クラウド)
+A template only ever says `profile: default`; the mapping lives in config, so
+switching providers changes no template.
 
-同一テンプレートが Docker 版と非 Docker 版の両方でそのまま動く、という要件を満たすため。
-会議 Transcript は機微情報を含むので、Docker 版はローカル LLM を既定にしている。
-埋め込みモデルも同じ扱い。
+### 数えれば決まる値を、モデルに数えさせない
 
-A template only ever says `profile: default`; the mapping lives in config. This
-is what lets one template run unchanged on both builds. Because transcripts are
-sensitive, the Docker build defaults to a local model. Embedding models follow
-the same pattern.
+完了率、残り日数、経過日数は、数えれば決まる。言語モデルに数えさせると
+間違えるし、**間違えても正しそうに見える。** アダプタか組み込み変換
+（`days_between` / `count`）で計算し、モデルには解釈だけさせる。
+Slack に出す数値も集計結果をそのまま貼る。言い換えの過程で数字が変わっても、
+読む側には見分けがつかない。
 
-### 式評価を意図的に制限した / The expression evaluator is deliberately limited
+Countable facts are computed before the model sees them: a language model
+miscounts, and does so plausibly. Figures posted to Slack come from the
+aggregation, not from the model — if one changed while being rephrased, a reader
+would have no way to tell.
 
-テンプレートは第三者が書いて配布する想定（教材販売）なので、Jinja2 のような
+### 式評価を意図的に制限した
+
+テンプレートは第三者が書いて配布される想定（教材販売）なので、Jinja2 のような
 汎用テンプレートエンジンを入れると配布テンプレートが攻撃面になる。
 値の参照と単純な二項比較しか許していない。
 
-Templates are authored by third parties and distributed — they are sold as
-teaching material. A general-purpose template engine would turn every
-distributed template into an attack surface. Only value lookup and simple
-binary comparison are permitted.
+Templates are authored by third parties and distributed. A general-purpose
+template engine would turn every distributed template into an attack surface.
 
-### SQL はテンプレートに書かせない / Templates cannot contain SQL
+### SQL とコレクション名をテンプレートに書かせない
 
-同じ理由。テンプレートが指定できるのは `queries.yaml` に定義された
-**クエリ名とパラメータのみ**。値は必ずドライバのパラメータ機構を通り、
-文字列連結は一切行わない。`tenant` はテンプレートの入力ではなく接続設定から入るので、
-テンプレートが `tenant: company_b` と書いても上書きできない。
+同じ理由。PostgreSQL は `queries.yaml` に定義された**クエリ名とパラメータのみ**、
+Qdrant は論理スコープ `private` / `public` のみ。`tenant` は接続設定から入るので、
+テンプレートが上書きできない。
 
-Same reasoning. A template may pass **a query name and bound parameters**, and
-nothing else. Values always go through driver-level parameter binding; no string
-concatenation anywhere. The `tenant` value is injected from connection config
-rather than template input, so a template that writes `tenant: company_b` cannot
-override it.
+Same reasoning: a template passes a query name and bound parameters, or a
+logical scope — never raw SQL or a collection name. The tenant comes from
+connection config and cannot be overridden.
 
-### Qdrant のコレクション名もテンプレートに書かせない / Nor collection names
-
-テンプレートが選べるのは論理スコープ `private` / `public` だけ。実コレクション名は
-接続設定で解決する。配布テンプレートに `tenant_company_b` と直書きされていても、
-他社データには届かない。
-
-A template selects the logical scope `private` or `public`; the concrete
-collection is resolved from connection config. A distributed template that
-hardcodes `tenant_company_b` cannot reach another tenant's data.
-
-### 公開コレクションへの書き込みをアダプタが拒否する / The adapter refuses public writes
+### 公開コレクションへの書き込みをアダプタが拒否する
 
 ナレッジの公開は、人間承認を経た昇格フローだけが行える。テンプレートができるのは
-`submit_candidate` で公開候補として提出するところまでで、`review_status: pending`
-のまま非公開コレクションに入る。自動公開の経路を、そもそもテンプレートから
-作れないようにしてある。
+`submit_candidate` で候補として提出するところまで。**自動公開の経路を、
+そもそもテンプレートから作れない。**
 
-Publication happens only through the reviewed promotion workflow. A template can
-call `submit_candidate`, which lands the record in the private collection marked
-`review_status: pending`. It cannot publish. The automatic-publication path does
-not exist at the adapter level, so no template — including one written by a third
-party — can construct it.
+Publication happens only through the reviewed promotion workflow. The automatic
+path does not exist at the adapter level, so no template can construct it.
 
-### 冪等キーはトリガー由来 / Idempotency keys derive from the trigger
+### 書き込みは読み取りより厳しく扱う
 
-`run_id` ではなく `meeting_id` を起点にする。同じ会議を再処理しても Jira の Issue や
-Qdrant の point が重複しない。Qdrant の point ID はこのキーから UUIDv5 で導出するため、
-別プロセスでの再実行でも同じ ID になる。
+エージェントに `tools: [jira]` を渡しても課題は作られない。外の世界を変える操作には
+`allow_writes: true` が別途要る。読み違いはやり直せるが、**書いた誤りはやり直せない。**
 
-Keyed on `meeting_id` rather than `run_id`, so reprocessing the same meeting does
-not duplicate Jira issues or Qdrant points. Point IDs are derived from that key
-via UUIDv5, so a re-run in a separate process produces the same ID.
+さらに更新は作成より危ない。作成の誤りは余計な課題が1件増えるだけだが、
+更新の誤りは**すでに正しかった値を消す。**
 
-### アクション探索は MRO を遡る / Action discovery walks the MRO
+Naming an adapter does not grant its write actions. A mistaken read can be
+retried; a mistaken write cannot. And updating is worse than creating: a
+mistaken create adds noise, a mistaken update destroys a value that was right.
 
-`@action` を付けずにサブクラスでメソッドをオーバーライドすると
-アクションが黙って消える、という壊れ方をテストで踏んだので修正済み。
+### 冪等キーはトリガー由来
 
-A subclass overriding a method without re-applying `@action` used to silently
-unregister it. A test caught this; the lookup now walks the MRO.
+`run_id` ではなく `meeting_id` を起点にする。同じ会議を再処理しても Jira の
+課題や Qdrant の point が重複しない。Jira には冪等の仕組みが無いので、
+キーをラベルとして残し、作る前に検索する。
+
+Keyed on `meeting_id` rather than `run_id`. Jira has no idempotency mechanism,
+so the key is carried as a label and searched for before creating.
+
+### 逃した実行は流さない
+
+毎朝9時の報告を、正午に5日分まとめて送っても意味がない。それは通知の洪水で
+あって報告ではない。逃したことは記録し、次の予定から再開する。
+
+同じ理由で、**問題が無ければ何も送らない。** 毎朝「順調です」が届く
+チャンネルは、そのうち読まれなくなる。読まれなくなった通知は、危ないときにも
+読まれない。
+
+Five days of a 9am report delivered at noon is a flood, not a report. For the
+same reason, silence is the output when nothing is wrong: a channel that says
+"all fine" every morning is not read when it matters either.
 
 ---
 
 ## テスト / Tests
 
-28 件。境界の保証が主眼:
+516 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-28 tests. The isolation guarantees are the point:
+516 tests, aimed at the guarantees and at the failure shapes that look like
+success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
-- テンプレートが `tenant` を上書きできない / a template cannot override the tenant
-- テンプレートがコレクション名を指定できない / a template cannot name a collection
-- 公開コレクションへの直接書き込みが拒否される / direct public writes are refused
-- 許諾レベル A のテナントでは候補提出そのものが走らない / consent level A skips candidate submission entirely
-- 前方参照・ID 重複はロード時に検出される / forward references and duplicate IDs fail at load time
+- テンプレートが `tenant` やコレクション名を上書きできない
+- 公開コレクションへの直接書き込みが拒否される
+- 閲覧用トークンでは実行できない（画面ではなくサーバーが拒否する）
+- Slack の `200 + ok:false` を成功として扱わない
+- エージェントが許可外の道具を呼べない、上限で必ず止まる
+- 前方参照・ID 重複・不正な cron はロード時に検出される
+- 8言語のガイドとカタログに抜けが無い
+
+---
+
+## ドキュメント / Documentation
+
+| | |
+|---|---|
+| [docs/guide/](docs/guide/README.md) | 入門ガイド（8言語）/ getting started |
+| [INSTALL.md](INSTALL.md) | インストール / installation |
+| [docs/MOBILE.md](docs/MOBILE.md) | スマホから使う・権限分離 / phone access and roles |
+| [docs/PROVIDERS.md](docs/PROVIDERS.md) | AI の提供元 / AI providers |
+| [docs/AGENTS.md](docs/AGENTS.md) | エージェント / agents |
+| [docs/SCHEDULER.md](docs/SCHEDULER.md) | 定時実行 / scheduling |
+| [docs/TEAMS.md](docs/TEAMS.md) | Teams 連携 / Teams |
+| [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |
+| [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
+| [docs/INDUSTRIES.md](docs/INDUSTRIES.md) | 業界別テンプレート / industry templates |
+| [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md) | 無料クラウド構成 / free-tier deployment |
 
 ---
 
 ## 未着手 / Not yet built
 
-- 実アダプタ / real adapters (Teams Graph API, Jira, Slack)
-- スケジューラ / scheduler (cron 常駐実行 / resident cron execution)
-- Web UI
-- 匿名化・一般化エージェント / anonymization and generalization agents —
-  現状 `submit_candidate` は「候補を受け取る器」であって、一般化そのものは行わない /
-  `submit_candidate` currently accepts candidates; it does not itself generalize
-- 公開可能性スコアの算出 / publicability scoring — 保存はできるが計算は未実装 /
-  the field is stored, the computation is not implemented
-- 並列ステップ実行 / parallel steps — 現状は逐次のみ / sequential only
-- 実行履歴の永続化配線 / run-history persistence wiring — スキーマとクエリはあるが、
-  エンジンからの自動書き込みは未接続 / schema and queries exist, the engine does not
-  write to them automatically yet
+- **ライセンス / a LICENSE file** — OSS 公開には必須。無料公開と Enterprise 版を
+  どう両立させるかで選ぶものが変わるため、未決 / the choice depends on how the
+  free and paid offerings are meant to coexist
+- **コード署名 / code signing** — 未署名の `.exe` は Windows が警告を出す。
+  回避策はあるが解決ではない / there are workarounds, but they are not a fix
+- **匿名化・一般化エージェント** — `submit_candidate` は候補を受け取る器であって、
+  一般化そのものは行わない / it accepts candidates but does not generalize
+- **公開可能性スコアの算出** — 保存はできるが計算は未実装 / the field is stored,
+  the computation is not
+- **実行履歴の永続化配線** — スキーマとクエリはあるが、エンジンからの自動書き込みは未接続
+- **並列ステップ実行** — 現状は逐次のみ / sequential only
+- **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
+- **上記3業界以外のテンプレート**

@@ -98,6 +98,8 @@ Si aparece esto, ha funcionado:
 OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件
 ```
 
+`ステップ 5 件` significa «5 pasos»; la salida de la herramienta está en japonés.
+
 ---
 
 ## Qué es una plantilla
@@ -133,6 +135,8 @@ aipmo validate <archivo>   # comprobar si una plantilla tiene errores
 aipmo run <archivo>        # ejecutarla
 aipmo adapters    # ver las herramientas conectadas
 aipmo doctor      # comprobar que las conexiones funcionan
+aipmo serve       # abrir la interfaz para el móvil
+aipmo schedule    # empezar a ejecutar según el horario
 ```
 
 ---
@@ -184,5 +188,6 @@ Hay más detalle en [INSTALL.md](../../INSTALL.md).
 - [JIRA-SLACK.md](../JIRA-SLACK.md) — registrar tareas en Jira y avisar en Slack
 - [SCHEDULER.md](../SCHEDULER.md) — ejecutar automáticamente según un horario
 - [AGILE.md](../AGILE.md) — informar sobre los sprints
+- [INDUSTRIES.md](../INDUSTRIES.md) — construcción, marketing y otros sectores
 - [README.md](../../README.md) — cómo funciona, para desarrolladores
 - `templates/examples/` — plantillas de ejemplo

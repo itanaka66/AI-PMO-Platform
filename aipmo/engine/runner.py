@@ -40,6 +40,41 @@ class StepFailure(Exception):
         self.context = context
 
 
+def _days_between(start: str, end: str) -> int | None:
+    """2つの日付の間の日数 / whole days between two dates.
+
+    テンプレートに計算の仕組みは無く、言語モデルに数えさせると間違えます。
+    「公開まで何日か」のような、数えれば決まる値を渡す側で決めるための道具。
+
+    Templates cannot do arithmetic and a language model miscounts. This settles
+    countable facts — such as how many days remain until a launch — before they
+    are handed over.
+    """
+    from datetime import date
+
+    try:
+        first = date.fromisoformat(str(start)[:10])
+        second = date.fromisoformat(str(end)[:10])
+    except ValueError:
+        # 書式が違うだけで実行全体を止めない。
+        # A malformed date does not stop the whole run.
+        logger.warning("days_between: 日付を読めません / cannot read %r, %r",
+                       start, end)
+        return None
+    return (second - first).days
+
+
+def _count(items: Any) -> int:
+    return len(items) if isinstance(items, (list, dict, str)) else 0
+
+
+# テンプレートから使える組み込み変換 / built-in transforms available to templates
+BUILTIN_TRANSFORMS: dict[str, Any] = {
+    "days_between": _days_between,
+    "count": _count,
+}
+
+
 class PromptLibrary:
     """prompts/ 配下のプロンプトテンプレートを名前で引く。
 
@@ -78,7 +113,9 @@ class Engine:
         self.adapters = adapters
         self.llms = llms
         self.prompts = prompts or PromptLibrary()
-        self.transforms = transforms or {}
+        # 利用者定義のものを優先する。名前がぶつかったら上書きできる。
+        # User-supplied transforms win, so a name can be overridden.
+        self.transforms = {**BUILTIN_TRANSFORMS, **(transforms or {})}
 
     def run(
         self,

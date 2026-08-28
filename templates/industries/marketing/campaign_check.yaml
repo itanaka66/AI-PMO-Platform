@@ -1,0 +1,121 @@
+name: marketing_campaign_check
+version: "1"
+industry: marketing
+description: |
+  キャンペーンの進行状況を確認する。
+  承認待ちを、遅れている作業とは分けて扱う。
+
+trigger: "schedule:0 9 * * MON-FRI"
+
+params:
+  jira_project: MKT
+  slack_channel: "#campaign"
+
+  # 承認待ちを表す状態名。運用によって呼び名が違うので設定で渡す。
+  # ここが実態と合っていないと、詰まりが「進行中」に紛れて見えなくなる。
+  # The status names that mean "waiting for approval"; these differ per team.
+  # If they do not match reality, the bottleneck hides inside "in progress".
+  approval_statuses: '"レビュー中", "承認待ち", "In Review"'
+
+  # 公開予定日。動かせない前提で見る。
+  # The launch date, treated as fixed.
+  launch_date: "2026-09-30"
+
+steps:
+  - id: awaiting
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND status IN ({{ params.approval_statuses }})
+        ORDER BY updated ASC
+      limit: 50
+
+  - id: in_progress
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory = "In Progress"
+        AND status NOT IN ({{ params.approval_statuses }})
+      limit: 50
+
+  - id: overdue
+    adapter: jira
+    action: find_overdue
+    inputs:
+      project: "{{ params.jira_project }}"
+      as_of: "{{ run.date }}"
+
+  # 残り日数はここで数える。テンプレートに計算の仕組みは無いので、
+  # 渡さないとモデルが日付から自分で数えることになる。
+  # Counted here: without it the model would have to work the days out from the
+  # dates itself.
+  - id: days_left
+    expression: days_between
+    inputs:
+      start: "{{ run.date }}"
+      end: "{{ params.launch_date }}"
+
+  - id: assess
+    llm:
+      profile: default
+      temperature: 0.2
+    prompt: campaign_status_ja
+    inputs:
+      today: "{{ run.date }}"
+      launch_date: "{{ params.launch_date }}"
+      days_to_launch: "{{ steps.days_left.output }}"
+      awaiting_approval: "{{ steps.awaiting.output.items }}"
+      in_progress: "{{ steps.in_progress.output.items }}"
+      overdue: "{{ steps.overdue.output.items }}"
+    output_format: json
+    output_schema:
+      required: [assessment, headline]
+
+  # 承認待ちは、担当者ではなく待たせている側に向けて出す。
+  #
+  # 作業が遅れているなら担当者に聞けば動きますが、承認待ちは担当者に言っても
+  # 動きません。同じ催促の文面で送ると、動かせない人を責めることになります。
+  #
+  # Approval waits are addressed to whoever is holding them, not to the
+  # assignee: chasing the assignee cannot move it, and the same wording used
+  # for late work would be blaming someone with no means to act.
+  - id: report_approvals
+    when: "{{ steps.assess.output.blocked_by_approval }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        承認待ちで止まっているもの ({{ run.date }})
+
+        {{ steps.assess.output.blocked_by_approval }}
+
+        作業側は手を離れています。確認をお願いします。
+
+  # 状況の報告は、問題があるときだけ。
+  # 毎朝「順調です」が届くチャンネルは、危ないときにも読まれなくなる。
+  # Reported only when something is wrong: a channel that says "all fine" every
+  # morning is not read when it matters either.
+  - id: report_risk
+    when: "{{ steps.assess.output.assessment }} != '順調'"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        *キャンペーン進行状況* — {{ steps.assess.output.assessment }}
+        公開予定: {{ params.launch_date }}（残り {{ steps.days_left.output }} 日）
+
+        {{ steps.assess.output.headline }}
+
+        間に合わないおそれ:
+        {{ steps.assess.output.at_risk }}
+
+        その他:
+        {{ steps.assess.output.concerns }}

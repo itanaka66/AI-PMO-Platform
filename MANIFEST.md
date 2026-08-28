@@ -17,13 +17,14 @@ A template-driven runtime for automating PMO work.
 | `aipmo/adapters/` | Teams / Jira / Jira Agile / Slack / PostgreSQL / Qdrant |
 | `aipmo/llm/` | 提供元プリセット（OpenAI・Gemini・Groq・OpenRouter・ローカル） |
 | `aipmo/web/` | スマホ向け画面（権限分離つき） |
-| `templates/examples/` | 動くテンプレート 7本 |
-| `prompts/` | 業務ごとのプロンプト 6本 |
+| `templates/examples/` | ソフトウェア開発向けテンプレート 7本 |
+| `templates/industries/` | 建設・マーケティング向けテンプレート |
+| `prompts/` | 業務ごとのプロンプト 8本 |
 | `docs/` | 機能ごとの手引き（日英併記） |
 | `docs/guide/` | 入門ガイド 8言語 |
 | `scripts/` `installer/` | インストーラ（Windows / Mac / Linux / Docker） |
 | `deploy/oracle/` | Oracle Cloud Always Free + Aiven 構成 |
-| `tests/` | テスト 465件 |
+| `tests/` | テスト 516件 |
 
 ## 対応している PMO 業務 / What it automates
 
@@ -36,12 +37,14 @@ A template-driven runtime for automating PMO work.
 | `overdue_triage` | 遅延状況をエージェントが調査して報告 |
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 |
+| `construction/site_meeting` | 工程会議 → 議事録・是正起票・安全指摘の即時通知 |
+| `marketing/campaign_check` | キャンペーン進行確認（承認待ちを分けて扱う） |
 
 ## 動かす / Running it
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 465件
+pytest                                   # 516件
 aipmo setup                              # 初回設定
 aipmo validate templates/examples/meeting_to_tasks.yaml
 aipmo serve --host 0.0.0.0               # スマホ向け画面

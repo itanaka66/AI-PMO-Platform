@@ -440,3 +440,46 @@ def test_a_step_depending_on_a_skipped_step_is_skipped_not_failed():
     assert ctx.results["first"].status == "skipped"
     assert ctx.results["second"].status == "skipped"
     assert slack.posted == []
+
+
+# --- 組み込み変換 / built-in transforms -------------------------------------
+
+def test_days_between_counts_for_the_template():
+    """テンプレートに計算の仕組みは無い。渡さないとモデルが数えることになる。"""
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    assert BUILTIN_TRANSFORMS["days_between"]("2026-08-28", "2026-09-30") == 33
+
+
+def test_days_between_handles_a_timestamp():
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    assert BUILTIN_TRANSFORMS["days_between"](
+        "2026-08-28T09:00:00Z", "2026-08-30") == 2
+
+
+def test_a_past_date_gives_a_negative_number():
+    """過ぎていることを 0 に丸めない。まだ間に合うように読める。"""
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    assert BUILTIN_TRANSFORMS["days_between"]("2026-09-30", "2026-08-28") < 0
+
+
+def test_an_unreadable_date_yields_nothing_rather_than_stopping_the_run():
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    assert BUILTIN_TRANSFORMS["days_between"]("2026-08-28", "来週") is None
+
+
+def test_a_transform_step_runs_in_a_template():
+    engine, slack = _looping_engine()
+    template = loader.load_dict({"name": "t", "steps": [
+        {"id": "left", "expression": "days_between",
+         "inputs": {"start": "{{ run.date }}", "end": "2099-01-01"}},
+        {"id": "say", "adapter": "slack", "action": "post_message",
+         "inputs": {"channel": "#x", "text": "残り {{ steps.left.output }} 日"}},
+    ]})
+    engine.run(template)
+
+    assert "残り" in slack.posted[0]["text"]
+    assert "{{" not in slack.posted[0]["text"]

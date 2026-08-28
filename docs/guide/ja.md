@@ -131,6 +131,8 @@ aipmo validate <ファイル>   # テンプレートに間違いがないか調�
 aipmo run <ファイル>        # 実行する
 aipmo adapters    # つながっている外部ツールの一覧
 aipmo doctor      # 接続できているか確認する
+aipmo serve       # スマホから使う画面を開く
+aipmo schedule    # 決まった時刻の自動実行を始める
 ```
 
 ---
@@ -181,5 +183,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 - [JIRA-SLACK.md](../JIRA-SLACK.md) — Jira への起票と Slack への通知
 - [SCHEDULER.md](../SCHEDULER.md) — 決まった時刻に自動で動かす
 - [AGILE.md](../AGILE.md) — スプリントの状況を報告する
+- [INDUSTRIES.md](../INDUSTRIES.md) — 建設・マーケティングなど業界別に使う
 - [README.md](../../README.md) — 仕組みと設計（開発者向け）
 - `templates/examples/` — テンプレートの実例

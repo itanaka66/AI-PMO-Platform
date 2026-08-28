@@ -96,6 +96,8 @@ aipmo validate templates/examples/meeting_minutes.yaml
 OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件
 ```
 
+其中 `ステップ 5 件` 意为“5 个步骤”，工具输出为日文。
+
 ---
 
 ## 什么是模板
@@ -131,6 +133,8 @@ aipmo validate <文件>   # 检查模板是否有误
 aipmo run <文件>        # 运行
 aipmo adapters    # 查看已连接的外部工具
 aipmo doctor      # 确认连接是否正常
+aipmo serve       # 打开手机端界面
+aipmo schedule    # 开始按设定时间自动运行
 ```
 
 ---
@@ -180,5 +184,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 - [JIRA-SLACK.md](../JIRA-SLACK.md) —— 在 Jira 登记任务、在 Slack 通知
 - [SCHEDULER.md](../SCHEDULER.md) —— 按设定的时间自动运行
 - [AGILE.md](../AGILE.md) —— 报告冲刺进展
+- [INDUSTRIES.md](../INDUSTRIES.md) —— 建筑、市场营销等行业用法
 - [README.md](../../README.md) —— 原理与设计（面向开发者）
 - `templates/examples/` —— 模板实例

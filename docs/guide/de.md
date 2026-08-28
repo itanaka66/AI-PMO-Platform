@@ -98,6 +98,8 @@ Erscheint dies, hat es geklappt:
 OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件
 ```
 
+`ステップ 5 件` bedeutet „5 Schritte“; die Ausgabe des Programms ist auf Japanisch.
+
 ---
 
 ## Was eine Vorlage ist
@@ -133,6 +135,8 @@ aipmo validate <Datei>   # eine Vorlage auf Fehler prüfen
 aipmo run <Datei>        # sie ausführen
 aipmo adapters    # die angebundenen Werkzeuge auflisten
 aipmo doctor      # prüfen, ob die Verbindungen stehen
+aipmo serve       # die Oberfläche fürs Telefon öffnen
+aipmo schedule    # zeitgesteuerte Ausführung starten
 ```
 
 ---
@@ -185,5 +189,6 @@ Mehr dazu in [INSTALL.md](../../INSTALL.md).
 - [JIRA-SLACK.md](../JIRA-SLACK.md) — Vorgänge in Jira anlegen, in Slack benachrichtigen
 - [SCHEDULER.md](../SCHEDULER.md) — zeitgesteuert automatisch ausführen
 - [AGILE.md](../AGILE.md) — über Sprints berichten
+- [INDUSTRIES.md](../INDUSTRIES.md) — Bau, Marketing und andere Branchen
 - [README.md](../../README.md) — Funktionsweise und Aufbau, für Entwickler
 - `templates/examples/` — Beispielvorlagen

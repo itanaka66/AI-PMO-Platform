@@ -98,6 +98,8 @@ Si ceci s'affiche, c'est réussi :
 OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件
 ```
 
+`ステップ 5 件` signifie « 5 étapes » ; la sortie de l'outil est en japonais.
+
 ---
 
 ## Ce qu'est un modèle
@@ -133,6 +135,8 @@ aipmo validate <fichier>   # vérifier qu'un modèle est correct
 aipmo run <fichier>        # l'exécuter
 aipmo adapters    # lister les outils connectés
 aipmo doctor      # vérifier que les connexions fonctionnent
+aipmo serve       # ouvrir l'interface pour le téléphone
+aipmo schedule    # lancer les exécutions programmées
 ```
 
 ---
@@ -185,5 +189,6 @@ Plus de détails dans [INSTALL.md](../../INSTALL.md).
 - [JIRA-SLACK.md](../JIRA-SLACK.md) — créer des tickets Jira et notifier sur Slack
 - [SCHEDULER.md](../SCHEDULER.md) — exécuter automatiquement à heure fixe
 - [AGILE.md](../AGILE.md) — rendre compte des sprints
+- [INDUSTRIES.md](../INDUSTRIES.md) — bâtiment, marketing et autres secteurs
 - [README.md](../../README.md) — le fonctionnement, pour les développeurs
 - `templates/examples/` — modèles d'exemple
