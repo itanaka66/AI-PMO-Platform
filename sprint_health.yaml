@@ -1,0 +1,104 @@
+name: sprint_health
+version: "1"
+industry: software
+description: |
+  進行中のスプリントの状況を毎朝確認し、手を打つべきことがあれば知らせる。
+  問題が無ければ何も送らない。
+
+trigger: "schedule:0 9 * * MON-FRI"
+
+params:
+  board_id: 7
+  slack_channel: "#project-updates"
+
+steps:
+  - id: sprint
+    adapter: agile
+    action: active_sprint
+    inputs:
+      board_id: "{{ params.board_id }}"
+
+  # 進行中でなければ以降は動かない。スプリント間の期間や、
+  # カンバンボードでは、報告すべき状況がそもそも無い。
+  # Nothing follows when no sprint is running: between sprints, or on a kanban
+  # board, there is no sprint state to report.
+  - id: issues
+    when: "{{ steps.sprint.output.active }} == true"
+    adapter: agile
+    action: sprint_issues
+    inputs:
+      sprint_id: "{{ steps.sprint.output.id }}"
+      board_id: "{{ params.board_id }}"
+
+  - id: assess
+    when: "{{ steps.issues.output.count }} > 0"
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt: sprint_health_ja
+    inputs:
+      today: "{{ run.date }}"
+      sprint: "{{ steps.sprint.output }}"
+      issues: "{{ steps.issues.output.items }}"
+      summary:
+        # 進捗率と残日数は集計済みの値を渡す。
+        # 「計算するな」と言いながら数値を渡さないのでは、
+        # モデルは自分で割り算するしかない。
+        # The percentage and days remaining are supplied ready-made: telling
+        # the model not to calculate while withholding the figures leaves it
+        # no option but to divide.
+        percent_done: "{{ steps.issues.output.percent_done }}"
+        percent_basis: "{{ steps.issues.output.percent_basis }}"
+        days_remaining: "{{ steps.sprint.output.days_remaining }}"
+        done: "{{ steps.issues.output.done_count }}"
+        total: "{{ steps.issues.output.count }}"
+        points_done: "{{ steps.issues.output.points_done }}"
+        points_total: "{{ steps.issues.output.points_total }}"
+        unassigned: "{{ steps.issues.output.unassigned }}"
+        unestimated: "{{ steps.issues.output.unestimated }}"
+    output_format: json
+    output_schema:
+      required: [assessment, headline]
+
+  # 問題が無ければ何も送らない。
+  #
+  # 毎朝「順調です」が届くチャンネルは、そのうち読まれなくなります。
+  # 読まれなくなった通知は、危ないときにも読まれません。
+  #
+  # A channel that receives "all fine" every morning stops being read — and a
+  # notification nobody reads is not read when it matters either.
+  - id: warn
+    when: "{{ steps.assess.output.concerns }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        *{{ steps.sprint.output.name }}* — {{ steps.assess.output.assessment }}
+        残り {{ steps.sprint.output.days_remaining }} 日 / 完了 {{ steps.issues.output.percent_done }}%
+
+        {{ steps.assess.output.headline }}
+
+        {{ steps.assess.output.concerns }}
+
+  # 見積もりが1件も無い場合は、設定の問題である可能性が高い。
+  # ストーリーポイントの項目 ID は Jira ごとに違うので、
+  # 「全部見積もり無し」に見えたら、まず設定を疑う。
+  #
+  # No estimates at all usually means the field id is wrong rather than that
+  # nobody estimated: the id differs per Jira instance.
+  - id: check_configuration
+    when: "{{ steps.issues.output.points_total }} == null"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        スプリントの見積もりが1件も読めませんでした。
+
+        使用中の項目: {{ steps.issues.output.estimation_field }}
+
+        本当に誰も見積もっていないか、ボードの見積もり設定を確認してください。
+        ストーリーポイントの項目 ID は Jira ごとに異なります。
