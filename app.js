@@ -8,6 +8,7 @@
 const $ = (id) => document.getElementById(id);
 
 let strings = {};
+let canRun = false;
 const t = (key, fallback) => strings[key] || fallback;
 
 async function api(path, options) {
@@ -57,10 +58,18 @@ function renderTemplates(items) {
     return;
   }
 
+  if (!canRun) {
+    host.append(empty(t("web_view_only", "This token can view but not run")));
+  }
+
   for (const item of items) {
     const card = document.createElement("button");
     card.className = "card";
-    card.disabled = !item.valid;
+    // 閲覧のみの相手には押せない見た目にする。ただしこれは案内であって
+    // 権限管理ではない。拒否はサーバー側が行う。
+    // Viewers see it as untappable — but this is a courtesy, not access
+    // control. The refusal happens on the server.
+    card.disabled = !item.valid || !canRun;
 
     const head = document.createElement("div");
     head.className = "card-head";
@@ -91,7 +100,7 @@ function renderTemplates(items) {
     }
     card.append(note);
 
-    if (item.valid) {
+    if (item.valid && canRun) {
       card.addEventListener("click", () => run(item, card, note));
     }
     host.append(card);
@@ -164,7 +173,13 @@ function runRow(record) {
   when.className = "run-time";
   when.textContent = clock(record.started_at);
 
-  meta.append(name, id, when);
+  meta.append(name, id);
+  if (record.started_by) {
+    const who = document.createElement("span");
+    who.textContent = record.started_by === "schedule" ? "auto" : record.started_by;
+    meta.append(who);
+  }
+  meta.append(when);
   summary.append(meta, stepBar(record.steps));
   wrap.append(summary);
 
@@ -265,6 +280,7 @@ async function boot() {
   try {
     const session = await api("/api/session");
     strings = session.strings || {};
+    canRun = Boolean(session.can_run);
     document.documentElement.lang = session.lang || "en";
     $("tenant").textContent = session.tenant;
     $("h-templates").textContent = t("web_templates", "Templates");

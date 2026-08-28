@@ -116,6 +116,20 @@ class Step:
     # --- kind == AGENT ---
     agent: AgentSpec | None = None
 
+    # --- 繰り返し / iteration ---
+    # 値の並びに対して、同じ工程を1件ずつ実行する。
+    # 担当者ごとに1通ずつ送る、といった処理はこれが無いと書けない。
+    # Runs the same step once per element. Without it, work like "one message
+    # per assignee" cannot be expressed at all.
+    for_each: str | None = None
+    as_name: str = "item"
+    # 要素ごとの条件。when はループの前に一度だけ評価されるので、
+    # 「確信度が高いものだけ実行する」といった絞り込みには別の口が要る。
+    # A per-element condition: `when` is evaluated once before the loop, so
+    # filtering on each element's own values needs its own field.
+    where: str | None = None
+    max_items: int = 50
+
     # --- 共通 ---
     inputs: dict[str, Any] = field(default_factory=dict)
     config: dict[str, Any] = field(default_factory=dict)

@@ -29,6 +29,60 @@ to use it like an app.
 
 ---
 
+## 権限 / Roles
+
+URL は2種類表示されます。**渡す相手によって使い分けてください。**
+
+Two URLs are printed. **Which one you hand out matters.**
+
+```
+  実行できる人へ / can run:
+    http://192.168.1.24:8765/?token=xxxx
+  見るだけの人へ / view only:
+    http://192.168.1.24:8765/?token=yyyy
+```
+
+| | できること |
+|---|---|
+| **実行できる人 / operator** | テンプレートの実行、履歴と状況の閲覧 |
+| **見るだけの人 / viewer** | 履歴と状況の閲覧のみ |
+
+PMO では「メンバーは進捗を見るだけ、担当者だけが実行」という分け方が自然です。
+**トークンが1本しかないと、進捗を見せたいだけの相手に、課題の起票と通知の送信まで
+できる権限を渡すことになります。**
+
+The natural split is that members watch progress while one person runs things.
+With a single token, showing someone the progress means handing them the
+ability to file issues and send messages.
+
+**閲覧用を渡した相手は実行できません。** 画面上でボタンが押せないだけでなく、
+サーバー側が拒否します。ボタンを隠すのは案内であって、権限管理ではないためです。
+
+Someone given the viewer URL cannot run anything. The button is untappable, but
+more importantly the server refuses: hiding a button is a courtesy, not access
+control.
+
+固定したい場合は環境変数で渡します。指定しなければ起動のたびに変わります。
+
+```bash
+export AIPMO_WEB_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(24))')"
+export AIPMO_VIEWER_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsafe(24))')"
+```
+
+> 2つは必ず別の値にしてください。同じだと分離になりません。
+> 同じ値を設定した場合、起動時に拒否されます。
+>
+> The two must differ, or there is no separation at all. Setting them the same
+> is refused at startup.
+
+**誰が実行したかは履歴に残ります。** PMO では「いつ動いたか」より
+「誰が動かしたか」が問われることがあるためです。
+
+Runs record who started them: the question asked is often who ran this, not
+merely when.
+
+---
+
 ## アクセスキー / The access key
 
 URL の `?token=` がアクセスキーです。**これを知っている人は誰でも操作できます。**
@@ -166,6 +220,10 @@ would drain the battery.
 ---
 
 ## 困ったときは / When it does not work
+
+**実行しようとすると拒否される / It says the token cannot run**
+閲覧用の URL を開いています。実行用の URL を使ってください。
+You opened the viewer URL; use the operator one.
 
 **スマホから開けない / Cannot reach it from the phone**
 `--host 0.0.0.0` で起動しているか、両方の端末が同じ Wi-Fi につながっているかを

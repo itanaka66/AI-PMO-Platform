@@ -1,0 +1,88 @@
+name: meeting_to_tasks
+version: "1"
+industry: software
+description: |
+  Teams の会議記録から議事録と TODO を作り、Jira に登録する。
+  文字起こしが無効だった会議は、何もせず終了する。
+
+trigger: "event:teams:meeting_ended"
+
+params:
+  organiser: ""
+  jira_project: PROJ
+  slack_channel: "#project-updates"
+  # 会議終了と同時に Transcript は出ない。数分待つ。
+  # A transcript is not ready when the meeting ends; wait for it.
+  transcript_wait_seconds: 300
+
+steps:
+  - id: meeting
+    adapter: teams
+    action: find_meeting
+    inputs:
+      join_url: "{{ trigger.join_url }}"
+      organiser_id: "{{ params.organiser }}"
+
+  - id: transcript
+    adapter: teams
+    action: get_transcript
+    inputs:
+      meeting_id: "{{ steps.meeting.output.meeting_id }}"
+      organiser_id: "{{ params.organiser }}"
+      wait_seconds: "{{ params.transcript_wait_seconds }}"
+    retry:
+      max_attempts: 2
+      backoff_seconds: 30
+
+  # 文字起こしが無効だった会議では、以降を走らせない。
+  # ここで止めないと、空の記録から議事録を捏造することになる。
+  # Without this guard, minutes would be invented from an empty transcript.
+  - id: minutes
+    when: "{{ steps.transcript.output.utterance_count }} > 0"
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt: minutes_ja
+    inputs:
+      transcript: "{{ steps.transcript.output.text }}"
+      participants: "{{ steps.transcript.output.participants }}"
+      date: "{{ run.date }}"
+    output_format: json
+    output_schema:
+      required: [title, decisions, action_items]
+
+  - id: todos
+    when: "{{ steps.minutes.output.action_items }}"
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: todo_extract_ja
+    inputs:
+      action_items: "{{ steps.minutes.output.action_items }}"
+      participants: "{{ steps.transcript.output.participants }}"
+      today: "{{ run.date }}"
+    output_format: json
+    output_schema:
+      required: [items]
+
+  - id: register
+    when: "{{ steps.todos.output.items }}"
+    adapter: jira
+    action: create_issues
+    inputs:
+      project: "{{ params.jira_project }}"
+      issues: "{{ steps.todos.output.items }}"
+
+  - id: notify
+    when: "{{ steps.minutes.output.title }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        *{{ steps.minutes.output.title }}* ({{ run.date }})
+        参加者: {{ steps.transcript.output.participants }}
+
+        決定事項:
+        {{ steps.minutes.output.decisions }}

@@ -65,6 +65,7 @@ services:
     environment:
       AIPMO_CONFIG: /app/config.yaml
       AIPMO_WEB_TOKEN: ${AIPMO_WEB_TOKEN:?set AIPMO_WEB_TOKEN in .env}
+      AIPMO_VIEWER_TOKEN: ${AIPMO_VIEWER_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
     volumes:
@@ -85,7 +86,44 @@ services:
       resources:
         limits: { memory: 2G }
 
+  # 定時実行。画面とは別のコンテナにする。
+  # 画面の再起動で予定が止まるのは困るし、逆に定時処理が重いときに
+  # 画面が応答しなくなるのも困る。
+  #
+  # The scheduler runs as its own container: a restart of the interface should
+  # not stop the schedule, and a heavy scheduled run should not make the
+  # interface unresponsive.
+  scheduler:
+    build:
+      context: ../..
+      dockerfile: deploy/oracle/Dockerfile
+    env_file: .env
+    environment:
+      AIPMO_CONFIG: /app/config.yaml
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
+    volumes:
+      - ../../templates:/app/templates:ro
+      - ../../prompts:/app/prompts:ro
+      - ./config.oracle.yaml:/app/config.yaml:ro
+      - ./aiven-ca.pem:/app/aiven-ca.pem:ro
+      - scheduler_state:/app/state
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["schedule"]
+    # 実行中のテンプレートを最後まで走らせてから止まる。途中で切ると、
+    # 課題は起票されたのに通知されていない、といった半端が残る。
+    # Lets the current run finish: cutting it short leaves half-states, such as
+    # issues filed but nobody told.
+    stop_grace_period: 120s
+    deploy:
+      resources:
+        limits: { memory: 2G }
+
 volumes:
+  scheduler_state:
   caddy_data:
   caddy_config:
   qdrant_data:

@@ -92,12 +92,29 @@ def build_engine(config: dict[str, Any], base_dir: Path | None = None) -> Engine
         path = Path(value)
         return path if path.is_absolute() else base / path
 
-    # Step 2 以降で Teams / Jira / Slack を実アダプタに差し替える。
-    # それまでは mock を既定にして、テンプレート開発を先行できるようにする。
+    # mock は既定のまま。テンプレートを書く段階で実テナントを要求しない。
+    # real に切り替えると、設定のある実アダプタだけが登録される。
+    # Mock remains the default so writing templates needs no live tenant.
+    # Under "real", only the adapters that are actually configured register.
     if adapter_config.get("mode", "mock") == "mock":
         adapters.register(MockTeamsAdapter())
         adapters.register(MockJiraAdapter())
         adapters.register(MockSlackAdapter())
+    else:
+        if "teams" in adapter_config:
+            from .adapters.teams import TeamsAdapter
+
+            adapters.register(TeamsAdapter(**dict(adapter_config["teams"])))
+
+        if "jira" in adapter_config:
+            from .adapters.jira import JiraAdapter
+
+            adapters.register(JiraAdapter(**dict(adapter_config["jira"])))
+
+        if "slack" in adapter_config:
+            from .adapters.slack import SlackAdapter
+
+            adapters.register(SlackAdapter(**dict(adapter_config["slack"])))
 
     if "postgres" in adapter_config:
         spec = dict(adapter_config["postgres"])
@@ -161,10 +178,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # The token comes from the environment or is generated. config.yaml gets
     # shared, so it is not a place to park a standing credential.
     token = os.environ.get("AIPMO_WEB_TOKEN") or generate_token()
+    # 閲覧用は既定で発行する。必要になってから作ろうとすると、
+    # そのときには実行用を配ってしまっている。
+    # Issued by default: leaving it until it is needed means the operator token
+    # has already been handed out by then.
+    viewer_token = os.environ.get("AIPMO_VIEWER_TOKEN") or generate_token()
 
     engine = build_engine(config)
     template_root = Path(web.get("templates_dir", "templates")).resolve()
-    app = create_app(engine, template_root, token,
+    app = create_app(engine, template_root, token, viewer_token=viewer_token,
                      tenant=config.get("tenant", ""), lang=config.get("lang"))
 
     t = translator(config.get("lang"))
@@ -172,7 +194,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     print()
     print(f"  {t('serve_ready')}")
-    print(f"    http://{shown}:{port}/?token={token}")
+    print(f"    {t('role_operator')}")
+    print(f"      http://{shown}:{port}/?token={token}")
+    print(f"    {t('role_viewer')}")
+    print(f"      http://{shown}:{port}/?token={viewer_token}")
     print()
     if host in ("127.0.0.1", "localhost", "::1"):
         print(f"  ! {t('serve_local_only')}")
@@ -201,6 +226,55 @@ def _lan_address() -> str:
         return "localhost"
     finally:
         sock.close()
+
+
+def cmd_schedule(args: argparse.Namespace) -> int:
+    """定時実行を開始する / start the scheduler."""
+    from .engine.scheduler import Scheduler, State, discover_jobs
+
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    engine = build_engine(config, base_dir=base)
+
+    web = dict(config.get("web") or {})
+    root = Path(web.get("templates_dir", "templates"))
+    if not root.is_absolute():
+        root = base / root
+
+    jobs, problems = discover_jobs(root)
+
+    for problem in problems:
+        # 起動しないテンプレートを黙って捨てない。
+        # 動かない理由が分からないのが一番困る。
+        # Never drop a template silently: not knowing why something does not
+        # run is the worst outcome.
+        print(f"!  {problem}", file=sys.stderr)
+
+    if not jobs:
+        print("定時起動のテンプレートがありません "
+              "/ no templates declare a schedule.\n"
+              '  trigger: "schedule:0 9 * * MON-FRI" のように書きます。',
+              file=sys.stderr)
+        return 1
+
+    state_path = Path(config.get("state_file", base / "scheduler-state.json"))
+    scheduler = Scheduler(engine, jobs, State.load(state_path))
+
+    if args.list:
+        for job in scheduler.jobs:
+            when = (job.next_run.astimezone(job.tz()).strftime("%Y-%m-%d %H:%M %Z")
+                    if job.next_run else "なし / never")
+            print(f"{job.name:<28} {when}   {job.cron_expression}")
+        return 0
+
+    if args.once:
+        for result in scheduler.tick():
+            print(f"{result['status']:<18} {result['job']}")
+        return 0
+
+    logging.getLogger("aipmo.scheduler").setLevel(logging.INFO)
+    scheduler.run_forever(interval=args.interval)
+    return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -300,6 +374,16 @@ def main(argv: list[str] | None = None) -> int:
     p_serve.add_argument("--host", help="待ち受けアドレス / bind address")
     p_serve.add_argument("--port", type=int, help="待ち受けポート / port")
     p_serve.set_defaults(func=cmd_serve)
+
+    p_schedule = sub.add_parser(
+        "schedule", help="定時実行を開始 / start the scheduler")
+    p_schedule.add_argument("--list", action="store_true",
+                            help="次回時刻を表示して終了 / show next times and exit")
+    p_schedule.add_argument("--once", action="store_true",
+                            help="いま実行すべきものだけ実行 / run what is due, then exit")
+    p_schedule.add_argument("--interval", type=float, default=20.0,
+                            help="確認の間隔（秒）/ check interval in seconds")
+    p_schedule.set_defaults(func=cmd_schedule)
 
     p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")
     p_setup.add_argument("--dir", default=".", help="設定の出力先 / where to write config")

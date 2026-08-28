@@ -16,6 +16,10 @@ llm:
 
 prompts_dir: prompts
 
+# スケジューラの記録。再起動で同じ実行を繰り返さないために要る。
+# The scheduler's record, so a restart does not repeat work.
+state_file: /app/state/scheduler-state.json
+
 web:
   # Caddy が前段にいるので、待ち受けはコンテナ内部だけでよい。
   # Caddy sits in front, so this only needs to listen inside the container.

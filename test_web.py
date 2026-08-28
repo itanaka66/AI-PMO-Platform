@@ -280,3 +280,134 @@ def test_failed_run_keeps_step_detail(client, templates):
     assert steps["ok_step"]["status"] == "success"
     assert steps["bad_step"]["status"] == "failed"
     assert steps["bad_step"]["error"]
+
+
+# --- 権限分離 / role separation ---------------------------------------------
+
+VIEWER = "viewer-token-value"
+
+
+@pytest.fixture
+def two_role_client(templates: Path) -> TestClient:
+    adapters = AdapterRegistry()
+    adapters.register(MockJiraAdapter())
+    adapters.register(MockSlackAdapter())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    app = create_app(Engine(adapters, llms), templates, TOKEN,
+                     viewer_token=VIEWER, tenant="acme_corp", lang="en",
+                     store=RunStore())
+    return TestClient(app)
+
+
+def viewer(client: TestClient) -> dict[str, str]:
+    return {"x-aipmo-token": VIEWER}
+
+
+def test_the_two_tokens_must_differ(templates):
+    """同じ値だと、閲覧用を配った相手が実行もできる。
+    分離したつもりで分離できていない、が一番危ない。
+
+    Identical values would let everyone given the viewer token run things:
+    believing the roles are separated when they are not is the worst outcome.
+    """
+    adapters = AdapterRegistry()
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    with pytest.raises(ValueError, match="differ"):
+        create_app(Engine(adapters, llms), templates, TOKEN, viewer_token=TOKEN)
+
+
+def test_a_viewer_can_read_templates(two_role_client):
+    response = two_role_client.get("/api/templates", headers=viewer(two_role_client))
+    assert response.status_code == 200
+
+
+def test_a_viewer_can_read_run_history(two_role_client):
+    assert two_role_client.get("/api/runs",
+                               headers=viewer(two_role_client)).status_code == 200
+
+
+def test_a_viewer_cannot_start_a_run(two_role_client, templates):
+    """画面でボタンを隠すのは権限管理ではない。サーバーが拒否すること。
+
+    Hiding the button is not access control; the endpoint must refuse.
+    """
+    response = two_role_client.post("/api/runs", headers=viewer(two_role_client),
+                                    json={"path": "simple.yaml"})
+    assert response.status_code == 403
+
+
+def test_refusal_is_403_not_401(two_role_client):
+    """401 だと『鍵が違う』と思って入れ直そうとする。問題はそこではない。
+
+    A 401 sends the reader off to re-enter a key that was never the problem.
+    """
+    response = two_role_client.post("/api/runs", headers=viewer(two_role_client),
+                                    json={"path": "simple.yaml"})
+    assert response.status_code == 403
+    assert "run" in response.json()["detail"]
+
+
+def test_a_viewer_run_attempt_leaves_no_trace(two_role_client, templates):
+    """拒否された実行が履歴に残らないこと。"""
+    two_role_client.post("/api/runs", headers=viewer(two_role_client),
+                         json={"path": "simple.yaml"})
+    items = two_role_client.get("/api/runs",
+                                headers=viewer(two_role_client)).json()["items"]
+    assert items == []
+
+
+def test_an_operator_can_still_run(two_role_client, templates):
+    response = two_role_client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
+                                    json={"path": "simple.yaml"})
+    assert response.status_code == 200
+
+
+def test_session_reports_the_role(two_role_client):
+    as_viewer = two_role_client.get("/api/session",
+                                    headers=viewer(two_role_client)).json()
+    assert as_viewer["role"] == "viewer"
+    assert as_viewer["can_run"] is False
+
+    as_operator = two_role_client.get(
+        "/api/session", headers={"x-aipmo-token": TOKEN}).json()
+    assert as_operator["can_run"] is True
+
+
+def test_an_unknown_token_gets_no_role(two_role_client):
+    assert two_role_client.get(
+        "/api/session", headers={"x-aipmo-token": "neither"}).status_code == 401
+
+
+def test_runs_record_who_started_them(two_role_client, templates):
+    """PMO では『いつ動いたか』より『誰が動かしたか』が問われる。"""
+    record = two_role_client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
+                                  json={"path": "simple.yaml"}).json()
+    assert record["started_by"] == "operator"
+
+
+def test_the_viewer_cookie_does_not_grant_running(two_role_client, templates):
+    """URL から Cookie に移した後も、権限は上がらないこと。"""
+    two_role_client.get(f"/?token={VIEWER}")
+    assert two_role_client.cookies.get("aipmo_token") == VIEWER
+
+    response = two_role_client.post("/api/runs", json={"path": "simple.yaml"})
+    assert response.status_code == 403
+
+
+def test_a_single_token_deployment_still_works(templates):
+    """閲覧用を設定していない場合、従来どおり動くこと。"""
+    adapters = AdapterRegistry()
+    adapters.register(MockJiraAdapter())
+    adapters.register(MockSlackAdapter())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    app = create_app(Engine(adapters, llms), templates, TOKEN, lang="en")
+    client = TestClient(app)
+
+    assert client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
+                       json={"path": "simple.yaml"}).status_code == 200

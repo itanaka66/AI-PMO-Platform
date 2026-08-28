@@ -22,6 +22,26 @@ provides only the listener; host, port and exposure are configured.
     by accident.
   - A token is always required; one is generated and printed if unset.
   - Comparison is constant-time, so the token cannot be narrowed by timing.
+  - Two roles, two separate tokens. A viewer token can read run history and
+    templates but cannot start anything.
+
+権限 / Roles
+------------
+  viewer    実行履歴とテンプレートを見られる。実行はできない。
+            Reads run history and templates. Cannot start anything.
+  operator  実行できる。
+            Can start runs.
+
+PMO の現場では「メンバーは進捗を見るだけ、担当者だけが実行」という分け方が
+自然になる。トークンが1本しかないと、進捗を見せたいだけの相手に実行権限まで
+渡すことになる。
+
+In practice the split is that members watch progress while one person runs
+things. With a single token, showing someone the progress means handing them
+the ability to file issues and send messages.
+
+**画面で実行ボタンを隠すのは権限管理ではありません。** サーバー側で拒否します。
+**Hiding the run button is not access control.** The endpoint refuses.
   - Binding 0.0.0.0 emits a warning. TLS is expected from a reverse proxy.
 """
 from __future__ import annotations
@@ -108,7 +128,8 @@ def discover_templates(root: Path) -> list[dict[str, Any]]:
 def create_app(
     engine: Engine,
     template_root: Path,
-    token: str,
+    token: str | None = None,
+    viewer_token: str | None = None,
     tenant: str = "",
     lang: str | None = None,
     store: RunStore | None = None,
@@ -116,24 +137,68 @@ def create_app(
     runs = store or RunStore()
     ui_lang = normalize(lang) if lang else detect()
 
+    if not token:
+        raise ValueError("web: 実行用トークンが必要です / an operator token is required")
+    if viewer_token and secrets.compare_digest(viewer_token, token):
+        # 同じ値だと、閲覧用を配った相手が実行もできてしまう。
+        # 分離したつもりで分離できていない、が一番危ない。
+        # Identical values would let everyone given the viewer token run
+        # things: believing you have separated the roles when you have not is
+        # the worst of the outcomes.
+        raise ValueError(
+            "web: 閲覧用と実行用のトークンは別の値にしてください "
+            "/ the viewer and operator tokens must differ"
+        )
+
+    roles = {"operator": token, "viewer": viewer_token}
+
     app = FastAPI(title="AI-PMO", docs_url=None, redoc_url=None,
                   openapi_url=None)
 
     # -- 認証 / authentication --------------------------------------------
 
-    def check(request: Request) -> None:
+    def role_for(supplied: str) -> str | None:
+        """トークンから権限を引く / resolve a token to its role.
+
+        どのトークンとも一致しなかった場合に、どれに近かったかを
+        漏らさないよう、全部を比較してから結果を見る。
+
+        Every token is compared before the result is inspected, so a failure
+        cannot reveal which one it came closest to.
+        """
+        matched: str | None = None
+        for name, value in roles.items():
+            if value and secrets.compare_digest(supplied, value):
+                matched = name
+        return matched
+
+    def principal(request: Request) -> str:
         supplied = (
             request.headers.get("x-aipmo-token")
             or request.cookies.get("aipmo_token")
             or request.query_params.get("token")
             or ""
         )
-        # 定数時間比較。長さの違いも漏らさない。
-        # Constant-time; does not leak length either.
-        if not secrets.compare_digest(supplied, token):
+        role = role_for(supplied)
+        if role is None:
             raise HTTPException(status_code=401, detail="invalid token")
+        return role
 
-    guard = Depends(check)
+    def require_operator(request: Request) -> str:
+        role = principal(request)
+        if role != "operator":
+            # 403 にする。認証は通っているが、権限が足りない。
+            # 401 だと、利用者は「鍵が違う」と思って入れ直そうとする。
+            # 403: the credential is valid, the permission is not. A 401 would
+            # send the reader off to re-enter a key that was never the problem.
+            raise HTTPException(
+                status_code=403,
+                detail="this token can view but not run",
+            )
+        return role
+
+    guard = Depends(principal)
+    operator_guard = Depends(require_operator)
 
     # -- 画面 / screens ----------------------------------------------------
 
@@ -144,7 +209,8 @@ def create_app(
             or request.query_params.get("token")
             or ""
         )
-        if not secrets.compare_digest(supplied, token):
+        role = role_for(supplied)
+        if role is None:
             return FileResponse(STATIC_DIR / "locked.html", status_code=401)
 
         response = FileResponse(STATIC_DIR / "index.html")
@@ -153,7 +219,7 @@ def create_app(
         # Move the token from the query string into a cookie so it stops
         # appearing in the address bar, screenshots and browser history.
         response.set_cookie(
-            "aipmo_token", token, httponly=True, samesite="strict",
+            "aipmo_token", supplied, httponly=True, samesite="strict",
             max_age=60 * 60 * 24 * 30,
         )
         return response
@@ -162,9 +228,11 @@ def create_app(
 
     # -- API ---------------------------------------------------------------
 
-    @app.get("/api/session", dependencies=[guard])
-    def session() -> dict[str, Any]:
+    @app.get("/api/session")
+    def session(role: str = guard) -> dict[str, Any]:
         return {
+            "role": role,
+            "can_run": role == "operator",
             "tenant": tenant,
             "lang": ui_lang,
             "strings": {**CATALOG[DEFAULT_LANG], **CATALOG[ui_lang]},
@@ -189,8 +257,8 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such run")
         return record
 
-    @app.post("/api/runs", dependencies=[guard])
-    def start_run(payload: dict[str, Any]) -> Any:
+    @app.post("/api/runs")
+    def start_run(payload: dict[str, Any], role: str = operator_guard) -> Any:
         raw_path = str(payload.get("path", ""))
         root = template_root.resolve()
         supplied = Path(raw_path)
@@ -226,6 +294,7 @@ def create_app(
             if ctx is None:
                 record = {
                     "id": secrets.token_hex(6), "template": template.name,
+                    "started_by": role,
                     "status": status, "error": error, "steps": [],
                     "started_at": None,
                 }
@@ -235,6 +304,11 @@ def create_app(
         record = {
             "id": ctx.run_id,
             "template": template.name,
+            # 誰が起こした実行かを残す。PMO では「いつ動いたか」より
+            # 「誰が動かしたか」が問われることがある。
+            # Records who started it: in a PMO context the question asked is
+            # often who ran this, not merely when it ran.
+            "started_by": role,
             "status": status,
             "error": error,
             "started_at": ctx.started_at.isoformat(),

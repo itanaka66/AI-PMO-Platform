@@ -61,9 +61,34 @@ def render(value: Any, scope: dict[str, Any]) -> Any:
 
 
 def _stringify(value: Any) -> str:
-    if isinstance(value, (dict, list)):
-        import json
+    """文字列の途中に値を差し込むときの見せ方。
 
+    ここが動くのは人が読む文（通知やレポート）を組み立てるときだけ。
+    プレースホルダ単独の場合は render が型のまま返すので、後続ステップへ
+    構造を渡す経路には影響しない。だから読みやすさを優先してよい。
+
+    値の並びを JSON のまま出すと、Slack に角括弧と引用符が並ぶ。
+    単純な値の並びは箇条書きにする。入れ子は JSON のままにする。
+    無理に平らにすると、かえって何を見ているのか分からなくなるため。
+
+    This runs only when building prose a person will read: a lone placeholder
+    keeps its type, so the structured hand-off between steps is untouched and
+    legibility can win here.
+
+    A list dumped as JSON puts brackets and quotes into a Slack message.
+    Lists of plain values become bullets; nested structures stay as JSON,
+    because flattening those hides what is actually being shown.
+    """
+    import json
+
+    if isinstance(value, list):
+        if not value:
+            return ""
+        if all(not isinstance(item, (dict, list)) for item in value):
+            if len(value) == 1:
+                return str(value[0])
+            return "\n".join(f"- {item}" for item in value)
+    if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False, indent=2)
     return str(value)
 
