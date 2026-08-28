@@ -1,0 +1,411 @@
+"""CLI エントリポイント。
+
+  aipmo validate templates/examples/meeting_minutes.yaml
+  aipmo run templates/examples/meeting_minutes.yaml --param meeting_id=MTG-001
+  aipmo adapters
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from .adapters.base import AdapterRegistry
+from .adapters.mock import MockJiraAdapter, MockSlackAdapter, MockTeamsAdapter
+from .adapters.postgres import PostgresAdapter
+from .adapters.qdrant import QdrantAdapter
+from .dsl import loader
+from .engine.runner import Engine, PromptLibrary, StepFailure
+from .llm.embeddings import build_embedder
+from .setup_wizard import load_env, run_interactive
+from .llm.registry import LLMRegistry
+
+DEFAULT_CONFIG = Path(os.environ.get("AIPMO_CONFIG", "config.yaml"))
+
+
+class ConfigError(Exception):
+    """設定の誤り。利用者にそのまま見せる文面を持つ / user-facing message."""
+
+
+ENV_REF = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)(?::-([^}]*))?\}")
+
+
+def expand_env(value: Any) -> Any:
+    """設定内の ${VAR} と ${VAR:-default} を環境変数で置き換える。
+
+    資格情報を config.yaml に書かせないために必要。設定ファイルは
+    共有され、Git に入り、サポートに貼られる。DSN やキーはそこに置けない。
+    未定義の変数はそのまま残す。空文字に潰すと、間違った DSN で
+    接続を試みて原因のわかりにくい失敗になる。
+
+    Lets credentials stay out of config.yaml, which gets shared, committed and
+    pasted into support threads. An undefined variable is left as-is rather
+    than collapsed to an empty string: silently blanking it would produce a
+    malformed DSN and a failure that is hard to trace back here.
+    """
+    if isinstance(value, str):
+        def swap(match: re.Match[str]) -> str:
+            name, default = match.group(1), match.group(2)
+            resolved = os.environ.get(name)
+            if resolved is not None:
+                return resolved
+            return default if default is not None else match.group(0)
+
+        return ENV_REF.sub(swap, value)
+    if isinstance(value, dict):
+        return {k: expand_env(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [expand_env(v) for v in value]
+    return value
+
+
+def load_config(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return expand_env(raw)
+
+
+def build_engine(config: dict[str, Any], base_dir: Path | None = None) -> Engine:
+    """設定からエンジンを組み立てる。
+
+    相対パスは config.yaml のある場所を基準に解決する。ショートカットから
+    起動すると作業ディレクトリが不定になるため、そこに依存させない。
+
+    Relative paths resolve against the directory holding config.yaml. Launching
+    from a desktop shortcut leaves the working directory unpredictable, so it
+    must not be the anchor.
+    """
+    base = base_dir or Path.cwd()
+    adapters = AdapterRegistry()
+    adapter_config = config.get("adapters") or {}
+    tenant = config.get("tenant")
+
+    def resolve(value: str) -> Path:
+        path = Path(value)
+        return path if path.is_absolute() else base / path
+
+    # mock は既定のまま。テンプレートを書く段階で実テナントを要求しない。
+    # real に切り替えると、設定のある実アダプタだけが登録される。
+    # Mock remains the default so writing templates needs no live tenant.
+    # Under "real", only the adapters that are actually configured register.
+    if adapter_config.get("mode", "mock") == "mock":
+        adapters.register(MockTeamsAdapter())
+        adapters.register(MockJiraAdapter())
+        adapters.register(MockSlackAdapter())
+    else:
+        if "teams" in adapter_config:
+            from .adapters.teams import TeamsAdapter
+
+            adapters.register(TeamsAdapter(**dict(adapter_config["teams"])))
+
+        if "jira" in adapter_config:
+            from .adapters.jira import JiraAdapter
+
+            adapters.register(JiraAdapter(**dict(adapter_config["jira"])))
+
+        if "agile" in adapter_config:
+            from .adapters.jira_agile import JiraAgileAdapter
+
+            # Jira と同じ資格情報で動く。設定を二重に書かせない。
+            # Runs on the same credentials; the config is not repeated.
+            spec = {**dict(adapter_config.get("jira") or {}),
+                    **dict(adapter_config["agile"])}
+            adapters.register(JiraAgileAdapter(**spec))
+
+        if "slack" in adapter_config:
+            from .adapters.slack import SlackAdapter
+
+            adapters.register(SlackAdapter(**dict(adapter_config["slack"])))
+
+    if "postgres" in adapter_config:
+        spec = dict(adapter_config["postgres"])
+        queries_file = spec.pop("queries_file", None)
+        queries = dict(spec.pop("queries", {}) or {})
+        if queries_file:
+            path = resolve(queries_file)
+            if not path.exists():
+                raise ConfigError(
+                    f"クエリ定義が見つかりません / query file not found: {path}\n"
+                    f"config.yaml の adapters.postgres.queries_file を確認してください "
+                    f"/ check adapters.postgres.queries_file in config.yaml"
+                )
+            queries.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+        adapters.register(PostgresAdapter(queries=queries, tenant=tenant, **spec))
+
+    if "qdrant" in adapter_config:
+        spec = dict(adapter_config["qdrant"])
+        embedder = build_embedder(spec.pop("embedding", None))
+        adapters.register(QdrantAdapter(tenant=tenant, embedder=embedder, **spec))
+
+    llms = LLMRegistry.from_config(config.get("llm") or {"default": {"provider": "echo"}})
+    prompts = PromptLibrary(resolve(config.get("prompts_dir", "prompts")))
+    return Engine(adapters, llms, prompts)
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    from .setup_wizard import SetupError
+
+    try:
+        written = run_interactive(Path(args.dir))
+    except SetupError as exc:
+        print(f"セットアップエラー / setup error: {exc}", file=sys.stderr)
+        return 1
+    except (KeyboardInterrupt, EOFError):
+        print("\n中止しました / Cancelled.", file=sys.stderr)
+        return 1
+    return 0 if written else 1
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """スマホ向け Web 画面を起動する / start the mobile web interface."""
+    try:
+        import uvicorn
+
+        from .web.server import create_app, generate_token
+    except ImportError:
+        print("Web 画面には追加の導入が必要です / the web interface needs extra packages:\n"
+              '  pip install "aipmo[web]"', file=sys.stderr)
+        return 1
+
+    from .i18n import translator
+
+    config = load_config(Path(args.config))
+    web = dict(config.get("web") or {})
+
+    host = args.host or web.get("host", "127.0.0.1")
+    port = args.port or int(web.get("port", 8765))
+    # トークンは config ではなく環境変数か自動生成から取る。
+    # config.yaml は共有される前提なので、そこに常設の鍵を置かせない。
+    # The token comes from the environment or is generated. config.yaml gets
+    # shared, so it is not a place to park a standing credential.
+    token = os.environ.get("AIPMO_WEB_TOKEN") or generate_token()
+    # 閲覧用は既定で発行する。必要になってから作ろうとすると、
+    # そのときには実行用を配ってしまっている。
+    # Issued by default: leaving it until it is needed means the operator token
+    # has already been handed out by then.
+    viewer_token = os.environ.get("AIPMO_VIEWER_TOKEN") or generate_token()
+
+    engine = build_engine(config)
+    template_root = Path(web.get("templates_dir", "templates")).resolve()
+    app = create_app(engine, template_root, token, viewer_token=viewer_token,
+                     tenant=config.get("tenant", ""), lang=config.get("lang"))
+
+    t = translator(config.get("lang"))
+    shown = host if host not in ("0.0.0.0", "::") else _lan_address()
+
+    print()
+    print(f"  {t('serve_ready')}")
+    print(f"    {t('role_operator')}")
+    print(f"      http://{shown}:{port}/?token={token}")
+    print(f"    {t('role_viewer')}")
+    print(f"      http://{shown}:{port}/?token={viewer_token}")
+    print()
+    if host in ("127.0.0.1", "localhost", "::1"):
+        print(f"  ! {t('serve_local_only')}")
+        print(f"    aipmo serve --host 0.0.0.0")
+    else:
+        print(f"  ! {t('serve_exposed')}")
+    print()
+
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+    return 0
+
+
+def _lan_address() -> str:
+    """LAN 側のアドレスを推定する / best guess at the LAN address.
+
+    スマホから開く URL を人手で調べさせないため。接続はしない。
+    Saves the user from hunting for their own IP. No traffic is sent.
+    """
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("192.0.2.1", 1))   # TEST-NET-1: 到達しない / never routed
+        return sock.getsockname()[0]
+    except OSError:
+        return "localhost"
+    finally:
+        sock.close()
+
+
+def cmd_schedule(args: argparse.Namespace) -> int:
+    """定時実行を開始する / start the scheduler."""
+    from .engine.scheduler import Scheduler, State, discover_jobs
+
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    engine = build_engine(config, base_dir=base)
+
+    web = dict(config.get("web") or {})
+    root = Path(web.get("templates_dir", "templates"))
+    if not root.is_absolute():
+        root = base / root
+
+    jobs, problems = discover_jobs(root)
+
+    for problem in problems:
+        # 起動しないテンプレートを黙って捨てない。
+        # 動かない理由が分からないのが一番困る。
+        # Never drop a template silently: not knowing why something does not
+        # run is the worst outcome.
+        print(f"!  {problem}", file=sys.stderr)
+
+    if not jobs:
+        print("定時起動のテンプレートがありません "
+              "/ no templates declare a schedule.\n"
+              '  trigger: "schedule:0 9 * * MON-FRI" のように書きます。',
+              file=sys.stderr)
+        return 1
+
+    state_path = Path(config.get("state_file", base / "scheduler-state.json"))
+    scheduler = Scheduler(engine, jobs, State.load(state_path))
+
+    if args.list:
+        for job in scheduler.jobs:
+            when = (job.next_run.astimezone(job.tz()).strftime("%Y-%m-%d %H:%M %Z")
+                    if job.next_run else "なし / never")
+            print(f"{job.name:<28} {when}   {job.cron_expression}")
+        return 0
+
+    if args.once:
+        for result in scheduler.tick():
+            print(f"{result['status']:<18} {result['job']}")
+        return 0
+
+    logging.getLogger("aipmo.scheduler").setLevel(logging.INFO)
+    scheduler.run_forever(interval=args.interval)
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """接続確認 / connection check."""
+    config_path = Path(args.config)
+    engine = build_engine(load_config(config_path), config_path.parent)
+    ok = True
+    for name in engine.adapters.names():
+        healthy = engine.adapters.get(name).health_check()
+        print(f"{'✓' if healthy else '✗'} {name}")
+        ok = ok and healthy
+    return 0 if ok else 1
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    ok = True
+    for path in args.paths:
+        try:
+            template = loader.load_file(path)
+        except loader.TemplateError as exc:
+            print(f"NG  {path}\n    {exc}")
+            ok = False
+            continue
+        print(f"OK  {path}  [{template.industry}] ステップ {len(template.steps)} 件")
+    return 0 if ok else 1
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    config_path = Path(args.config)
+    try:
+        engine = build_engine(load_config(config_path), config_path.parent)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        template = loader.load_file(args.path)
+    except loader.TemplateError as exc:
+        print(f"テンプレートエラー: {exc}", file=sys.stderr)
+        return 1
+
+    params = dict(kv.split("=", 1) for kv in args.param)
+    trigger = json.loads(args.trigger) if args.trigger else dict(params)
+
+    try:
+        ctx = engine.run(template, params=params, trigger=trigger)
+    except StepFailure as exc:
+        print(f"実行失敗: {exc}", file=sys.stderr)
+        return 1
+
+    for step_id, result in ctx.results.items():
+        mark = {"success": "✓", "skipped": "-", "failed": "✗"}[result.status]
+        print(f"{mark} {step_id:<20} {result.duration_ms:>5}ms")
+
+    if args.json:
+        print(json.dumps(
+            {k: v.output for k, v in ctx.results.items()},
+            ensure_ascii=False, indent=2, default=str,
+        ))
+    return 0
+
+
+def cmd_adapters(args: argparse.Namespace) -> int:
+    config_path = Path(args.config)
+    engine = build_engine(load_config(config_path), config_path.parent)
+    for name in engine.adapters.names():
+        adapter = engine.adapters.get(name)
+        print(f"{name}: {', '.join(sorted(adapter.actions())) or '(アクションなし)'}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="aipmo")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
+    parser.add_argument("-v", "--verbose", action="store_true")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_validate = sub.add_parser("validate", help="テンプレートを検証する")
+    p_validate.add_argument("paths", nargs="+")
+    p_validate.set_defaults(func=cmd_validate)
+
+    p_run = sub.add_parser("run", help="テンプレートを実行する")
+    p_run.add_argument("path")
+    p_run.add_argument("--param", action="append", default=[], metavar="KEY=VALUE")
+    p_run.add_argument("--trigger", help="トリガーペイロード (JSON)")
+    p_run.add_argument("--json", action="store_true", help="全ステップの出力を表示")
+    p_run.set_defaults(func=cmd_run)
+
+    p_adapters = sub.add_parser("adapters", help="利用可能なアダプタとアクションを表示")
+    p_adapters.set_defaults(func=cmd_adapters)
+
+    p_doctor = sub.add_parser("doctor", help="各アダプタへの接続を確認する")
+    p_doctor.set_defaults(func=cmd_doctor)
+
+
+    p_serve = sub.add_parser("serve", help="スマホ向け Web 画面を起動 / mobile web interface")
+    p_serve.add_argument("--host", help="待ち受けアドレス / bind address")
+    p_serve.add_argument("--port", type=int, help="待ち受けポート / port")
+    p_serve.set_defaults(func=cmd_serve)
+
+    p_schedule = sub.add_parser(
+        "schedule", help="定時実行を開始 / start the scheduler")
+    p_schedule.add_argument("--list", action="store_true",
+                            help="次回時刻を表示して終了 / show next times and exit")
+    p_schedule.add_argument("--once", action="store_true",
+                            help="いま実行すべきものだけ実行 / run what is due, then exit")
+    p_schedule.add_argument("--interval", type=float, default=20.0,
+                            help="確認の間隔（秒）/ check interval in seconds")
+    p_schedule.set_defaults(func=cmd_schedule)
+
+    p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")
+    p_setup.add_argument("--dir", default=".", help="設定の出力先 / where to write config")
+    p_setup.set_defaults(func=cmd_setup)
+
+    args = parser.parse_args(argv)
+    load_env(Path(args.config).parent if Path(args.config).parent != Path("") else Path("."))
+    logging.basicConfig(
+        level=logging.INFO if args.verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

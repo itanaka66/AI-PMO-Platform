@@ -1,0 +1,116 @@
+name: meeting_task_update
+version: "1"
+industry: software
+description: |
+  会議の記録から、登録済み課題の状況変化を拾って反映する。
+  確信の低いものは反映せず、人が見る場所に出す。
+
+trigger: "event:teams:meeting_ended"
+
+params:
+  organiser: ""
+  jira_project: PROJ
+  review_channel: "#pmo"
+
+  # これ未満は自動で反映しない。
+  #
+  # 更新は新規作成より危ない操作です。作成の誤りは余計な課題が1件増えるだけ
+  # ですが、更新の誤りは**すでに正しかった期限や担当者を消します。**
+  # 迷ったら書き換えない、という側に倒しています。
+  #
+  # Updating is more dangerous than creating: a mistaken create adds one
+  # unwanted issue, a mistaken update destroys a value that was right. The
+  # default leans towards not writing.
+  apply_above: 0.8
+
+steps:
+  - id: meeting
+    adapter: teams
+    action: find_meeting
+    inputs:
+      join_url: "{{ trigger.join_url }}"
+      organiser_id: "{{ params.organiser }}"
+
+  - id: transcript
+    adapter: teams
+    action: get_transcript
+    inputs:
+      meeting_id: "{{ steps.meeting.output.meeting_id }}"
+      organiser_id: "{{ params.organiser }}"
+      wait_seconds: 300
+
+  # 更新対象の候補。完了済みは含めない。
+  # 終わった課題を会議の話題から掘り起こして書き換えない。
+  # Done work is excluded: a finished issue should not be reopened by a passing
+  # mention in a meeting.
+  - id: open_issues
+    when: "{{ steps.transcript.output.utterance_count }} > 0"
+    adapter: jira
+    action: search
+    inputs:
+      jql: 'project = "{{ params.jira_project }}" AND statusCategory != Done ORDER BY updated DESC'
+      limit: 60
+
+  - id: propose
+    when: "{{ steps.open_issues.output.count }} > 0"
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: todo_update_ja
+    inputs:
+      today: "{{ run.date }}"
+      issues: "{{ steps.open_issues.output.items }}"
+      transcript: "{{ steps.transcript.output.text }}"
+    output_format: json
+    output_schema:
+      required: [updates]
+
+  # 確信の高いものだけ反映する。
+  # 課題キーが実在するかは、アダプタ側が 404 で弾く。
+  # モデルが存在しないキーを書いても、別の課題を壊すことはない。
+  #
+  # Only confident changes are applied. A key the model invented fails at the
+  # adapter with a 404 rather than damaging a different issue.
+  - id: apply
+    when: "{{ steps.propose.output.updates }}"
+    for_each: "{{ steps.propose.output.updates }}"
+    as: change
+    # 確信の低いものは書き換えない。飛ばした件数は下の報告に出る。
+    # Low-confidence changes are not written; the number skipped is reported.
+    where: "{{ change.confidence }} >= {{ params.apply_above }}"
+    max_items: 25
+    continue_on_error: true
+    adapter: jira
+    action: update_issue
+    inputs:
+      issue_key: "{{ change.issue_key }}"
+      due_date: "{{ change.due_date }}"
+      assignee: "{{ change.assignee }}"
+      # 何を根拠に変えたかを課題に残す。後から辿れないと信用されない。
+      # Records what the change was based on: a change nobody can trace back is
+      # a change nobody trusts.
+      comment: |
+        {{ run.date }} の会議より自動更新
+        根拠: {{ change.reason }}
+
+  # 反映しなかったもの、拾いきれなかったものを人に渡す。
+  # ここを出さないと、判断を保留したことが誰にも伝わらない。
+  # Without this, the fact that a judgement was withheld reaches no one.
+  - id: for_review
+    when: "{{ steps.propose.output.updates }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.review_channel }}"
+      text: |
+        会議からの課題更新 ({{ run.date }})
+
+        反映: {{ steps.apply.output.count }} 件
+        確信が低く保留: {{ steps.apply.output.skipped }} 件
+        失敗: {{ steps.apply.output.failed }} 件
+
+        課題に結びつけられなかった発言:
+        {{ steps.propose.output.unmatched }}
+
+        保留分は自動では反映していません。必要なら手で直してください。

@@ -1,0 +1,88 @@
+name: overdue_chase
+version: "1"
+industry: software
+description: |
+  期限を過ぎたタスクの担当者に、個別に催促を送る。
+  1人につき1通にまとめ、全体への晒し上げにしない。
+
+trigger: "schedule:0 10 * * MON-FRI"
+
+params:
+  jira_project: PROJ
+
+  # Jira の担当者名 → Slack の宛先。
+  #
+  # Jira は担当者のメールアドレスを返しません（利用者の設定で隠せるため）。
+  # そのため Slack の ID を自動で引き当てることができず、ここに対応表が要ります。
+  # 面倒ですが、勝手に推測して**別人に催促を送る**よりはよいと判断しています。
+  #
+  # Jira does not return an assignee's email address — users can hide it — so a
+  # Slack id cannot be resolved automatically. Hence this table. It is tedious,
+  # but preferable to guessing and chasing the wrong person.
+  #
+  # Slack の ID は「プロフィール → その他 → メンバー ID をコピー」で分かります。
+  # チャンネル名 (#general) ではなく個人の ID (U…) を書くと DM になります。
+  directory:
+    "田中 太郎": "U01ABCDEFGH"
+    "佐藤 花子": "U02IJKLMNOP"
+
+  # 連絡先の分からない人がいたときの報告先
+  # Where to report people who could not be reached
+  fallback_channel: "#pmo"
+
+steps:
+  - id: overdue
+    adapter: jira
+    action: find_overdue
+    inputs:
+      project: "{{ params.jira_project }}"
+      as_of: "{{ run.date }}"
+
+  # 遅延が無ければ以降は動かない。0件で「0件でした」と送らない。
+  # Nothing follows when there is no overdue work: an empty run should be
+  # silent, not announce its own emptiness.
+  - id: compose
+    when: "{{ steps.overdue.output.count }} > 0"
+    llm:
+      profile: default
+      temperature: 0.2
+    prompt: chase_ja
+    inputs:
+      today: "{{ run.date }}"
+      overdue: "{{ steps.overdue.output.items }}"
+      directory: "{{ params.directory }}"
+    output_format: json
+    output_schema:
+      required: [messages]
+
+  # 担当者ごとに1通ずつ。1人失敗しても、残りには届く。
+  # One message per person; a failure for one still reaches the others.
+  - id: chase
+    when: "{{ steps.compose.output.messages }}"
+    for_each: "{{ steps.compose.output.messages }}"
+    as: message
+    max_items: 30
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ message.channel }}"
+      text: "{{ message.text }}"
+
+  # 連絡先が分からなかった人は、PMO 側で拾えるようにする。
+  # 黙って落とすと、その人だけ永久に催促が届かない。
+  # Reported so PMO can pick them up: dropped silently, those people would
+  # simply never be chased.
+  - id: report_unreachable
+    when: "{{ steps.compose.output.unreachable }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.fallback_channel }}"
+      text: |
+        連絡先が分からず催促を送れませんでした ({{ run.date }})
+
+        {{ steps.compose.output.unreachable }}
+
+        テンプレートの directory に Slack の ID を追加してください。

@@ -1,0 +1,28 @@
+# 非 Docker 版 (ノート PC) / Non-Docker build (laptop)
+# クラウド AI 限定。ローカル LLM を動かす GPU/メモリを前提にできないため。
+# Cloud AI only: a laptop cannot be assumed to have the GPU/RAM for a local model.
+
+tenant: company_a
+
+llm:
+  default:
+    provider: openai
+    model: gpt-4o-mini
+  fast:
+    provider: openai
+    model: gpt-4o-mini
+
+prompts_dir: prompts
+
+adapters:
+  mode: mock
+  postgres:
+    dsn: postgresql://aipmo:aipmo@localhost:5432/aipmo
+    queries_file: queries.yaml
+  qdrant:
+    url: http://localhost:6333
+    public_collection: public_pmo_knowledge
+    embedding:
+      provider: openai
+      model: text-embedding-3-small
+      dimension: 1536

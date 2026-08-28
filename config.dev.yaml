@@ -1,0 +1,19 @@
+# 開発用 / development only.
+tenant: acme_corp
+lang: ja
+
+llm:
+  default:
+    provider: echo
+
+prompts_dir: prompts
+
+adapters:
+  mode: mock
+
+web:
+  # 既定は自分の端末のみ。スマホから使うには 0.0.0.0 にする。
+  # Localhost only by default; use 0.0.0.0 to reach it from a phone.
+  host: 127.0.0.1
+  port: 8765
+  templates_dir: templates

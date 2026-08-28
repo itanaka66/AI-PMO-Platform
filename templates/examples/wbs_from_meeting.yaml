@@ -1,0 +1,84 @@
+name: wbs_from_meeting
+version: "1"
+industry: software
+description: |
+  会議の決定事項から WBS（作業分解構成）の草案を作る。
+  そのまま使える計画ではなく、たたき台として人に渡す。
+
+trigger: manual
+
+params:
+  organiser: ""
+  subject: "この会議で決まった作業"
+  slack_channel: "#project-updates"
+
+steps:
+  - id: meeting
+    adapter: teams
+    action: find_meeting
+    inputs:
+      join_url: "{{ trigger.join_url }}"
+      organiser_id: "{{ params.organiser }}"
+
+  - id: transcript
+    adapter: teams
+    action: get_transcript
+    inputs:
+      meeting_id: "{{ steps.meeting.output.meeting_id }}"
+      organiser_id: "{{ params.organiser }}"
+      wait_seconds: 300
+
+  - id: wbs
+    when: "{{ steps.transcript.output.utterance_count }} > 0"
+    llm:
+      profile: default
+      temperature: 0.2
+      max_tokens: 8000
+    prompt: wbs_ja
+    inputs:
+      today: "{{ run.date }}"
+      subject: "{{ params.subject }}"
+      source: "{{ steps.transcript.output.text }}"
+    output_format: json
+    output_schema:
+      required: [title, phases]
+
+  # フェーズごとに投稿する。WBS は1通に収めると読めなくなる。
+  # Posted per phase: a whole WBS in one message is not readable.
+  - id: post_phases
+    when: "{{ steps.wbs.output.phases }}"
+    for_each: "{{ steps.wbs.output.phases }}"
+    as: phase
+    max_items: 12
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        *{{ steps.wbs.output.title }}* — {{ phase.name }}
+        ({{ loop.number }} / {{ loop.total }})
+
+        {{ phase.lines }}
+
+  # 前提と未決事項を必ず出す。ここを隠すと、埋めた推測が
+  # 決まったことのように見えてしまう。
+  # Assumptions and open questions are always posted: hidden, the model's
+  # guesses would read as decisions.
+  - id: post_caveats
+    when: "{{ steps.wbs.output.title }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        *{{ steps.wbs.output.title }}* — 確認が必要な点
+
+        置いた前提:
+        {{ steps.wbs.output.assumptions }}
+
+        決まっていないこと:
+        {{ steps.wbs.output.unknowns }}
+
+        これは草案です。そのまま計画として使わないでください。

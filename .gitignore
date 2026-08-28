@@ -1,0 +1,41 @@
+# 資格情報 / credentials
+# .env には API キーが入ります。ここを外すと、いつか誰かが鍵をコミットします。
+# .env holds API keys. Without this line, someone eventually commits one.
+.env
+*.env
+!.env.example
+aiven-ca.pem
+*.pem
+*.key
+
+# 利用者ごとの設定 / per-installation configuration
+# 雛形 (config.dev / docker / laptop) は追跡し、生成された実物は追跡しない。
+# The templates are tracked; the generated file is not.
+/config.yaml
+deploy/*/config.yaml
+
+# 実行時の状態 / runtime state
+scheduler-state.json
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# インストーラのビルド生成物 / installer build output
+/installer/build/
+/installer/dist/
+
+# エディタ・OS / editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

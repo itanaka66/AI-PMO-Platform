@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#1f5f8b">
+<meta name="robots" content="noindex, nofollow">
+<title>AI-PMO</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header>
+  <span class="wordmark">AI-PMO</span>
+  <span class="pulse" id="pulse" data-state="unknown" role="status"
+        aria-label="connection"></span>
+  <span class="tenant" id="tenant"></span>
+</header>
+
+<main>
+  <h2 id="h-templates">Templates</h2>
+  <div id="templates"></div>
+
+  <h2 id="h-runs">Runs</h2>
+  <div id="runs" class="spine"></div>
+</main>
+
+<div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

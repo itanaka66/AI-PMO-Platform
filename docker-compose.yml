@@ -1,129 +1,76 @@
-# Oracle Cloud Always Free (Ampere A1, arm64) 向け構成
-# Deployment for Oracle Cloud Always Free (Ampere A1, arm64)
+# AI-PMO Platform — Docker 構成 / Docker deployment
 #
-# 前提 / Assumptions:
-#   - Always Free 枠は 2 OCPU / 12GB（2026年6月15日に半減）
-#     The Always Free allowance is 2 OCPU / 12GB since 15 June 2026.
-#   - PostgreSQL は Aiven の無料プラン（外部・1GB・アイドルで停止）
-#     PostgreSQL is Aiven's free plan: external, 1GB, powered off while idle.
-#   - AI はクラウドまたは別途用意した推論サーバー
-#     The AI runs in the cloud or on an inference server you provide.
+#   docker compose up -d
+#   docker compose run --rm aipmo setup
 #
-# ここに Ollama は入れない / There is deliberately no Ollama service here.
-#   12GB・GPU なしの ARM で 7B 量子化モデルは 5-8 tok/s 程度。
-#   1時間の会議 Transcript は数万トークンあるので、議事録1本に数十分かかる。
-#   実用にならないので、この構成では最初から外す。
-#   On 12GB of GPU-less ARM a quantised 7B model runs at roughly 5-8 tok/s.
-#   An hour of meeting transcript is tens of thousands of tokens, so a single
-#   set of minutes would take tens of minutes. It is not viable, so it is not
-#   offered here.
+# ローカル LLM を使う構成。会議 Transcript を外部に出さない。
+# Runs everything locally, so meeting transcripts never leave the network.
 
 services:
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+  postgres:
+    image: postgres:16-alpine
     environment:
-      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
-    depends_on:
-      - aipmo
+      POSTGRES_USER: aipmo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aipmo}
+      POSTGRES_DB: aipmo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aipmo"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
-    # TLS はここで終端する。アプリ側は TLS を持たない。
-    # TLS terminates here; the application does not implement it.
-    deploy:
-      resources:
-        limits: { memory: 256M }
 
   qdrant:
     image: qdrant/qdrant:latest
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333'"]
-      interval: 30s
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/6333 || exit 1"]
+      interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 12
     restart: unless-stopped
-    # ベクトル検索はメモリを食う。上限を切らないと、
-    # 12GB しかない機械で OOM Killer が別のサービスを落としに来る。
-    # Vector search is memory-hungry. Without a ceiling the OOM killer on a
-    # 12GB machine will pick a victim, and it will not be this one.
-    deploy:
-      resources:
-        limits: { memory: 3G }
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    # GPU がある場合はコメントを外す / uncomment if a GPU is available
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
 
   aipmo:
-    build:
-      context: ../..
-      dockerfile: deploy/oracle/Dockerfile
-    env_file: .env
-    environment:
-      AIPMO_CONFIG: /app/config.yaml
-      AIPMO_WEB_TOKEN: ${AIPMO_WEB_TOKEN:?set AIPMO_WEB_TOKEN in .env}
-      AIPMO_VIEWER_TOKEN: ${AIPMO_VIEWER_TOKEN:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
-    volumes:
-      - ../../templates:/app/templates:ro
-      - ../../prompts:/app/prompts:ro
-      - ./config.oracle.yaml:/app/config.yaml:ro
-      - ./aiven-ca.pem:/app/aiven-ca.pem:ro
+    build: .
     depends_on:
+      postgres:
+        condition: service_healthy
       qdrant:
         condition: service_healthy
-    restart: unless-stopped
-    # 公開はしない。Caddy 経由でのみ届く。
-    # Not published: reachable only through Caddy.
-    expose:
-      - "8765"
-    command: ["serve", "--host", "0.0.0.0", "--port", "8765"]
-    deploy:
-      resources:
-        limits: { memory: 2G }
-
-  # 定時実行。画面とは別のコンテナにする。
-  # 画面の再起動で予定が止まるのは困るし、逆に定時処理が重いときに
-  # 画面が応答しなくなるのも困る。
-  #
-  # The scheduler runs as its own container: a restart of the interface should
-  # not stop the schedule, and a heavy scheduled run should not make the
-  # interface unresponsive.
-  scheduler:
-    build:
-      context: ../..
-      dockerfile: deploy/oracle/Dockerfile
-    env_file: .env
+      ollama:
+        condition: service_started
     environment:
-      AIPMO_CONFIG: /app/config.yaml
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
+      AIPMO_CONFIG: /app/config.docker.yaml
+      OLLAMA_HOST: http://ollama:11434
     volumes:
-      - ../../templates:/app/templates:ro
-      - ../../prompts:/app/prompts:ro
-      - ./config.oracle.yaml:/app/config.yaml:ro
-      - ./aiven-ca.pem:/app/aiven-ca.pem:ro
-      - scheduler_state:/app/state
-    depends_on:
-      qdrant:
-        condition: service_healthy
-    restart: unless-stopped
+      - ./prompts:/app/prompts:ro
+      - ./templates:/app/templates:ro
+      - ./queries.yaml:/app/queries.yaml:ro
+    # 常駐スケジューラは Step 5。現状は都度実行。
+    # The resident scheduler is Step 5; for now this runs on demand.
+    entrypoint: ["aipmo"]
     command: ["schedule"]
-    # 実行中のテンプレートを最後まで走らせてから止まる。途中で切ると、
-    # 課題は起票されたのに通知されていない、といった半端が残る。
-    # Lets the current run finish: cutting it short leaves half-states, such as
-    # issues filed but nobody told.
     stop_grace_period: 120s
-    deploy:
-      resources:
-        limits: { memory: 2G }
 
 volumes:
-  scheduler_state:
-  caddy_data:
-  caddy_config:
+  postgres_data:
   qdrant_data:
+  ollama_models:
