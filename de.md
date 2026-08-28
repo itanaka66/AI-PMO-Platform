@@ -48,7 +48,7 @@ Es ist kostenlos. Für die Nutzung fallen keine Gebühren an.
 
 ### 1. Installieren
 
-Folgen Sie [INSTALL.md](../../INSTALL.md).
+Folgen Sie [INSTALL.md](INSTALL.md).
 
 - **Windows** — `AI-PMO-Setup.exe` doppelklicken
 - **Mac / Linux** — im Terminal `./scripts/install.sh` ausführen
@@ -84,7 +84,7 @@ Es ist eine lange Zeichenfolge. Zeigen Sie sie niemandem.
 - OpenAI — https://platform.openai.com/api-keys
 - Gemini — https://aistudio.google.com
 
-Näheres in [PROVIDERS.md](../PROVIDERS.md).
+Näheres in [PROVIDERS.md](PROVIDERS.md).
 
 ### 3. Ausprobieren
 
@@ -171,18 +171,18 @@ Führen Sie `aipmo setup` noch einmal aus.
 Unsignierte Dateien können eine Warnung auslösen. Falls Sie das stört,
 verwenden Sie die Mac/Linux- oder die Docker-Fassung.
 
-Mehr dazu in [INSTALL.md](../../INSTALL.md).
+Mehr dazu in [INSTALL.md](INSTALL.md).
 
 ---
 
 ## Was Sie als Nächstes lesen sollten
 
-- [INSTALL.md](../../INSTALL.md) — die Installation im Detail
-- [MOBILE.md](../MOBILE.md) — Nutzung vom Telefon aus
-- [PROVIDERS.md](../PROVIDERS.md) — die Wahl des KI-Anbieters
-- [AGENTS.md](../AGENTS.md) — die KI selbst entscheiden lassen
-- [TEAMS.md](../TEAMS.md) — Teams-Aufzeichnungen anbinden
-- [JIRA-SLACK.md](../JIRA-SLACK.md) — Vorgänge in Jira anlegen, in Slack benachrichtigen
-- [SCHEDULER.md](../SCHEDULER.md) — zeitgesteuert automatisch ausführen
-- [README.md](../../README.md) — Funktionsweise und Aufbau, für Entwickler
+- [INSTALL.md](INSTALL.md) — die Installation im Detail
+- [MOBILE.md](MOBILE.md) — Nutzung vom Telefon aus
+- [PROVIDERS.md](PROVIDERS.md) — die Wahl des KI-Anbieters
+- [AGENTS.md](AGENTS.md) — die KI selbst entscheiden lassen
+- [TEAMS.md](TEAMS.md) — Teams-Aufzeichnungen anbinden
+- [JIRA-SLACK.md](JIRA-SLACK.md) — Vorgänge in Jira anlegen, in Slack benachrichtigen
+- [SCHEDULER.md](SCHEDULER.md) — zeitgesteuert automatisch ausführen
+- [README.md](README.md) — Funktionsweise und Aufbau, für Entwickler
 - `templates/examples/` — Beispielvorlagen

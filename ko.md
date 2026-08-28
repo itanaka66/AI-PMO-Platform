@@ -46,7 +46,7 @@
 
 ### 1. 설치하기
 
-[INSTALL.md](../../INSTALL.md)의 순서를 따라 주세요.
+[INSTALL.md](INSTALL.md)의 순서를 따라 주세요.
 
 - **Windows** — `AI-PMO-Setup.exe` 더블클릭
 - **Mac / Linux** — 터미널에서 `./scripts/install.sh`
@@ -82,7 +82,7 @@
 - OpenAI — https://platform.openai.com/api-keys
 - Gemini — https://aistudio.google.com
 
-자세한 내용은 [PROVIDERS.md](../PROVIDERS.md)를 보세요.
+자세한 내용은 [PROVIDERS.md](PROVIDERS.md)를 보세요.
 
 ### 3. 실행해 보기
 
@@ -167,18 +167,18 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 서명이 없는 파일은 경고가 뜰 수 있습니다.
 신경 쓰인다면 Mac / Linux판이나 Docker판을 써 주세요.
 
-더 자세한 내용은 [INSTALL.md](../../INSTALL.md)를 보세요.
+더 자세한 내용은 [INSTALL.md](INSTALL.md)를 보세요.
 
 ---
 
 ## 다음에 읽을 것
 
-- [INSTALL.md](../../INSTALL.md) — 설치 상세
-- [MOBILE.md](../MOBILE.md) — 휴대폰에서 쓰기
-- [PROVIDERS.md](../PROVIDERS.md) — AI 제공자 고르는 법
-- [AGENTS.md](../AGENTS.md) — AI가 스스로 판단하게 하기
-- [TEAMS.md](../TEAMS.md) — Teams 회의 기록과 연결하기
-- [JIRA-SLACK.md](../JIRA-SLACK.md) — Jira 등록과 Slack 알림
-- [SCHEDULER.md](../SCHEDULER.md) — 정해진 시각에 자동으로 실행하기
-- [README.md](../../README.md) — 구조와 설계 (개발자용)
+- [INSTALL.md](INSTALL.md) — 설치 상세
+- [MOBILE.md](MOBILE.md) — 휴대폰에서 쓰기
+- [PROVIDERS.md](PROVIDERS.md) — AI 제공자 고르는 법
+- [AGENTS.md](AGENTS.md) — AI가 스스로 판단하게 하기
+- [TEAMS.md](TEAMS.md) — Teams 회의 기록과 연결하기
+- [JIRA-SLACK.md](JIRA-SLACK.md) — Jira 등록과 Slack 알림
+- [SCHEDULER.md](SCHEDULER.md) — 정해진 시각에 자동으로 실행하기
+- [README.md](README.md) — 구조와 설계 (개발자용)
 - `templates/examples/` — 템플릿 실제 예

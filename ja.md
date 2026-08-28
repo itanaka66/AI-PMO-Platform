@@ -46,7 +46,7 @@
 
 ### 1. 入れる
 
-[INSTALL.md](../../INSTALL.md) の手順に従ってください。
+[INSTALL.md](INSTALL.md) の手順に従ってください。
 
 - **Windows** — `AI-PMO-Setup.exe` をダブルクリック
 - **Mac / Linux** — ターミナルで `./scripts/install.sh`
@@ -82,7 +82,7 @@
 - OpenAI — https://platform.openai.com/api-keys
 - Gemini — https://aistudio.google.com
 
-詳しくは [PROVIDERS.md](../PROVIDERS.md) を見てください。
+詳しくは [PROVIDERS.md](PROVIDERS.md) を見てください。
 
 ### 3. 動かしてみる
 
@@ -167,18 +167,18 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 署名のないファイルは警告が出ることがあります。
 気になる場合は Mac / Linux 版か Docker 版を使ってください。
 
-さらに詳しくは [INSTALL.md](../../INSTALL.md) を見てください。
+さらに詳しくは [INSTALL.md](INSTALL.md) を見てください。
 
 ---
 
 ## 次に読むもの
 
-- [INSTALL.md](../../INSTALL.md) — インストールの詳細
-- [MOBILE.md](../MOBILE.md) — スマホから使う
-- [PROVIDERS.md](../PROVIDERS.md) — AI の提供元の選び方
-- [AGENTS.md](../AGENTS.md) — AI に自分で判断させる
-- [TEAMS.md](../TEAMS.md) — Teams の会議記録とつなぐ
-- [JIRA-SLACK.md](../JIRA-SLACK.md) — Jira への起票と Slack への通知
-- [SCHEDULER.md](../SCHEDULER.md) — 決まった時刻に自動で動かす
-- [README.md](../../README.md) — 仕組みと設計（開発者向け）
+- [INSTALL.md](INSTALL.md) — インストールの詳細
+- [MOBILE.md](MOBILE.md) — スマホから使う
+- [PROVIDERS.md](PROVIDERS.md) — AI の提供元の選び方
+- [AGENTS.md](AGENTS.md) — AI に自分で判断させる
+- [TEAMS.md](TEAMS.md) — Teams の会議記録とつなぐ
+- [JIRA-SLACK.md](JIRA-SLACK.md) — Jira への起票と Slack への通知
+- [SCHEDULER.md](SCHEDULER.md) — 決まった時刻に自動で動かす
+- [README.md](README.md) — 仕組みと設計（開発者向け）
 - `templates/examples/` — テンプレートの実例

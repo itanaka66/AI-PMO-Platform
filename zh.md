@@ -46,7 +46,7 @@
 
 ### 1. 安装
 
-请按照 [INSTALL.md](../../INSTALL.md) 的步骤操作。
+请按照 [INSTALL.md](INSTALL.md) 的步骤操作。
 
 - **Windows** —— 双击 `AI-PMO-Setup.exe`
 - **Mac / Linux** —— 在终端运行 `./scripts/install.sh`
@@ -82,7 +82,7 @@
 - OpenAI —— https://platform.openai.com/api-keys
 - Gemini —— https://aistudio.google.com
 
-详情请见 [PROVIDERS.md](../PROVIDERS.md)。
+详情请见 [PROVIDERS.md](PROVIDERS.md)。
 
 ### 3. 试运行
 
@@ -166,18 +166,18 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 未签名的文件可能触发警告。
 如有顾虑，请改用 Mac / Linux 版或 Docker 版。
 
-更多内容请见 [INSTALL.md](../../INSTALL.md)。
+更多内容请见 [INSTALL.md](INSTALL.md)。
 
 ---
 
 ## 接下来阅读
 
-- [INSTALL.md](../../INSTALL.md) —— 安装详情
-- [MOBILE.md](../MOBILE.md) —— 用手机使用
-- [PROVIDERS.md](../PROVIDERS.md) —— 如何选择 AI 提供方
-- [AGENTS.md](../AGENTS.md) —— 让 AI 自主判断
-- [TEAMS.md](../TEAMS.md) —— 对接 Teams 会议记录
-- [JIRA-SLACK.md](../JIRA-SLACK.md) —— 在 Jira 登记任务、在 Slack 通知
-- [SCHEDULER.md](../SCHEDULER.md) —— 按设定的时间自动运行
-- [README.md](../../README.md) —— 原理与设计（面向开发者）
+- [INSTALL.md](INSTALL.md) —— 安装详情
+- [MOBILE.md](MOBILE.md) —— 用手机使用
+- [PROVIDERS.md](PROVIDERS.md) —— 如何选择 AI 提供方
+- [AGENTS.md](AGENTS.md) —— 让 AI 自主判断
+- [TEAMS.md](TEAMS.md) —— 对接 Teams 会议记录
+- [JIRA-SLACK.md](JIRA-SLACK.md) —— 在 Jira 登记任务、在 Slack 通知
+- [SCHEDULER.md](SCHEDULER.md) —— 按设定的时间自动运行
+- [README.md](README.md) —— 原理与设计（面向开发者）
 - `templates/examples/` —— 模板实例

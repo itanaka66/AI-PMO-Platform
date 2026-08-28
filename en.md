@@ -47,7 +47,7 @@ It is free. There is no charge for using it.
 
 ### 1. Install
 
-Follow [INSTALL.md](../../INSTALL.md).
+Follow [INSTALL.md](INSTALL.md).
 
 - **Windows** — double-click `AI-PMO-Setup.exe`
 - **Mac / Linux** — run `./scripts/install.sh` in a terminal
@@ -83,7 +83,7 @@ string. Do not show it to anyone.
 - OpenAI — https://platform.openai.com/api-keys
 - Gemini — https://aistudio.google.com
 
-See [PROVIDERS.md](../PROVIDERS.md) for detail.
+See [PROVIDERS.md](PROVIDERS.md) for detail.
 
 ### 3. Try it
 
@@ -168,18 +168,18 @@ Run `aipmo setup` again.
 Unsigned files can trigger a warning. If that concerns you, use the Mac/Linux
 or Docker version instead.
 
-More detail is in [INSTALL.md](../../INSTALL.md).
+More detail is in [INSTALL.md](INSTALL.md).
 
 ---
 
 ## What to read next
 
-- [INSTALL.md](../../INSTALL.md) — installation in detail
-- [MOBILE.md](../MOBILE.md) — using it from a phone
-- [PROVIDERS.md](../PROVIDERS.md) — choosing an AI provider
-- [AGENTS.md](../AGENTS.md) — letting the AI decide for itself
-- [TEAMS.md](../TEAMS.md) — connecting Teams meeting records
-- [JIRA-SLACK.md](../JIRA-SLACK.md) — filing issues in Jira, notifying in Slack
-- [SCHEDULER.md](../SCHEDULER.md) — running things automatically on a schedule
-- [README.md](../../README.md) — how it works, for developers
+- [INSTALL.md](INSTALL.md) — installation in detail
+- [MOBILE.md](MOBILE.md) — using it from a phone
+- [PROVIDERS.md](PROVIDERS.md) — choosing an AI provider
+- [AGENTS.md](AGENTS.md) — letting the AI decide for itself
+- [TEAMS.md](TEAMS.md) — connecting Teams meeting records
+- [JIRA-SLACK.md](JIRA-SLACK.md) — filing issues in Jira, notifying in Slack
+- [SCHEDULER.md](SCHEDULER.md) — running things automatically on a schedule
+- [README.md](README.md) — how it works, for developers
 - `templates/examples/` — worked template examples

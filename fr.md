@@ -48,7 +48,7 @@ C'est gratuit. L'utilisation n'est pas facturée.
 
 ### 1. Installer
 
-Suivez [INSTALL.md](../../INSTALL.md).
+Suivez [INSTALL.md](INSTALL.md).
 
 - **Windows** — double-cliquez sur `AI-PMO-Setup.exe`
 - **Mac / Linux** — lancez `./scripts/install.sh` dans un terminal
@@ -84,7 +84,7 @@ C'est une longue chaîne. Ne la montrez à personne.
 - OpenAI — https://platform.openai.com/api-keys
 - Gemini — https://aistudio.google.com
 
-Voir [PROVIDERS.md](../PROVIDERS.md) pour le détail.
+Voir [PROVIDERS.md](PROVIDERS.md) pour le détail.
 
 ### 3. Essayer
 
@@ -171,18 +171,18 @@ Relancez `aipmo setup`.
 Les fichiers non signés peuvent déclencher un avertissement. Si cela vous gêne,
 utilisez la version Mac / Linux ou celle en Docker.
 
-Plus de détails dans [INSTALL.md](../../INSTALL.md).
+Plus de détails dans [INSTALL.md](INSTALL.md).
 
 ---
 
 ## À lire ensuite
 
-- [INSTALL.md](../../INSTALL.md) — l'installation en détail
-- [MOBILE.md](../MOBILE.md) — l'utiliser depuis un téléphone
-- [PROVIDERS.md](../PROVIDERS.md) — choisir un fournisseur d'IA
-- [AGENTS.md](../AGENTS.md) — laisser l'IA décider elle-même
-- [TEAMS.md](../TEAMS.md) — relier les enregistrements Teams
-- [JIRA-SLACK.md](../JIRA-SLACK.md) — créer des tickets Jira et notifier sur Slack
-- [SCHEDULER.md](../SCHEDULER.md) — exécuter automatiquement à heure fixe
-- [README.md](../../README.md) — le fonctionnement, pour les développeurs
+- [INSTALL.md](INSTALL.md) — l'installation en détail
+- [MOBILE.md](MOBILE.md) — l'utiliser depuis un téléphone
+- [PROVIDERS.md](PROVIDERS.md) — choisir un fournisseur d'IA
+- [AGENTS.md](AGENTS.md) — laisser l'IA décider elle-même
+- [TEAMS.md](TEAMS.md) — relier les enregistrements Teams
+- [JIRA-SLACK.md](JIRA-SLACK.md) — créer des tickets Jira et notifier sur Slack
+- [SCHEDULER.md](SCHEDULER.md) — exécuter automatiquement à heure fixe
+- [README.md](README.md) — le fonctionnement, pour les développeurs
 - `templates/examples/` — modèles d'exemple
