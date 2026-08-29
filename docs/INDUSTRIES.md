@@ -11,6 +11,7 @@
 | 法務・コンプライアンス | `legal/matter_deadline_triage.yaml` | 案件期限の確認と秘匿特権の扱い |
 | カスタマーサクセス | `customer_success/account_health_triage.yaml` | 顧客アカウントの状況確認 |
 | 財務監査 | `financial_audit/finding_remediation_triage.yaml` | 監査指摘の重要度別振り分け |
+| 非営利・助成金事業 | `nonprofit/grant_compliance_triage.yaml` | 助成元への報告期限と使途制限の仕分け |
 
 ---
 
@@ -199,6 +200,35 @@ immediately, to the audit committee. A significant deficiency goes to
 management, since the audit team's own remediation owner often cannot move
 the control's actual business owner by themselves. A control deficiency
 follows the ordinary remediation flow, batched for the audit team.
+
+### 非営利・助成金事業 — 進められるかどうかは、お金の出どころで決まる
+
+他の業界では、詰まりの原因はいつも「誰か」か「いつまでか」でした。
+**この業界では、そもそも今その支出をしてよいかどうかが、助成金の
+使途制限で決まっていることがあります。** 現場の担当者がどれだけ急いでも、
+制限が解除されるか予算の組み替えが承認されるまでは前に進められません。
+これは動かせる人を間違えているのではなく、**動かせる人がそもそも
+現場にいない**という、他業界とは異なる形の詰まりです。
+
+**助成元への報告期限は、他業界の「安全」と同じ形で単独・即時に扱います。**
+理由は業界固有です。報告期限を過ぎると、すでに使った資金の返還
+（クローバック）や、次期助成の見送りにつながることがあります——
+未来の資金だけでなく、**過去に使った分まで遡って失う**おそれがある点が、
+他の期限管理とは異なります。
+
+In every other field, what was blocking a task was always a matter of who or
+by when. **Here, an activity's fund-usage restriction can make the spending
+itself impermissible for now, independent of anyone's effort or urgency.**
+No amount of hustle from program staff lifts a restriction or approves a
+budget reallocation — this is not a case of chasing the wrong person, it is
+that **no one on the ground can act on it at all**, a different shape of
+blocker than anywhere else in this document.
+
+A funder reporting deadline gets the same alone-and-immediate treatment as
+"safety" elsewhere, for reasons specific to this field: missing it can
+trigger a clawback of funds already spent, not only the loss of future
+funding — unlike every other deadline here, the risk reaches backward as
+well as forward.
 
 ---
 
