@@ -202,6 +202,44 @@ def test_submit_candidate_stays_private_and_pending():
     assert points[0].payload["tenant"] == "company_a"
 
 
+def test_submit_candidate_computes_a_score_when_none_is_given():
+    adapter, client = build_qdrant()
+    result = adapter.invoke("submit_candidate", {
+        "knowledge": {"text": "主要担当者への依存はスケジュールリスクになる"},
+        "knowledge_level": 5,
+        "consent_level": "B",
+    })
+
+    assert result["publicability_score"] > 0
+    assert result["publicability_reasons"]
+    _, points = client.upserts[0]
+    assert points[0].payload["publicability_score"] == result["publicability_score"]
+    assert points[0].payload["publicability_reasons"] == result["publicability_reasons"]
+
+
+def test_submit_candidate_lets_an_explicit_score_override_the_computed_one():
+    adapter, _ = build_qdrant()
+    result = adapter.invoke("submit_candidate", {
+        "knowledge": {"text": "内容"},
+        "knowledge_level": 3,        # would otherwise compute a low score
+        "consent_level": None,       # and an even lower one, halved
+        "publicability_score": 42,
+    })
+    assert result["publicability_score"] == 42
+
+
+def test_submit_candidate_forces_zero_when_consent_is_a():
+    adapter, client = build_qdrant()
+    result = adapter.invoke("submit_candidate", {
+        "knowledge": {"text": "十分に一般化された知見"},
+        "knowledge_level": 6,
+        "consent_level": "A",
+    })
+    assert result["publicability_score"] == 0.0
+    _, points = client.upserts[0]
+    assert points[0].payload["publicability_score"] == 0.0
+
+
 def test_private_scope_requires_tenant():
     adapter = QdrantAdapter(embedder=HashEmbedder(), client=FakeQdrantClient())
     with pytest.raises(AdapterError, match="tenant"):

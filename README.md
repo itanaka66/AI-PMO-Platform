@@ -265,6 +265,29 @@ connection config and cannot be overridden.
 Publication happens only through the reviewed promotion workflow. The automatic
 path does not exist at the adapter level, so no template can construct it.
 
+### 公開可能性スコアは並び順のためだけにある
+
+`submit_candidate` は公開可能性スコアを自動で算出する。テンプレート側が
+数値を用意する必要はない。ただし、これは**レビュー待ち一覧の並び順を
+決める下書きの値**であって、承認・却下の判定ではない。判定は必ず人間が行う。
+
+数えれば決まる範囲（利用許諾レベル・宣言された一般化の度合い・メール
+アドレスや課題番号らしき文字列の有無）だけを見る。**言語モデルには頼らない**
+— 公開してよいかは誤ると取り返しがつかない判断で、間違っても
+もっともらしく見えるものに任せるべきではない。利用許諾レベル A
+（二次利用不可）は、他の要素に関わらず無条件で 0 点にする。
+
+`submit_candidate` computes a publicability score automatically; templates
+need not supply one. But it is only **a draft value that orders the review
+queue** — never an approve/reject verdict, which stays a human's call.
+
+It looks only at what is countable or matchable — consent level, the declared
+degree of generalization, whether an email address or issue-key-shaped string
+appears. **No language model is involved**: whether something is safe to
+publish cannot be undone if wrong, and that is not a call to hand to something
+that is plausible even when mistaken. Consent level A (no secondary use)
+forces a score of 0 unconditionally, regardless of anything else.
+
 ### 書き込みは読み取りより厳しく扱う
 
 エージェントに `tools: [jira]` を渡しても課題は作られない。外の世界を変える操作には
@@ -369,8 +392,6 @@ success:
   回避策はあるが解決ではない / there are workarounds, but they are not a fix
 - **匿名化・一般化エージェント** — `submit_candidate` は候補を受け取る器であって、
   一般化そのものは行わない / it accepts candidates but does not generalize
-- **公開可能性スコアの算出** — 保存はできるが計算は未実装 / the field is stored,
-  the computation is not
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
 - **上記3業界以外のテンプレート**
 
