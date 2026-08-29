@@ -3,6 +3,21 @@ name = "aipmo"
 version = "0.1.0"
 description = "テンプレート駆動の PMO 業務自動化基盤"
 requires-python = ">=3.10"
+# SPDX 文字列形式 (PEP 639) は setuptools 77 以降。
+# 古い環境でも入るよう、ファイル指定の書き方にしている。
+# The SPDX string form needs setuptools 77+; the file form installs anywhere.
+license = { file = "LICENSE" }
+authors = [{ name = "agNedia Inc." }]
+keywords = ["pmo", "project-management", "llm", "automation", "agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Scheduling",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "License :: OSI Approved :: MIT License",
+]
 dependencies = ["pyyaml>=6.0"]
 
 [project.optional-dependencies]

@@ -171,3 +171,97 @@ def test_the_documented_test_count_matches_reality():
                 f"{name} の記載 {stated} 件が、定義済みテスト {collected} 件と"
                 f"大きく食い違っています"
             )
+
+
+# --- ライセンス / licensing --------------------------------------------------
+
+def test_a_license_file_exists_and_names_mit():
+    """OSS 公開にはライセンスが要る。無いと、利用者は法的に使えない。
+
+    Without a licence file the default is "all rights reserved", so nobody can
+    legally use it.
+    """
+    text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+    assert "MIT License" in text
+    assert "Copyright (c)" in text
+    assert "WITHOUT WARRANTY OF ANY KIND" in text
+
+
+def test_the_license_has_no_placeholder_left_in_it():
+    """雛形の <year> や <name> が残ったまま公開されると意味を成さない。"""
+    text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+    for placeholder in ("<year>", "<name>", "[year]", "[fullname]", "YOUR NAME"):
+        assert placeholder not in text, f"雛形が残っています: {placeholder}"
+
+
+def test_the_package_metadata_declares_the_license():
+    """配布物にライセンスが入らないと、受け取った側が条件を確認できない。"""
+    import tomllib
+
+    with open(ROOT / "pyproject.toml", "rb") as handle:
+        config = tomllib.load(handle)
+
+    project = config["project"]
+    assert project["license"] == {"file": "LICENSE"}
+    assert any("MIT" in c for c in project.get("classifiers", []))
+
+
+def test_the_license_is_findable_from_the_readme():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "LICENSE" in readme
+    assert "MIT" in readme
+
+
+def test_dependency_licensing_is_documented():
+    """依存ライブラリには本体のライセンスが及ばない。
+
+    psycopg は LGPL。使う側がそれを知らないまま配布する事態を避ける。
+    psycopg is LGPL; nobody should redistribute without knowing that.
+    """
+    notice = (ROOT / "NOTICE.md").read_text(encoding="utf-8")
+    for library in ("PyYAML", "openai", "psycopg", "qdrant-client", "FastAPI"):
+        assert library in notice, f"NOTICE に記載がありません: {library}"
+    assert "LGPL" in notice
+
+
+def test_the_copyright_names_the_company():
+    """権利は法人が保有する。個人名のままだと、後から移す手続きが要る。
+
+    The corporation holds the rights; an individual's name would mean a
+    transfer later.
+    """
+    licence = (ROOT / "LICENSE").read_text(encoding="utf-8")
+    assert "agNedia Inc." in licence
+
+    import tomllib
+
+    with open(ROOT / "pyproject.toml", "rb") as handle:
+        config = tomllib.load(handle)
+    assert config["project"]["authors"] == [{"name": "agNedia Inc."}]
+
+
+def test_nothing_in_the_repository_is_advertised_as_paid():
+    """このリポジトリにあるものは、すべて無料。
+    有償のテンプレートはここに置かない、が方針。
+
+    Everything here is free; paid templates are kept out of the repository.
+    Wording that implies otherwise would misrepresent what a reader receives.
+    """
+    # 「試用版ではない」と否定している文まで拾わないよう、
+    # 有償であると読める言い回しだけを見る。
+    # Phrased to catch a claim, not its denial: "not a trial" must pass.
+    claims = ("は有料", "有料版です", "Pro 版のみ", "購入が必要", "requires purchase",
+              "paid edition", "paid tier")
+    for name in ("README.md", "NOTICE.md", "MANIFEST.md"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        for claim in claims:
+            assert claim not in text, f"{name} に紛らわしい表現: {claim}"
+
+
+def test_the_free_terms_are_stated_in_every_guide():
+    """8言語すべてで、無料であることが分かること。"""
+    markers = {"ja": "すべて無料", "en": "All of it is free", "zh": "全部免费",
+               "ko": "전부 무료", "es": "Todo es gratuito", "fr": "Tout est gratuit",
+               "de": "Alles davon ist kostenlos", "pt": "Tudo é gratuito"}
+    for lang, marker in markers.items():
+        assert marker in guide(lang).read_text(encoding="utf-8"), lang

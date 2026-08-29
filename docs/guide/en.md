@@ -26,7 +26,9 @@ No programming needed.
 - **Small businesses** — get the working patterns without a dedicated PMO
 - **Large organisations** — bring scattered team practices onto shared templates
 
-It is free. There is no charge for using it.
+**All of it is free** — not a reduced edition, not a trial. The
+templates and prompts come on the same terms. (The AI service's own
+usage fees are paid to whichever provider you choose.)
 
 ---
 
@@ -187,5 +189,6 @@ More detail is in [INSTALL.md](../../INSTALL.md).
 - [SCHEDULER.md](../SCHEDULER.md) — running things automatically on a schedule
 - [AGILE.md](../AGILE.md) — reporting on sprints
 - [INDUSTRIES.md](../INDUSTRIES.md) — construction, marketing and other fields
+- [LICENSE](../../LICENSE) — MIT (commercial use, modification and redistribution allowed)
 - [README.md](../../README.md) — how it works, for developers
 - `templates/examples/` — worked template examples

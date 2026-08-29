@@ -17,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from .console import configure_stdio, mark
 from .adapters.base import AdapterRegistry
 from .adapters.mock import MockJiraAdapter, MockSlackAdapter, MockTeamsAdapter
 from .adapters.postgres import PostgresAdapter
@@ -293,7 +294,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     ok = True
     for name in engine.adapters.names():
         healthy = engine.adapters.get(name).health_check()
-        print(f"{'✓' if healthy else '✗'} {name}")
+        print(f"{mark('success' if healthy else 'failed')} {name}")
         ok = ok and healthy
     return 0 if ok else 1
 
@@ -335,8 +336,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 1
 
     for step_id, result in ctx.results.items():
-        mark = {"success": "✓", "skipped": "-", "failed": "✗"}[result.status]
-        print(f"{mark} {step_id:<20} {result.duration_ms:>5}ms")
+        print(f"{mark(result.status)} {step_id:<20} {result.duration_ms:>5}ms")
 
     if args.json:
         print(json.dumps(
@@ -399,6 +399,12 @@ def main(argv: list[str] | None = None) -> int:
     p_setup.set_defaults(func=cmd_setup)
 
     args = parser.parse_args(argv)
+
+    # 出力先が受け付けない文字で落ちないようにする。
+    # 日本語版 Windows のコンソールは CP932 で、記号の一部が入らない。
+    # Keeps an unprintable character from ending the command: a Japanese
+    # Windows console runs CP932, which lacks some of the glyphs used here.
+    configure_stdio()
     load_env(Path(args.config).parent if Path(args.config).parent != Path("") else Path("."))
     logging.basicConfig(
         level=logging.INFO if args.verbose else logging.WARNING,

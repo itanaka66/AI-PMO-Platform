@@ -6,6 +6,12 @@ PMO 業務のノウハウを「実行可能なテンプレート」として記�
 A runtime that encodes PMO know-how as executable templates and runs them by
 combining LLM calls with the tools a team already uses.
 
+**すべて無料です。** 機能制限版でも試用版でもありません。MIT License なので、
+商用利用も改変も再配布も自由です。
+
+**All of it is free** — not a reduced edition, not a trial. MIT licensed, so
+commercial use, modification and redistribution are all permitted.
+
 はじめての方は **[はじめてのガイド](docs/guide/README.md)**（8言語）をどうぞ。
 New here? Start with the **[getting-started guide](docs/guide/README.md)**.
 
@@ -47,7 +53,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 516 件
+pytest                               # 543 件
 ```
 
 ---
@@ -242,9 +248,9 @@ same reason, silence is the output when nothing is wrong: a channel that says
 
 ## テスト / Tests
 
-516 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+543 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-516 tests, aimed at the guarantees and at the failure shapes that look like
+543 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
@@ -273,14 +279,12 @@ success:
 | [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
 | [docs/INDUSTRIES.md](docs/INDUSTRIES.md) | 業界別テンプレート / industry templates |
 | [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md) | 無料クラウド構成 / free-tier deployment |
+| [NOTICE.md](NOTICE.md) | ライセンスと依存ライブラリ / licensing and dependencies |
 
 ---
 
 ## 未着手 / Not yet built
 
-- **ライセンス / a LICENSE file** — OSS 公開には必須。無料公開と Enterprise 版を
-  どう両立させるかで選ぶものが変わるため、未決 / the choice depends on how the
-  free and paid offerings are meant to coexist
 - **コード署名 / code signing** — 未署名の `.exe` は Windows が警告を出す。
   回避策はあるが解決ではない / there are workarounds, but they are not a fix
 - **匿名化・一般化エージェント** — `submit_candidate` は候補を受け取る器であって、
@@ -291,3 +295,17 @@ success:
 - **並列ステップ実行** — 現状は逐次のみ / sequential only
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
 - **上記3業界以外のテンプレート**
+
+---
+
+## ライセンス / License
+
+MIT License — Copyright (c) 2026 株式会社エージーネディア / agNedia Inc.
+
+**このリポジトリにあるものは、すべて無料です。** テンプレートもプロンプトも
+同じ条件で、使うために支払うものはありません。
+
+**Everything in this repository is free**, templates and prompts included.
+
+詳細は [LICENSE](LICENSE)、依存ライブラリの扱いは [NOTICE.md](NOTICE.md) を
+参照してください。 See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

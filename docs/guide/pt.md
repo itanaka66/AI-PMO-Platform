@@ -26,7 +26,9 @@ Não é preciso saber programar.
 - **Pequenas empresas** — ter os métodos sem um PMO dedicado
 - **Grandes organizações** — alinhar por modelos o que cada área faz do seu jeito
 
-É gratuito. Não há cobrança pelo uso.
+**Tudo é gratuito** — não é uma edição reduzida nem um teste.
+Os modelos e prompts seguem as mesmas condições.
+(O uso do serviço de IA é pago ao provedor que você escolher.)
 
 ---
 
@@ -189,5 +191,6 @@ Mais detalhes em [INSTALL.md](../../INSTALL.md).
 - [SCHEDULER.md](../SCHEDULER.md) — executar automaticamente em horários definidos
 - [AGILE.md](../AGILE.md) — relatar o andamento das sprints
 - [INDUSTRIES.md](../INDUSTRIES.md) — construção, marketing e outros setores
+- [LICENSE](../../LICENSE) — MIT (uso comercial, modificação e redistribuição permitidos)
 - [README.md](../../README.md) — como funciona, para desenvolvedores
 - `templates/examples/` — modelos de exemplo

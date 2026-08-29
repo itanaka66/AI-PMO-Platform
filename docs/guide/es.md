@@ -26,7 +26,9 @@ No hace falta saber programar.
 - **Pequeñas empresas** — tener las prácticas sin un PMO dedicado
 - **Grandes organizaciones** — unificar con plantillas lo que cada departamento hace a su manera
 
-Es gratis. No hay coste de uso.
+**Todo es gratuito**: no es una edición reducida ni una prueba.
+Las plantillas y los prompts vienen en las mismas condiciones.
+(El uso del servicio de IA se paga al proveedor que elijas.)
 
 ---
 
@@ -189,5 +191,6 @@ Hay más detalle en [INSTALL.md](../../INSTALL.md).
 - [SCHEDULER.md](../SCHEDULER.md) — ejecutar automáticamente según un horario
 - [AGILE.md](../AGILE.md) — informar sobre los sprints
 - [INDUSTRIES.md](../INDUSTRIES.md) — construcción, marketing y otros sectores
+- [LICENSE](../../LICENSE) — MIT (uso comercial, modificación y redistribución permitidos)
 - [README.md](../../README.md) — cómo funciona, para desarrolladores
 - `templates/examples/` — plantillas de ejemplo

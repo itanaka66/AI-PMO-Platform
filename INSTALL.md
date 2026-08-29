@@ -198,6 +198,15 @@ docker compose down -v    # -v はデータも消します / -v also deletes the
 
 ## うまくいかないとき / When it does not work
 
+**日本語が文字化けする / Japanese text comes out garbled**
+古い版を使っている可能性があります。`.bat` は CP932、`.ps1` と `.iss` は
+UTF-8 (BOM 付き) で保存されている必要があります。自分で編集した場合は、
+保存時の文字コードを確認してください。
+
+If you edited these files yourself, check what your editor saved them as:
+`.bat` must be CP932, while `.ps1` and `.iss` need UTF-8 **with** a BOM —
+Windows PowerShell 5.1 reads a BOM-less script as ANSI.
+
 **Windows で `.ps1` をダブルクリックしても何も起きない**
 既定の実行ポリシーで PowerShell スクリプトがブロックされています。
 `install.bat` の方をダブルクリックしてください。こちらが回避策込みで起動します。

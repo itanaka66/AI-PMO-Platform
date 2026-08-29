@@ -25,7 +25,9 @@
 - **중소기업** — 전담 PMO가 없어도 일하는 틀을 얻을 수 있습니다
 - **대기업** — 부서마다 제각각인 방식을 템플릿으로 맞출 수 있습니다
 
-무료입니다. 사용료는 들지 않습니다.
+**전부 무료입니다.** 기능 제한판도 체험판도 아닙니다.
+템플릿과 프롬프트도 같은 조건입니다.
+(AI 서비스 이용료는 선택한 제공자에게 직접 지불합니다.)
 
 ---
 
@@ -186,5 +188,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 - [SCHEDULER.md](../SCHEDULER.md) — 정해진 시각에 자동으로 실행하기
 - [AGILE.md](../AGILE.md) — 스프린트 상황 보고하기
 - [INDUSTRIES.md](../INDUSTRIES.md) — 건설·마케팅 등 업종별 활용
+- [LICENSE](../../LICENSE) — MIT 라이선스 (상업적 이용·수정·재배포 가능)
 - [README.md](../../README.md) — 구조와 설계 (개발자용)
 - `templates/examples/` — 템플릿 실제 예

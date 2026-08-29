@@ -25,7 +25,8 @@
 - **中小企业** —— 没有专职 PMO 也能获得成熟的工作方式
 - **大型企业** —— 用模板统一各部门各自为政的做法
 
-免费。使用不收费。
+**全部免费。** 不是功能受限版，也不是试用版。模板和提示词同样如此。
+（AI 服务的使用费需直接支付给你所选择的提供方。）
 
 ---
 
@@ -185,5 +186,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 - [SCHEDULER.md](../SCHEDULER.md) —— 按设定的时间自动运行
 - [AGILE.md](../AGILE.md) —— 报告冲刺进展
 - [INDUSTRIES.md](../INDUSTRIES.md) —— 建筑、市场营销等行业用法
+- [LICENSE](../../LICENSE) —— MIT 许可证（允许商用、修改与再分发）
 - [README.md](../../README.md) —— 原理与设计（面向开发者）
 - `templates/examples/` —— 模板实例

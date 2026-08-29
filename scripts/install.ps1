@@ -1,13 +1,13 @@
-# AI-PMO Platform ? Windows ƒCƒ“ƒXƒg[ƒ‰ / Windows installer
+ï»¿# AI-PMO Platform â€• Windows ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ© / Windows installer
 #
-# Python ‚ª–³‚¯‚ê‚Î“±“ü‚µAê—p‚Ì‰¼‘zŠÂ‹«‚ğì‚èAƒZƒbƒgƒAƒbƒvƒEƒBƒU[ƒh‚ğŠJ‚­B
+# Python ãŒç„¡ã‘ã‚Œã°å°å…¥ã—ã€å°‚ç”¨ã®ä»®æƒ³ç’°å¢ƒã‚’ä½œã‚Šã€ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ—ã‚¦ã‚£ã‚¶ãƒ¼ãƒ‰ã‚’é–‹ãã€‚
 # Installs Python if absent, creates an isolated virtual environment, and opens
 # the setup wizard.
 #
-# Às / Run:
-#   install.bat ‚ğƒ_ƒuƒ‹ƒNƒŠƒbƒN / double-click install.bat
+# å®Ÿè¡Œ / Run:
+#   install.bat ã‚’ãƒ€ãƒ–ãƒ«ã‚¯ãƒªãƒƒã‚¯ / double-click install.bat
 #
-# ƒVƒXƒeƒ€‚Ì Python ‚ğ‰˜‚³‚È‚¢‚½‚ßA•K‚¸ venv ‚ğì‚éB
+# ã‚·ã‚¹ãƒ†ãƒ ã® Python ã‚’æ±šã•ãªã„ãŸã‚ã€å¿…ãš venv ã‚’ä½œã‚‹ã€‚
 # Always builds a venv so the system Python is never modified.
 
 [CmdletBinding()]
@@ -40,21 +40,21 @@ function Write-Warn($message) {
 
 function Fail($message) {
     Write-Host ""
-    Write-Host "ƒGƒ‰[ / Error: $message" -ForegroundColor Red
+    Write-Host "ã‚¨ãƒ©ãƒ¼ / Error: $message" -ForegroundColor Red
     Write-Host ""
     if (-not $Quiet) {
-        Write-Host "Enter ƒL[‚ÅI—¹ / Press Enter to exit"
+        Write-Host "Enter ã‚­ãƒ¼ã§çµ‚äº† / Press Enter to exit"
         [void](Read-Host)
     }
     exit 1
 }
 
-# --- Python ‚ğ’T‚· / locate a usable Python ------------------------------
+# --- Python ã‚’æ¢ã™ / locate a usable Python ------------------------------
 
 function Find-Python {
     $candidates = @()
 
-    # py ƒ‰ƒ“ƒ`ƒƒ‚Í•¡”ƒo[ƒWƒ‡ƒ“‚ğ³‚µ‚­‰ğŒˆ‚·‚é‚Ì‚ÅÅ—Dæ
+    # py ãƒ©ãƒ³ãƒãƒ£ã¯è¤‡æ•°ãƒãƒ¼ã‚¸ãƒ§ãƒ³ã‚’æ­£ã—ãè§£æ±ºã™ã‚‹ã®ã§æœ€å„ªå…ˆ
     # The py launcher resolves versions correctly, so try it first.
     $launcher = Get-Command py -ErrorAction SilentlyContinue
     if ($launcher) {
@@ -80,7 +80,7 @@ function Find-Python {
                 ($major -eq $MinPythonMajor -and $minor -ge $MinPythonMinor)) {
                 return @{ Exe = $exe; Prefix = $prefix; Version = "$major.$minor" }
             }
-            # Microsoft Store ‚ÌƒXƒ^ƒu‚ÍÀs‚µ‚Ä‚à‰½‚à•Ô‚³‚È‚¢‚Ì‚Åã‚Å’e‚©‚ê‚é
+            # Microsoft Store ã®ã‚¹ã‚¿ãƒ–ã¯å®Ÿè¡Œã—ã¦ã‚‚ä½•ã‚‚è¿”ã•ãªã„ã®ã§ä¸Šã§å¼¾ã‹ã‚Œã‚‹
             # Microsoft Store stubs produce no output and are filtered above.
         } catch {
             continue
@@ -90,22 +90,22 @@ function Find-Python {
 }
 
 function Install-Python {
-    Write-Step "Python ‚ğ“±“ü‚µ‚Ü‚· / Installing Python"
-    Write-Host "    ”•ª‚©‚©‚è‚Ü‚· / This takes a few minutes."
+    Write-Step "Python ã‚’å°å…¥ã—ã¾ã™ / Installing Python"
+    Write-Host "    æ•°åˆ†ã‹ã‹ã‚Šã¾ã™ / This takes a few minutes."
 
     $installer = Join-Path $env:TEMP "python-aipmo-setup.exe"
     try {
         Invoke-WebRequest -Uri $PythonInstallerUrl -OutFile $installer -UseBasicParsing
     } catch {
         Fail @"
-Python ‚Ìƒ_ƒEƒ“ƒ[ƒh‚É¸”s‚µ‚Ü‚µ‚½ / Could not download Python.
-ƒlƒbƒgƒ[ƒNÚ‘±‚ğŠm”F‚·‚é‚©Aè“®‚Å“±“ü‚µ‚Ä‚­‚¾‚³‚¢B
+Python ã®ãƒ€ã‚¦ãƒ³ãƒ­ãƒ¼ãƒ‰ã«å¤±æ•—ã—ã¾ã—ãŸ / Could not download Python.
+ãƒãƒƒãƒˆãƒ¯ãƒ¼ã‚¯æ¥ç¶šã‚’ç¢ºèªã™ã‚‹ã‹ã€æ‰‹å‹•ã§å°å…¥ã—ã¦ãã ã•ã„ã€‚
 Check your network, or install manually from:
   https://www.python.org/downloads/
 "@
     }
 
-    # ŠÇ—ÒŒ ŒÀ‚ğ”ğ‚¯‚é‚½‚ßƒ†[ƒU[’PˆÊ‚Å“±“ü‚·‚é
+    # ç®¡ç†è€…æ¨©é™ã‚’é¿ã‘ã‚‹ãŸã‚ãƒ¦ãƒ¼ã‚¶ãƒ¼å˜ä½ã§å°å…¥ã™ã‚‹
     # Per-user install so no administrator rights are needed.
     $arguments = @(
         "/quiet", "InstallAllUsers=0", "PrependPath=1",
@@ -116,10 +116,10 @@ Check your network, or install manually from:
     Remove-Item $installer -ErrorAction SilentlyContinue
 
     if ($process.ExitCode -ne 0) {
-        Fail "Python ‚ÌƒCƒ“ƒXƒg[ƒ‰‚ª¸”s‚µ‚Ü‚µ‚½ (ƒR[ƒh $($process.ExitCode)) / Python installer failed"
+        Fail "Python ã®ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ©ãŒå¤±æ•—ã—ã¾ã—ãŸ (ã‚³ãƒ¼ãƒ‰ $($process.ExitCode)) / Python installer failed"
     }
 
-    # PATH ‚ÍŒ»İ‚ÌƒZƒbƒVƒ‡ƒ“‚É”½‰f‚³‚ê‚È‚¢‚½‚ßA©•ª‚Å“Ç‚İ’¼‚·
+    # PATH ã¯ç¾åœ¨ã®ã‚»ãƒƒã‚·ãƒ§ãƒ³ã«åæ˜ ã•ã‚Œãªã„ãŸã‚ã€è‡ªåˆ†ã§èª­ã¿ç›´ã™
     # PATH changes do not reach the current session; reload it.
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
                 [Environment]::GetEnvironmentVariable("Path", "User")
@@ -127,9 +127,9 @@ Check your network, or install manually from:
     $python = Find-Python
     if (-not $python) {
         Fail @"
-Python ‚Í“ü‚è‚Ü‚µ‚½‚ªA‚±‚ÌƒEƒBƒ“ƒhƒE‚©‚ç‚ÍŒ©‚Â‚©‚è‚Ü‚¹‚ñB
+Python ã¯å…¥ã‚Šã¾ã—ãŸãŒã€ã“ã®ã‚¦ã‚£ãƒ³ãƒ‰ã‚¦ã‹ã‚‰ã¯è¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚
 Python was installed but is not visible in this session.
-PC ‚ğÄ‹N“®‚µ‚Ä‚©‚ç install.bat ‚ğ‚à‚¤ˆê“xÀs‚µ‚Ä‚­‚¾‚³‚¢B
+PC ã‚’å†èµ·å‹•ã—ã¦ã‹ã‚‰ install.bat ã‚’ã‚‚ã†ä¸€åº¦å®Ÿè¡Œã—ã¦ãã ã•ã„ã€‚
 Restart your PC, then run install.bat again.
 "@
     }
@@ -137,27 +137,27 @@ Restart your PC, then run install.bat again.
     return $python
 }
 
-# --- –{‘Ì / main ---------------------------------------------------------
+# --- æœ¬ä½“ / main ---------------------------------------------------------
 
 Write-Host ""
 Write-Host "  AI-PMO Platform" -ForegroundColor White
-Write-Host "  ƒCƒ“ƒXƒg[ƒ‰ / Installer"
+Write-Host "  ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ© / Installer"
 Write-Host "  ---------------------------------------------"
 
-Write-Step "Python ‚ğŠm”F‚µ‚Ä‚¢‚Ü‚· / Checking for Python"
+Write-Step "Python ã‚’ç¢ºèªã—ã¦ã„ã¾ã™ / Checking for Python"
 $python = Find-Python
 if ($python) {
-    Write-Ok "Python $($python.Version) ‚ªŒ©‚Â‚©‚è‚Ü‚µ‚½ / found"
+    Write-Ok "Python $($python.Version) ãŒè¦‹ã¤ã‹ã‚Šã¾ã—ãŸ / found"
 } else {
-    Write-Warn "‘Î‰‚·‚é Python ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñ / no suitable Python found"
+    Write-Warn "å¯¾å¿œã™ã‚‹ Python ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ / no suitable Python found"
     $python = Install-Python
 }
 
-Write-Step "ƒCƒ“ƒXƒg[ƒ‹æ / Install location"
+Write-Step "ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«å…ˆ / Install location"
 Write-Host "    $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 
-# ƒ\[ƒX‚ğƒRƒs[‚·‚éBƒXƒNƒŠƒvƒg‚ÌeƒfƒBƒŒƒNƒgƒŠ‚ªƒpƒbƒP[ƒW‚Ìƒ‹[ƒgB
+# ã‚½ãƒ¼ã‚¹ã‚’ã‚³ãƒ”ãƒ¼ã™ã‚‹ã€‚ã‚¹ã‚¯ãƒªãƒ—ãƒˆã®è¦ªãƒ‡ã‚£ãƒ¬ã‚¯ãƒˆãƒªãŒãƒ‘ãƒƒã‚±ãƒ¼ã‚¸ã®ãƒ«ãƒ¼ãƒˆã€‚
 # Copy the sources. The script's parent directory is the package root.
 $sourceRoot = Split-Path -Parent $PSScriptRoot
 $payload = @("aipmo", "prompts", "templates", "sql",
@@ -169,9 +169,9 @@ foreach ($item in $payload) {
         Copy-Item $source -Destination $InstallDir -Recurse -Force
     }
 }
-Write-Ok "ƒtƒ@ƒCƒ‹‚ğƒRƒs[‚µ‚Ü‚µ‚½ / files copied"
+Write-Ok "ãƒ•ã‚¡ã‚¤ãƒ«ã‚’ã‚³ãƒ”ãƒ¼ã—ã¾ã—ãŸ / files copied"
 
-Write-Step "‰¼‘zŠÂ‹«‚ğì¬‚µ‚Ä‚¢‚Ü‚· / Creating the virtual environment"
+Write-Step "ä»®æƒ³ç’°å¢ƒã‚’ä½œæˆã—ã¦ã„ã¾ã™ / Creating the virtual environment"
 $venv = Join-Path $InstallDir ".venv"
 $venvPython = Join-Path $venv "Scripts\python.exe"
 
@@ -179,36 +179,36 @@ if (-not (Test-Path $venvPython)) {
     $createArgs = $python.Prefix + @("-m", "venv", $venv)
     & $python.Exe @createArgs
     if ($LASTEXITCODE -ne 0) {
-        Fail "‰¼‘zŠÂ‹«‚ğì¬‚Å‚«‚Ü‚¹‚ñ‚Å‚µ‚½ / could not create the virtual environment"
+        Fail "ä»®æƒ³ç’°å¢ƒã‚’ä½œæˆã§ãã¾ã›ã‚“ã§ã—ãŸ / could not create the virtual environment"
     }
 }
 Write-Ok ".venv"
 
-Write-Step "ˆË‘¶ƒpƒbƒP[ƒW‚ğ“±“ü‚µ‚Ä‚¢‚Ü‚· / Installing dependencies"
-Write-Host "    ”•ª‚©‚©‚è‚Ü‚· / This takes a few minutes."
+Write-Step "ä¾å­˜ãƒ‘ãƒƒã‚±ãƒ¼ã‚¸ã‚’å°å…¥ã—ã¦ã„ã¾ã™ / Installing dependencies"
+Write-Host "    æ•°åˆ†ã‹ã‹ã‚Šã¾ã™ / This takes a few minutes."
 
 & $venvPython -m pip install --upgrade pip --quiet --disable-pip-version-check
-if ($LASTEXITCODE -ne 0) { Fail "pip ‚ÌXV‚É¸”s‚µ‚Ü‚µ‚½ / pip upgrade failed" }
+if ($LASTEXITCODE -ne 0) { Fail "pip ã®æ›´æ–°ã«å¤±æ•—ã—ã¾ã—ãŸ / pip upgrade failed" }
 
 Push-Location $InstallDir
 try {
     & $venvPython -m pip install --quiet --disable-pip-version-check ".[cloud,data]"
     if ($LASTEXITCODE -ne 0) {
         Fail @"
-ˆË‘¶ƒpƒbƒP[ƒW‚Ì“±“ü‚É¸”s‚µ‚Ü‚µ‚½ / dependency installation failed.
-ƒvƒƒLƒVŠÂ‹«‚Ìê‡‚ÍAŠÇ—Ò‚É PyPI (pypi.org) ‚Ö‚ÌÚ‘±‹–‰Â‚ğŠm”F‚µ‚Ä‚­‚¾‚³‚¢B
+ä¾å­˜ãƒ‘ãƒƒã‚±ãƒ¼ã‚¸ã®å°å…¥ã«å¤±æ•—ã—ã¾ã—ãŸ / dependency installation failed.
+ãƒ—ãƒ­ã‚­ã‚·ç’°å¢ƒã®å ´åˆã¯ã€ç®¡ç†è€…ã« PyPI (pypi.org) ã¸ã®æ¥ç¶šè¨±å¯ã‚’ç¢ºèªã—ã¦ãã ã•ã„ã€‚
 Behind a proxy? Ask your administrator to allow access to pypi.org.
 "@
     }
 } finally {
     Pop-Location
 }
-Write-Ok "Š®—¹ / done"
+Write-Ok "å®Œäº† / done"
 
-# --- ƒVƒ‡[ƒgƒJƒbƒg / shortcuts -----------------------------------------
+# --- ã‚·ãƒ§ãƒ¼ãƒˆã‚«ãƒƒãƒˆ / shortcuts -----------------------------------------
 
 if (-not $NoShortcut) {
-    Write-Step "ƒVƒ‡[ƒgƒJƒbƒg‚ğì¬‚µ‚Ä‚¢‚Ü‚· / Creating shortcuts"
+    Write-Step "ã‚·ãƒ§ãƒ¼ãƒˆã‚«ãƒƒãƒˆã‚’ä½œæˆã—ã¦ã„ã¾ã™ / Creating shortcuts"
 
     $launcher = Join-Path $InstallDir "AI-PMO.cmd"
     @"
@@ -218,11 +218,11 @@ call ".venv\Scripts\activate.bat"
 echo.
 echo   AI-PMO Platform
 echo   ---------------------------------------------
-echo   aipmo setup      ‰‰ñİ’è / first-run setup
-echo   aipmo validate   ƒeƒ“ƒvƒŒ[ƒgŒŸØ / validate a template
-echo   aipmo run        ƒeƒ“ƒvƒŒ[ƒgÀs / run a template
-echo   aipmo doctor     Ú‘±Šm”F / connection check
-echo   aipmo --help     ‚·‚×‚Ä‚ÌƒRƒ}ƒ“ƒh / all commands
+echo   aipmo setup      åˆå›è¨­å®š / first-run setup
+echo   aipmo validate   ãƒ†ãƒ³ãƒ—ãƒ¬ãƒ¼ãƒˆæ¤œè¨¼ / validate a template
+echo   aipmo run        ãƒ†ãƒ³ãƒ—ãƒ¬ãƒ¼ãƒˆå®Ÿè¡Œ / run a template
+echo   aipmo doctor     æ¥ç¶šç¢ºèª / connection check
+echo   aipmo --help     ã™ã¹ã¦ã®ã‚³ãƒãƒ³ãƒ‰ / all commands
 echo.
 cmd /k
 "@ | Set-Content -Path $launcher -Encoding ASCII
@@ -237,17 +237,17 @@ cmd /k
         $link.Description = "AI-PMO Platform"
         $link.Save()
     }
-    Write-Ok "ƒfƒXƒNƒgƒbƒv‚ÆƒXƒ^[ƒgƒƒjƒ…[ / desktop and Start menu"
+    Write-Ok "ãƒ‡ã‚¹ã‚¯ãƒˆãƒƒãƒ—ã¨ã‚¹ã‚¿ãƒ¼ãƒˆãƒ¡ãƒ‹ãƒ¥ãƒ¼ / desktop and Start menu"
 }
 
-# --- ƒZƒbƒgƒAƒbƒv / setup ------------------------------------------------
+# --- ã‚»ãƒƒãƒˆã‚¢ãƒƒãƒ— / setup ------------------------------------------------
 
 Write-Host ""
-Write-Host "  ƒCƒ“ƒXƒg[ƒ‹‚ªŠ®—¹‚µ‚Ü‚µ‚½ / Installation complete" -ForegroundColor Green
+Write-Host "  ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ãŒå®Œäº†ã—ã¾ã—ãŸ / Installation complete" -ForegroundColor Green
 Write-Host ""
 
 if (-not $Quiet) {
-    Write-Host "  ‘±‚¯‚Ä‰Šúİ’è‚ğs‚¢‚Ü‚· / Continuing to first-run setup."
+    Write-Host "  ç¶šã‘ã¦åˆæœŸè¨­å®šã‚’è¡Œã„ã¾ã™ / Continuing to first-run setup."
     Write-Host ""
     Push-Location $InstallDir
     try {
@@ -257,9 +257,9 @@ if (-not $Quiet) {
     }
 
     Write-Host ""
-    Write-Host "  ƒfƒXƒNƒgƒbƒv‚Ì AI-PMO ‚©‚ç‹N“®‚Å‚«‚Ü‚·" -ForegroundColor Cyan
+    Write-Host "  ãƒ‡ã‚¹ã‚¯ãƒˆãƒƒãƒ—ã® AI-PMO ã‹ã‚‰èµ·å‹•ã§ãã¾ã™" -ForegroundColor Cyan
     Write-Host "  Launch it from the AI-PMO shortcut on your desktop." -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "  Enter ƒL[‚ÅI—¹ / Press Enter to exit"
+    Write-Host "  Enter ã‚­ãƒ¼ã§çµ‚äº† / Press Enter to exit"
     [void](Read-Host)
 }

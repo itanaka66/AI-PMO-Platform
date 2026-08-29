@@ -26,7 +26,9 @@ Programmierkenntnisse sind nicht nötig.
 - **Kleine und mittlere Unternehmen** — die Arbeitsweisen ohne eigenes PMO bekommen
 - **Große Organisationen** — was jede Abteilung anders macht, über Vorlagen angleichen
 
-Es ist kostenlos. Für die Nutzung fallen keine Gebühren an.
+**Alles davon ist kostenlos** — keine eingeschränkte Fassung, keine
+Testversion. Vorlagen und Prompts gelten zu denselben Bedingungen.
+(Die Nutzung des KI-Dienstes zahlen Sie dem gewählten Anbieter.)
 
 ---
 
@@ -190,5 +192,6 @@ Mehr dazu in [INSTALL.md](../../INSTALL.md).
 - [SCHEDULER.md](../SCHEDULER.md) — zeitgesteuert automatisch ausführen
 - [AGILE.md](../AGILE.md) — über Sprints berichten
 - [INDUSTRIES.md](../INDUSTRIES.md) — Bau, Marketing und andere Branchen
+- [LICENSE](../../LICENSE) — MIT (kommerzielle Nutzung, Änderung und Weitergabe erlaubt)
 - [README.md](../../README.md) — Funktionsweise und Aufbau, für Entwickler
 - `templates/examples/` — Beispielvorlagen

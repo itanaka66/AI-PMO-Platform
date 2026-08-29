@@ -24,7 +24,7 @@ A template-driven runtime for automating PMO work.
 | `docs/guide/` | 入門ガイド 8言語 |
 | `scripts/` `installer/` | インストーラ（Windows / Mac / Linux / Docker） |
 | `deploy/oracle/` | Oracle Cloud Always Free + Aiven 構成 |
-| `tests/` | テスト 516件 |
+| `tests/` | テスト 543件 |
 
 ## 対応している PMO 業務 / What it automates
 
@@ -44,7 +44,7 @@ A template-driven runtime for automating PMO work.
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 516件
+pytest                                   # 543件
 aipmo setup                              # 初回設定
 aipmo validate templates/examples/meeting_to_tasks.yaml
 aipmo serve --host 0.0.0.0               # スマホ向け画面
@@ -53,15 +53,17 @@ aipmo schedule                           # 定時実行
 
 インストーラを使う場合は [INSTALL.md](INSTALL.md) を見てください。
 
+## ライセンス / License
+
+MIT License（[LICENSE](LICENSE)）— Copyright (c) 2026 株式会社エージーネディア。
+
+**このリポジトリにあるものは、すべて無料です。** 商用利用・改変・再配布が
+可能で、テンプレートとプロンプトも同じ条件です。詳細は [NOTICE.md](NOTICE.md)。
+
+MIT. Commercial use, modification and redistribution are permitted, and that
+includes the templates and prompts.
+
 ## まだ決めていないこと / Not yet decided
-
-**ライセンスが入っていません。** OSS として公開するなら必要です。
-無料公開と Enterprise 版を両立させる方針次第で選ぶものが変わるため、
-こちらでは選んでいません。
-
-There is no LICENSE file. Publishing as open source needs one, and which one
-depends on how the free and enterprise offerings are meant to coexist — so it
-has been left to you rather than chosen here.
 
 **署名されていません。** 未署名の `.exe` は Windows が警告を出します。
 [INSTALL.md](INSTALL.md) に回避策はありますが、緩和であって解決ではありません。

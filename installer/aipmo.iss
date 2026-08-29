@@ -1,4 +1,4 @@
-; AI-PMO Platform — Inno Setup script
+﻿; AI-PMO Platform ― Inno Setup script
 ;
 ; これをコンパイルすると単一の .exe インストーラができる。
 ; Compiling this produces a single .exe installer.

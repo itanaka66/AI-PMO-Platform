@@ -26,7 +26,9 @@ Aucune connaissance en programmation n'est nécessaire.
 - **PME** — disposer des méthodes sans PMO dédié
 - **Grandes organisations** — harmoniser par des modèles ce que chaque service fait à sa façon
 
-C'est gratuit. L'utilisation n'est pas facturée.
+**Tout est gratuit** : ni édition réduite, ni version d'essai.
+Les modèles et les prompts sont soumis aux mêmes conditions.
+(L'usage du service d'IA se règle auprès du fournisseur choisi.)
 
 ---
 
@@ -190,5 +192,6 @@ Plus de détails dans [INSTALL.md](../../INSTALL.md).
 - [SCHEDULER.md](../SCHEDULER.md) — exécuter automatiquement à heure fixe
 - [AGILE.md](../AGILE.md) — rendre compte des sprints
 - [INDUSTRIES.md](../INDUSTRIES.md) — bâtiment, marketing et autres secteurs
+- [LICENSE](../../LICENSE) — MIT (usage commercial, modification et redistribution autorisés)
 - [README.md](../../README.md) — le fonctionnement, pour les développeurs
 - `templates/examples/` — modèles d'exemple

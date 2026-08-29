@@ -1,0 +1,24 @@
+# Windows 向けスクリプトのエンコーディングを Git に壊させない。
+# Keep Git from mangling the encodings these files require.
+#
+# .bat は cmd が現在のコードページ (日本語版 Windows では CP932) で読むため、
+# CP932 で保存してある。text 扱いにすると環境によって変換されうるので、
+# 明示的に除外し、改行も CRLF に固定する。
+#
+# .bat files are stored in CP932 because cmd reads them in the console's code
+# page. Marking them -text keeps Git from re-encoding or re-ending them.
+*.bat  -text
+*.cmd  -text
+
+# .ps1 と .iss は UTF-8 BOM 付き。BOM を保ったまま CRLF を維持する。
+# Windows PowerShell 5.1 は BOM が無いと .ps1 を ANSI として読む。
+# .ps1 and .iss carry a UTF-8 BOM: PowerShell 5.1 reads a BOM-less .ps1 as ANSI.
+*.ps1  text eol=crlf working-tree-encoding=UTF-8
+*.iss  text eol=crlf working-tree-encoding=UTF-8
+
+# それ以外は LF で統一 / everything else stays LF
+*.py   text eol=lf
+*.sh   text eol=lf
+*.md   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
