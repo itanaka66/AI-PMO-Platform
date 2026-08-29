@@ -168,8 +168,19 @@ class AdapterRegistry:
     def __init__(self) -> None:
         self._adapters: dict[str, Adapter] = {}
 
-    def register(self, adapter: Adapter) -> None:
-        self._adapters[adapter.name] = adapter
+    def register(self, adapter: Adapter, name: str | None = None) -> None:
+        """既定ではアダプタ自身の名前で登録する。
+
+        name を渡すと別名でも登録できる — 同じインスタンスを、選ばれた
+        バックエンド固有の名前（例: pgvector）と、論理名（vector_store）の
+        両方で引けるようにするために使う。
+
+        Registers under the adapter's own name by default. Passing `name`
+        registers it under an alias too — used to make the same instance
+        reachable both by the chosen backend's own name (e.g. pgvector) and
+        by a logical name (vector_store).
+        """
+        self._adapters[name or adapter.name] = adapter
 
     def get(self, name: str) -> Adapter:
         if name not in self._adapters:

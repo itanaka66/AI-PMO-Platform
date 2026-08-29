@@ -589,6 +589,7 @@ def _build_generalize_engine(consent_rows, script):
     adapters = AdapterRegistry()
     adapters.register(postgres)
     adapters.register(qdrant)
+    adapters.register(qdrant, name="vector_store")
     adapters.register(slack)
 
     llms = LLMRegistry()
@@ -602,7 +603,7 @@ def test_generalize_knowledge_submits_a_candidate_when_consent_allows_it():
     engine, qdrant_client, slack = _build_generalize_engine(
         consent_rows=[("B",)],
         script=[
-            _calls_tool("qdrant__submit_candidate", {
+            _calls_tool("vector_store__submit_candidate", {
                 "knowledge": {"pattern_name": "key_person_dependency",
                               "text": "主要担当者一人への依存は、離脱時に"
                                       "スケジュールへ不均衡な影響を与える"},

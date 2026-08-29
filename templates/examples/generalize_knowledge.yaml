@@ -31,7 +31,7 @@ steps:
     when: "{{ steps.consent.output.level }} != 'A'"
     agent:
       tools:
-        - qdrant.submit_candidate
+        - vector_store.submit_candidate
       # 提出そのものが書き込みなので明示的に許可する。それ以外の書き込み
       # （公開コレクションへの直接書き込みなど）は道具として渡していない
       # ので、そもそも呼べない。

@@ -19,6 +19,20 @@ hidden = [
     "aipmo.adapters.postgres",
     "aipmo.adapters.qdrant",
     "aipmo.adapters.mock",
+    # pgvector / chroma / milvus / weaviate 自体（chromadb 等の重い依存）は
+    # 既定のインストーラに含めない。このモジュール自体は依存無しで import
+    # できるので、ここに載せても .exe が壊れることはない — 使うには
+    # 別途 pip install が要る。
+    #
+    # pgvector / chroma / milvus / weaviate's own heavy dependencies (e.g.
+    # chromadb) are not bundled in the default installer. These modules
+    # import cleanly without them, so listing them here does not break the
+    # .exe — actually using one still needs a separate pip install.
+    "aipmo.adapters.vector_store",
+    "aipmo.adapters.pgvector",
+    "aipmo.adapters.chroma",
+    "aipmo.adapters.milvus",
+    "aipmo.adapters.weaviate",
 ]
 
 a = Analysis(

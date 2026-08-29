@@ -20,8 +20,12 @@ import yaml
 from .console import configure_stdio, mark
 from .adapters.base import AdapterRegistry
 from .adapters.mock import MockJiraAdapter, MockSlackAdapter, MockTeamsAdapter
+from .adapters.chroma import ChromaAdapter
+from .adapters.milvus import MilvusAdapter
+from .adapters.pgvector import PgVectorAdapter
 from .adapters.postgres import PostgresAdapter
 from .adapters.qdrant import QdrantAdapter
+from .adapters.weaviate import WeaviateAdapter
 from .dsl import loader
 from .engine.runner import Engine, PromptLibrary, StepFailure
 from .llm.embeddings import build_embedder
@@ -29,6 +33,21 @@ from .setup_wizard import load_env, run_interactive
 from .llm.registry import LLMRegistry
 
 DEFAULT_CONFIG = Path(os.environ.get("AIPMO_CONFIG", "config.yaml"))
+
+# ベクトルストアの選択肢。どれか1つだけ config に書けばよい。
+# 5種類のうちどれを選んでも、テンプレートからは同じ形（search / upsert /
+# submit_candidate）で使える — 違いは接続方法だけ。
+#
+# The vector-store choices. Configure exactly one of them. Whichever is
+# chosen, a template sees the same shape (search / upsert / submit_candidate)
+# — only the connection differs.
+VECTOR_STORE_ADAPTERS: dict[str, type] = {
+    "qdrant": QdrantAdapter,
+    "pgvector": PgVectorAdapter,
+    "chroma": ChromaAdapter,
+    "milvus": MilvusAdapter,
+    "weaviate": WeaviateAdapter,
+}
 
 
 class ConfigError(Exception):
@@ -141,10 +160,27 @@ def build_engine(config: dict[str, Any], base_dir: Path | None = None) -> Engine
             queries.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
         adapters.register(PostgresAdapter(queries=queries, tenant=tenant, **spec))
 
-    if "qdrant" in adapter_config:
-        spec = dict(adapter_config["qdrant"])
+    # ベクトルストアは5種類のうちどれを設定してもよい。ちょうど1つだけ
+    # 設定されているときは、論理名 vector_store でも同じインスタンスを
+    # 登録する — 新しいテンプレートはそちらを使えば、あとでバックエンドを
+    # 乗り換えてもテンプレート側の変更が要らない。2つ以上設定された場合は
+    # 曖昧になるため、論理名の別名づけは行わない（各バックエンド固有の
+    # 名前では引き続き使える）。
+    #
+    # Configure whichever one of the five vector-store backends you want.
+    # When exactly one is configured, the same instance is additionally
+    # registered under the logical name vector_store — a new template can use
+    # that name and survive a later backend switch untouched. With two or
+    # more configured, the logical alias is skipped as ambiguous (each
+    # backend's own name still works).
+    configured_vector_stores = [name for name in VECTOR_STORE_ADAPTERS if name in adapter_config]
+    for name in configured_vector_stores:
+        spec = dict(adapter_config[name])
         embedder = build_embedder(spec.pop("embedding", None))
-        adapters.register(QdrantAdapter(tenant=tenant, embedder=embedder, **spec))
+        instance = VECTOR_STORE_ADAPTERS[name](tenant=tenant, embedder=embedder, **spec)
+        adapters.register(instance)
+        if len(configured_vector_stores) == 1:
+            adapters.register(instance, name="vector_store")
 
     llms = LLMRegistry.from_config(config.get("llm") or {"default": {"provider": "echo"}})
     prompts = PromptLibrary(resolve(config.get("prompts_dir", "prompts")))

@@ -46,7 +46,8 @@ New here? Start with the **[getting-started guide](docs/guide/README.md)**.
 | `insurance/claim_sla_triage` | 保険請求の期限確認（州別規制期限・不正疑い・契約者待ちを分けて扱う） |
 | `government_contracting/clearance_deliverable_triage` | 政府調達案件の確認（クリアランス失効・納品期限を分けて扱う） |
 
-連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL · Qdrant
+連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL ·
+ベクトルストア（Qdrant・pgvector・Chroma・Milvus・Weaviate から選択）
 AI: OpenAI · Gemini · Groq · OpenRouter · Ollama · vLLM · LM Studio
 
 ---
@@ -69,7 +70,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 657 件
+pytest                               # 669 件
 ```
 
 ---
@@ -258,12 +259,31 @@ template engine would turn every distributed template into an attack surface.
 ### SQL とコレクション名をテンプレートに書かせない
 
 同じ理由。PostgreSQL は `queries.yaml` に定義された**クエリ名とパラメータのみ**、
-Qdrant は論理スコープ `private` / `public` のみ。`tenant` は接続設定から入るので、
+ベクトルストアは論理スコープ `private` / `public` のみ。`tenant` は接続設定から入るので、
 テンプレートが上書きできない。
 
 Same reasoning: a template passes a query name and bound parameters, or a
 logical scope — never raw SQL or a collection name. The tenant comes from
 connection config and cannot be overridden.
+
+### ベクトルストアは5種類のうちどれを選んでも同じ道具として渡せる
+
+Qdrant・pgvector・Chroma・Milvus・Weaviate は、共通の基底クラス
+`VectorStoreAdapter` が scope 解決・公開可能性スコア・公開拒否をまとめて
+持ち、各アダプタは接続方法と実際の検索・書き込み呼び出しだけを持つ。
+config に設定したバックエンドがちょうど1つなら、論理名 `vector_store` でも
+同じインスタンスが登録される。LLM の `profile` と同じ考え方——新しく書く
+テンプレートは `vector_store.search` を使えば、あとでバックエンドを乗り換えても
+書き換えが要らない。詳しくは [docs/VECTOR_STORES.md](docs/VECTOR_STORES.md)。
+
+Qdrant, pgvector, Chroma, Milvus, and Weaviate share a common base class,
+`VectorStoreAdapter`, which owns scope resolution, publicability scoring, and
+refusing public writes; each adapter contributes only its own connection and
+the actual search/upsert calls. Configuring exactly one backend also
+registers the same instance under the logical name `vector_store` — the same
+idea as an LLM `profile`. A newly written template that uses
+`vector_store.search` survives a later backend switch untouched. See
+[docs/VECTOR_STORES.md](docs/VECTOR_STORES.md).
 
 ### 公開コレクションへの書き込みをアダプタが拒否する
 
@@ -305,11 +325,12 @@ forces a score of 0 unconditionally, regardless of anything else.
 向くので、ここは既存の `agent` の仕組みをそのまま使っている——新しい
 エンジンの機能は要らなかった。
 
-変わらないもの: エージェントに渡す道具は `qdrant.submit_candidate` だけで、
+変わらないもの: エージェントに渡す道具は `vector_store.submit_candidate` だけで、
 `allow_writes: true` を明示しないと呼べない。利用許諾レベルは
 `postgres.consent_level` から取った値をそのままプロンプトへ渡し、
 **AI 自身には判断させない。** 提出は「レビュー待ちに載せる」ところまでで、
-公開そのものは相変わらずここでは起こらない。
+公開そのものは相変わらずここでは起こらない。（`vector_store` は設定した
+ベクトルストアの論理名。Qdrant を選んでも pgvector を選んでも、このテンプレートは変わらない。）
 
 Generalizing an internal insight and submitting it as a candidate is now a
 working agent, `templates/examples/generalize_knowledge.yaml`. Stripping
@@ -318,11 +339,13 @@ rewriting a language model is suited for, so this reuses the existing `agent`
 mechanism as-is — no new engine capability was needed.
 
 What stays the same: the only tool handed to the agent is
-`qdrant.submit_candidate`, and it cannot be called without an explicit
+`vector_store.submit_candidate`, and it cannot be called without an explicit
 `allow_writes: true`. The consent level is fetched from
 `postgres.consent_level` and passed into the prompt as a given fact — **not
 something the model decides for itself.** Submitting only ever means landing
-in the review queue; publication still does not happen here.
+in the review queue; publication still does not happen here. (`vector_store`
+is the logical name for whichever backend is configured — this template is
+unchanged whether that is Qdrant or pgvector.)
 
 ### 書き込みは読み取りより厳しく扱う
 
@@ -387,9 +410,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-657 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+669 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-657 tests, aimed at the guarantees and at the failure shapes that look like
+669 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
@@ -412,6 +435,7 @@ success:
 | [docs/MOBILE.md](docs/MOBILE.md) | スマホから使う・権限分離 / phone access and roles |
 | [docs/PROVIDERS.md](docs/PROVIDERS.md) | AI の提供元 / AI providers |
 | [docs/AGENTS.md](docs/AGENTS.md) | エージェント / agents |
+| [docs/VECTOR_STORES.md](docs/VECTOR_STORES.md) | ベクトルストアの選択肢 / vector store choices |
 | [docs/SCHEDULER.md](docs/SCHEDULER.md) | 定時実行 / scheduling |
 | [docs/TEAMS.md](docs/TEAMS.md) | Teams 連携 / Teams |
 | [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |

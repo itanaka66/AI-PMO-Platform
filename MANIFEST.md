@@ -14,7 +14,7 @@ A template-driven runtime for automating PMO work.
 |---|---|
 | `aipmo/dsl/` | テンプレート言語（スキーマ・読み込み・式評価） |
 | `aipmo/engine/` | 実行エンジン、エージェント、cron、スケジューラ |
-| `aipmo/adapters/` | Teams / Jira / Jira Agile / Slack / PostgreSQL / Qdrant |
+| `aipmo/adapters/` | Teams / Jira / Jira Agile / Slack / PostgreSQL / ベクトルストア5種 |
 | `aipmo/llm/` | 提供元プリセット（OpenAI・Gemini・Groq・OpenRouter・ローカル） |
 | `aipmo/web/` | スマホ向け画面（権限分離つき） |
 | `templates/examples/` | ソフトウェア開発向けテンプレート 7本 |
@@ -25,7 +25,7 @@ A template-driven runtime for automating PMO work.
 | `scripts/` `installer/` | インストーラ（Windows / Mac / Linux / Docker） |
 | `deploy/oracle/` | Oracle Cloud Always Free + Aiven 構成 |
 | `deploy/generic/` | GCP / Azure / AWS / VPS 共通のデプロイ構成 |
-| `tests/` | テスト 657件 |
+| `tests/` | テスト 669件 |
 
 ## 対応している PMO 業務 / What it automates
 
@@ -45,7 +45,7 @@ A template-driven runtime for automating PMO work.
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 657件
+pytest                                   # 669件
 aipmo setup                              # 初回設定
 aipmo validate templates/examples/meeting_to_tasks.yaml
 aipmo serve --host 0.0.0.0               # スマホ向け画面
