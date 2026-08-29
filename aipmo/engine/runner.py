@@ -5,9 +5,12 @@
 """
 from __future__ import annotations
 
+import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -39,6 +42,31 @@ class StepFailure(Exception):
         super().__init__(f"ステップ '{step_id}' が失敗しました: {message}")
         self.step_id = step_id
         self.context = context
+
+
+# 実行履歴の DB は小さい前提（無料枠の 1GB など）。出力をまるごと保存すると
+# 議事録の全文だけで数週間で埋まることが実測されている
+# （docs/DEPLOY-ORACLE.md）。大きいものは要約に落として履歴には残す。
+#
+# The history database is assumed small (e.g. a free-tier 1GB). Storing whole
+# outputs has been measured to fill it within weeks on full meeting minutes
+# alone (docs/DEPLOY-ORACLE.md). Oversized ones are summarized instead of
+# dropped, so the history still records that the step ran.
+MAX_STORED_OUTPUT_BYTES = 8_000
+
+
+def _bounded_output(output: Any) -> Any:
+    try:
+        encoded = json.dumps(output, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return {"unstorable": True, "python_type": type(output).__name__}
+    if len(encoded.encode("utf-8")) <= MAX_STORED_OUTPUT_BYTES:
+        return output
+    return {
+        "truncated": True,
+        "original_size_bytes": len(encoded.encode("utf-8")),
+        "preview": encoded[:500],
+    }
 
 
 def _days_between(start: str, end: str) -> int | None:
@@ -117,6 +145,13 @@ class Engine:
         # 利用者定義のものを優先する。名前がぶつかったら上書きできる。
         # User-supplied transforms win, so a name can be overridden.
         self.transforms = {**BUILTIN_TRANSFORMS, **(transforms or {})}
+        # 並列グループの中のステップは同時に履歴を書こうとする。
+        # 1本の DB 接続を複数スレッドから同時に使うのは安全でないため、
+        # 履歴への書き込みだけはここで直列化する。
+        # Steps inside a parallel group can try to record history at the same
+        # time. A single DB connection is not safe to use from several threads
+        # at once, so history writes alone are serialized here.
+        self._history_lock = threading.Lock()
 
     def run(
         self,
@@ -131,21 +166,117 @@ class Engine:
             trigger=trigger or {},
         )
         logger.info("run %s start (template=%s)", ctx.run_id, template.name)
+        self._record_run_start(template, ctx)
 
-        for step in template.steps:
-            result = self._run_step(step, ctx)
-            ctx.results[step.id] = result
+        try:
+            for step in template.steps:
+                result = self._run_step(step, ctx)
+                ctx.results[step.id] = result
 
-            if result.status == "failed" and not step.continue_on_error:
-                logger.error("run %s aborted at step %s", ctx.run_id, step.id)
-                raise StepFailure(step.id, result.error or "不明なエラー", context=ctx)
+                if result.status == "failed" and not step.continue_on_error:
+                    logger.error("run %s aborted at step %s", ctx.run_id, step.id)
+                    raise StepFailure(step.id, result.error or "不明なエラー", context=ctx)
+        except StepFailure:
+            self._record_run_finish(ctx, status="failed")
+            raise
 
+        self._record_run_finish(ctx, status="success")
         logger.info("run %s finished", ctx.run_id)
         return ctx
+
+    # -- 実行履歴の永続化 / run history persistence ------------------------
+    #
+    # postgres アダプタが設定されているときだけ動く。テンプレート側は
+    # 何も書かなくてよい — これはエンジンの配線であって、DSL の機能ではない。
+    # 書き込みに失敗しても本来の業務処理は止めない。履歴が欠けることより、
+    # 通知が届かないことの方が困る。
+    #
+    # Only active when a postgres adapter is configured. Templates need not
+    # reference it at all — this is engine-side wiring, not a DSL feature. A
+    # failed history write never aborts the actual workflow: a gap in the
+    # history is a smaller problem than a notification that never went out.
+
+    def _postgres(self) -> Any | None:
+        if not self.adapters.has("postgres"):
+            return None
+        return self.adapters.get("postgres")
+
+    def _invoke_postgres(self, postgres: Any, payload: dict[str, Any]) -> None:
+        with self._history_lock:
+            postgres.invoke("execute", payload)
+
+    def _record_run_start(self, template: Template, ctx: RunContext) -> None:
+        postgres = self._postgres()
+        if postgres is None:
+            return
+        try:
+            from psycopg.types.json import Jsonb
+
+            self._invoke_postgres(postgres, {
+                "name": "record_run",
+                "params": {
+                    "id": ctx.run_id,
+                    "template": template.name,
+                    "template_version": template.version,
+                    "trigger": Jsonb(ctx.trigger),
+                    "status": "running",
+                    "started_at": ctx.started_at,
+                },
+                "idempotency_key": ctx.run_id,
+            })
+        except Exception:
+            logger.warning("run %s: 実行履歴の記録に失敗しました "
+                           "/ failed to record the run", ctx.run_id, exc_info=True)
+
+    def _record_step_result(self, ctx: RunContext, result: StepResult) -> None:
+        postgres = self._postgres()
+        if postgres is None:
+            return
+        try:
+            from psycopg.types.json import Jsonb
+
+            self._invoke_postgres(postgres, {
+                "name": "record_step_result",
+                "params": {
+                    "run_id": ctx.run_id,
+                    "step_id": result.id,
+                    "status": result.status,
+                    "output": Jsonb(_bounded_output(result.output)),
+                    "error": result.error,
+                    "attempts": result.attempts,
+                    "duration_ms": result.duration_ms,
+                },
+            })
+        except Exception:
+            logger.warning("run %s: ステップ '%s' の記録に失敗しました "
+                           "/ failed to record step '%s'",
+                           ctx.run_id, result.id, result.id, exc_info=True)
+
+    def _record_run_finish(self, ctx: RunContext, status: str) -> None:
+        postgres = self._postgres()
+        if postgres is None:
+            return
+        try:
+            self._invoke_postgres(postgres, {
+                "name": "finish_run",
+                "params": {
+                    "id": ctx.run_id,
+                    "status": status,
+                    "finished_at": datetime.now(timezone.utc),
+                },
+            })
+        except Exception:
+            logger.warning("run %s: 実行終了の記録に失敗しました "
+                           "/ failed to record run finish", ctx.run_id, exc_info=True)
 
     # ------------------------------------------------------------------
 
     def _run_step(self, step: Step, ctx: RunContext) -> StepResult:
+        result = self._execute_step(step, ctx)
+        self._record_step_result(ctx, result)
+        return result
+
+    def _execute_step(self, step: Step, ctx: RunContext) -> StepResult:
         scope = ctx.scope()
 
         if step.when is not None:

@@ -181,3 +181,6 @@ class AdapterRegistry:
 
     def names(self) -> list[str]:
         return sorted(self._adapters)
+
+    def has(self, name: str) -> bool:
+        return name in self._adapters

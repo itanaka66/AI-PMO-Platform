@@ -192,15 +192,25 @@ The key moves into a cookie on first open. Add it to the home screen.
 
 ### 容量 / Capacity
 
-Aiven の 1GB は、実行履歴だけを入れる分には長く保ちますが、
-**ステップ出力を丸ごと保存すると数週間で埋まります**。
-議事録の全文を `step_results.output` に入れないでください。
-長い出力は Qdrant 側に置き、PostgreSQL には参照だけを残します。
+実行履歴は `postgres` アダプタを設定するだけで自動的に記録されます
+（テンプレート側で何も書く必要はありません）。ステップ出力が大きい場合
+（既定で 8,000 バイト超）は丸ごと保存せず、`truncated: true` と先頭の抜粋
+だけを残す要約に置き換えます — 議事録の全文だけで free 枠を埋めないための
+既定の安全策です。
 
-Aiven's 1GB lasts a long time for run metadata, but **storing whole step
-outputs will fill it within weeks**. Keep full transcripts and minutes out of
-`step_results.output`; put the bulk in Qdrant and keep a reference in
-PostgreSQL.
+Run history is recorded automatically the moment a `postgres` adapter is
+configured — templates need not write anything for it. A step output larger
+than 8,000 bytes by default is not stored whole; it is replaced with a
+summary (`truncated: true` plus a short excerpt), so full meeting minutes
+cannot by themselves fill the free tier.
+
+それでも、実行回数が多いテナントでは数か月で無視できない量になります。
+長い出力を丸ごと参照したい場合は Qdrant 側に置き、PostgreSQL には参照だけを
+残してください。定期的に容量を確認してください。
+
+Even so, a tenant with many runs will accumulate a non-trivial amount over
+months. If you need the full output kept somewhere, put it in Qdrant and keep
+only a reference in PostgreSQL. Check capacity periodically.
 
 使用量の確認 / Check usage:
 
