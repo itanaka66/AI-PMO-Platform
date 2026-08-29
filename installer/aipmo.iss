@@ -17,7 +17,7 @@
 ;   iscc /DSIGN /Saipmosign="signtool.exe sign ... $f" installer\aipmo.iss
 
 #define AppName "AI-PMO Platform"
-#define AppVersion "0.1.0"
+#define AppVersion "0.1.1"
 #define AppPublisher "AI-PMO"
 #define AppExeName "aipmo.exe"
 
