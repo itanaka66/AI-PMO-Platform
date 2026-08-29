@@ -18,10 +18,22 @@ pending_candidates: |
   ORDER BY publicability_score DESC NULLS LAST
 
 record_run: |
-  INSERT INTO runs (id, tenant, template, trigger, status, started_at, idempotency_key)
-  VALUES (:id, :tenant, :template, :trigger, :status, :started_at, :idempotency_key)
+  INSERT INTO runs (id, tenant, template, template_version, trigger, status,
+                    started_at, idempotency_key)
+  VALUES (:id, :tenant, :template, :template_version, :trigger, :status,
+          :started_at, :idempotency_key)
   ON CONFLICT (idempotency_key) DO NOTHING
   RETURNING id
+
+finish_run: |
+  UPDATE runs SET status = :status, finished_at = :finished_at
+  WHERE id = :id
+
+record_step_result: |
+  INSERT INTO step_results
+    (run_id, step_id, status, output, error, attempts, duration_ms)
+  VALUES
+    (:run_id, :step_id, :status, :output, :error, :attempts, :duration_ms)
 
 save_candidate: |
   INSERT INTO knowledge_candidates

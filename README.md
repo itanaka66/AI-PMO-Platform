@@ -299,6 +299,31 @@ Five days of a 9am report delivered at noon is a flood, not a report. For the
 same reason, silence is the output when nothing is wrong: a channel that says
 "all fine" every morning is not read when it matters either.
 
+### 実行履歴はテンプレートを経由せず記録する
+
+`postgres` アダプタを設定するだけで、実行の開始・各ステップ・終了が
+自動で `runs` / `step_results` に記録される。テンプレートは何も書かない
+— これはエンジン側の配線であって、DSL の機能にしない。書ける場所を
+テンプレートに与えると、書く・書かないがテンプレートごとにばらつく。
+
+履歴の書き込みが失敗しても、本来の業務処理は止めない。通知が届かない方が、
+履歴が1件欠けるより困る。ステップ出力が大きい場合は丸ごと保存せず要約に
+落とす — 無料枠クラスの小さな DB を議事録の全文だけで埋めないため
+（詳しくは [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md)）。並列グループの
+中の工程も、それぞれ個別に記録される。
+
+Configuring a `postgres` adapter is enough: a run's start, every step, and its
+finish are recorded into `runs` / `step_results` automatically. Templates
+write nothing for this — it stays engine-side wiring, not a DSL feature, so
+whether history gets recorded never varies template to template.
+
+A failed history write never aborts the actual workflow — a missing
+notification is worse than a gap in the history. An oversized step output is
+summarized rather than stored whole, so a free-tier database is not filled by
+full meeting minutes alone (see
+[docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md)). Steps inside a parallel group
+are each recorded individually.
+
 ---
 
 ## テスト / Tests
@@ -346,7 +371,6 @@ success:
   一般化そのものは行わない / it accepts candidates but does not generalize
 - **公開可能性スコアの算出** — 保存はできるが計算は未実装 / the field is stored,
   the computation is not
-- **実行履歴の永続化配線** — スキーマとクエリはあるが、エンジンからの自動書き込みは未接続
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
 - **上記3業界以外のテンプレート**
 

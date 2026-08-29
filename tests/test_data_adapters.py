@@ -5,18 +5,29 @@ Focus: proving a distributed template cannot cross a tenant boundary.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from aipmo.adapters.base import AdapterError, AdapterRegistry
+from aipmo.adapters.mock import MockSlackAdapter
 from aipmo.adapters.postgres import PostgresAdapter
 from aipmo.adapters.qdrant import QdrantAdapter
 from aipmo.dsl import loader
-from aipmo.engine.runner import Engine
+from aipmo.engine.runner import Engine, StepFailure
 from aipmo.llm.embeddings import HashEmbedder
 from aipmo.llm.registry import LLMRegistry
 from aipmo.llm.base import EchoProvider
+
+ROOT = Path(__file__).resolve().parents[1]
+# 手書きで写さず、実際に出荷する queries.yaml を読む。
+# ここが乖離すると、テストが通っても本番の SQL は壊れている、が起こる。
+# Loaded from the real shipped queries.yaml rather than copied by hand — copying
+# would let this drift from what actually ships, passing the test while the
+# production SQL breaks.
+REAL_QUERIES = yaml.safe_load((ROOT / "queries.yaml").read_text(encoding="utf-8"))
 
 
 # --- fakes ----------------------------------------------------------------
@@ -328,3 +339,184 @@ def test_injected_connection_is_never_replaced():
     adapter = PostgresAdapter(queries=QUERIES, tenant="company_a",
                               connection=connection)
     assert adapter._connect() is connection
+
+
+# --- 実行履歴の永続化 / run history persistence -----------------------------
+#
+# テンプレートは何も書かない。postgres アダプタが設定されているだけで、
+# エンジンが実行の開始・各ステップ・終了を自動で記録する。
+#
+# Templates write nothing for this. Configuring a postgres adapter alone is
+# enough for the engine to automatically record a run's start, each step, and
+# its finish.
+
+def _notify_template() -> Any:
+    return loader.load_dict({
+        "name": "notify",
+        "steps": [
+            {"id": "post", "adapter": "slack", "action": "post_message",
+             "inputs": {"channel": "#x", "text": "hi"}},
+        ],
+    })
+
+
+def _string_values(log: list[tuple[str, list[Any]]], sql_contains: str) -> set[str]:
+    """特定のクエリで束縛された文字列値をすべて集める（列の並びに依存しない）。
+
+    Collects every string value bound in calls to one query, independent of
+    column order.
+    """
+    found: set[str] = set()
+    for sql, values in log:
+        if sql_contains in sql:
+            found.update(v for v in values if isinstance(v, str))
+    return found
+
+
+def test_a_successful_run_records_start_step_and_finish():
+    connection = FakeConnection(rows=[])
+    adapters = AdapterRegistry()
+    adapters.register(PostgresAdapter(queries=REAL_QUERIES, tenant="company_a",
+                                      connection=connection))
+    slack = MockSlackAdapter()
+    adapters.register(slack)
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    ctx = Engine(adapters, llms).run(_notify_template())
+
+    sqls = [sql for sql, _ in connection.log]
+    assert any("INSERT INTO runs" in sql for sql in sqls)
+    assert any("INSERT INTO step_results" in sql for sql in sqls)
+    assert any("UPDATE runs SET status" in sql for sql in sqls)
+    assert "success" in _string_values(connection.log, "UPDATE runs SET status")
+    assert "post" in _string_values(connection.log, "INSERT INTO step_results")
+    # 本来の業務処理そのものは、履歴の配線に関係なく普通に走る。
+    assert slack.posted and ctx.results["post"].status == "success"
+
+
+def test_a_failed_run_is_recorded_as_failed():
+    class Failing(MockSlackAdapter):
+        def post_message(self, channel, text, thread_ts=None):
+            raise RuntimeError("down")
+
+    connection = FakeConnection(rows=[])
+    adapters = AdapterRegistry()
+    adapters.register(PostgresAdapter(queries=REAL_QUERIES, tenant="company_a",
+                                      connection=connection))
+    adapters.register(Failing())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    with pytest.raises(StepFailure):
+        Engine(adapters, llms).run(_notify_template())
+
+    assert "failed" in _string_values(connection.log, "UPDATE runs SET status")
+
+
+def test_history_write_failures_do_not_abort_the_workflow():
+    """履歴が書けなくても、本来の通知は届く。"""
+    class BrokenPostgres(PostgresAdapter):
+        def execute(self, name, params=None, idempotency_key=None):
+            raise RuntimeError("db unreachable")
+
+    adapters = AdapterRegistry()
+    adapters.register(BrokenPostgres(queries=REAL_QUERIES, tenant="company_a",
+                                     connection=FakeConnection()))
+    slack = MockSlackAdapter()
+    adapters.register(slack)
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    ctx = Engine(adapters, llms).run(_notify_template())
+
+    assert ctx.results["post"].status == "success"
+    assert slack.posted
+
+
+def test_no_postgres_adapter_means_no_history_and_no_error():
+    adapters = AdapterRegistry()
+    slack = MockSlackAdapter()
+    adapters.register(slack)
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    ctx = Engine(adapters, llms).run(_notify_template())
+
+    assert ctx.results["post"].status == "success"
+
+
+def test_small_output_is_stored_as_is():
+    connection = FakeConnection(rows=[])
+    adapters = AdapterRegistry()
+    adapters.register(PostgresAdapter(queries=REAL_QUERIES, tenant="company_a",
+                                      connection=connection))
+    slack = MockSlackAdapter()
+    adapters.register(slack)
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    Engine(adapters, llms).run(_notify_template())
+
+    output = [v for sql, values in connection.log if "INSERT INTO step_results" in sql
+             for v in values if hasattr(v, "obj")][0]
+    assert output.obj == {"ok": True, "ts": "1.000000"}
+
+
+def test_oversized_output_is_summarized_not_stored_whole():
+    """自由枠の DB を議事録の全文だけで埋めないための安全策。"""
+    connection = FakeConnection(rows=[])
+    adapters = AdapterRegistry()
+    adapters.register(PostgresAdapter(queries=REAL_QUERIES, tenant="company_a",
+                                      connection=connection))
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider(canned="x" * 20_000))
+
+    raw = {"name": "long_output", "steps": [
+        {"id": "draft", "llm": {"profile": "default"}, "prompt_inline": "go"},
+    ]}
+    Engine(adapters, llms).run(loader.load_dict(raw))
+
+    output = [v for sql, values in connection.log if "INSERT INTO step_results" in sql
+             for v in values if hasattr(v, "obj")][0]
+    assert output.obj["truncated"] is True
+    assert output.obj["original_size_bytes"] > 8_000
+    assert len(output.obj["preview"]) <= 500
+
+
+def test_parallel_group_members_are_each_recorded():
+    """並列グループの中の工程も、宛先ごとに履歴が残る。
+
+    2件が同時に履歴を書こうとしても、1本の接続を壊さないこと自体もここで
+    確かめている（ロックが効いていなければ FakeConnection の呼び出しが
+    競合して壊れた形で記録されるか、例外で終わる）。
+
+    Also proves that two steps writing history at the same time do not corrupt
+    the single shared connection — without the lock, this either interleaves
+    into a broken log or raises.
+    """
+    connection = FakeConnection(rows=[])
+    adapters = AdapterRegistry()
+    adapters.register(PostgresAdapter(queries=REAL_QUERIES, tenant="company_a",
+                                      connection=connection))
+    slack = MockSlackAdapter()
+    adapters.register(slack)
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    raw = {
+        "name": "fanout",
+        "steps": [{
+            "id": "broadcast",
+            "parallel": [
+                {"id": "notify_a", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#a", "text": "hi"}},
+                {"id": "notify_b", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#b", "text": "hi"}},
+            ],
+        }],
+    }
+    Engine(adapters, llms).run(loader.load_dict(raw))
+
+    recorded = _string_values(connection.log, "INSERT INTO step_results")
+    assert {"broadcast", "notify_a", "notify_b"} <= recorded
