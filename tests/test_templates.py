@@ -1201,3 +1201,88 @@ def test_policyholder_waits_are_not_a_chase_aimed_at_the_adjuster():
 def test_nothing_is_said_when_no_claim_needs_attention():
     _, slack = run_claims(reply=NO_CLAIMS_REPLY)
     assert slack.posted == []
+
+
+# --- 政府調達 / government contracting ---------------------------------------
+
+CLEARANCE_REPLY = json.dumps({
+    "clearance_blocked": [
+        {"issue_key": "GOVCON-1", "task_name": "暗号モジュール統合", "assignee": "山田太郎",
+         "clearance_status": "expiring_soon", "days_until_clearance_expiry": 20},
+    ],
+    "deliverable_at_risk": [
+        {"issue_key": "GOVCON-2", "deliverable_name": "CDRL A003 月次進捗報告",
+         "days_until_deadline": 3},
+    ],
+    "internal": [],
+}, ensure_ascii=False)
+
+NO_TASKS_REPLY = json.dumps({
+    "clearance_blocked": [], "deliverable_at_risk": [], "internal": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraGovTasks(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "GOVCON-1", "summary": "暗号モジュール統合"},
+            {"key": "GOVCON-2", "summary": "月次進捗報告の提出"},
+        ], "count": 2}
+
+
+SearchingJiraGovTasks.search = action()(SearchingJiraGovTasks.search)
+
+
+def run_govcon(reply=CLEARANCE_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraGovTasks(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "government_contracting"
+                         / "clearance_deliverable_triage.yaml"))
+    return ctx, slack
+
+
+def test_clearance_blocked_tasks_go_to_the_fso_not_the_program_team():
+    """現場に確認しても、クリアランスの発給・更新は進められない。"""
+    _, slack = run_govcon()
+    fso = [m for m in slack.posted if m["channel"] == "#fso-clearance-alerts"]
+    team = [m for m in slack.posted if m["channel"] == "#program-delivery"]
+
+    assert fso and "山田太郎" in fso[0]["text"]
+    assert team == []
+
+
+def test_deliverable_deadlines_are_sent_alone_immediately():
+    """契約上の納品期限を過ぎると、契約履行評価に影響しうる。"""
+    _, slack = run_govcon()
+    deliverables = [m for m in slack.posted if m["channel"] == "#cdrl-deadlines"]
+
+    assert len(deliverables) == 1
+    assert "CDRL A003" in deliverables[0]["text"]
+    assert "残り 3 日" in deliverables[0]["text"]
+
+
+def test_internal_tasks_are_batched():
+    reply = json.dumps({
+        "clearance_blocked": [], "deliverable_at_risk": [],
+        "internal": [
+            {"issue_key": "GOVCON-3", "next_step": "設計レビュー資料の更新"},
+            {"issue_key": "GOVCON-4", "next_step": "テスト計画書の作成"},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_govcon(reply=reply)
+    team = [m for m in slack.posted if m["channel"] == "#program-delivery"]
+
+    assert len(team) == 1
+    assert "GOVCON-3" in team[0]["text"] and "GOVCON-4" in team[0]["text"]
+
+
+def test_nothing_is_said_when_no_task_needs_attention():
+    _, slack = run_govcon(reply=NO_TASKS_REPLY)
+    assert slack.posted == []
