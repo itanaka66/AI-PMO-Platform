@@ -621,3 +621,92 @@ def test_approval_waits_are_reported_separately_from_late_work():
 def test_a_healthy_campaign_says_nothing():
     _, slack = run_campaign(reply=HEALTHY_CAMPAIGN)
     assert slack.posted == []
+
+
+# --- 製造 / manufacturing ----------------------------------------------------
+
+DOWNTIME_REPLY = json.dumps({
+    "headline": "安全案件が1件、資材待ちが1件あります",
+    "safety_items": [
+        {"issue_key": "MFG-1", "line": "Aライン", "description": "投入部のロックアウト未解除",
+         "downtime_hours": 2},
+    ],
+    "supply_blocked": [
+        {"issue_key": "MFG-2", "line": "Bライン", "waiting_on": "モーター部品",
+         "downtime_hours": 6},
+    ],
+    "internal": [],
+}, ensure_ascii=False)
+
+NO_STOPPAGES_REPLY = json.dumps({
+    "headline": "対応が必要な停止はありません",
+    "safety_items": [], "supply_blocked": [], "internal": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraStoppages(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "MFG-1", "summary": "投入部が停止"},
+            {"key": "MFG-2", "summary": "モーター交換待ち"},
+        ], "count": 2}
+
+
+SearchingJiraStoppages.search = action()(SearchingJiraStoppages.search)
+
+
+def run_downtime(reply=DOWNTIME_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraStoppages(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "manufacturing" / "line_downtime_triage.yaml"))
+    return ctx, slack
+
+
+def test_safety_stoppages_go_to_the_safety_channel_alone():
+    """安全に関わる停止は、進捗の報告に混ぜない。"""
+    _, slack = run_downtime()
+    safety = [m for m in slack.posted if m["channel"] == "#safety"]
+
+    assert len(safety) == 1
+    assert "ロックアウト" in safety[0]["text"]
+
+
+def test_supply_blocked_stoppages_go_to_procurement_not_the_floor():
+    """資材待ちは現場ではなく調達へ。現場に催促しても資材は届かない。"""
+    _, slack = run_downtime()
+    supply = [m for m in slack.posted if m["channel"] == "#procurement"]
+    floor = [m for m in slack.posted if m["channel"] == "#line-a-floor"]
+
+    assert supply and "モーター部品" in supply[0]["text"]
+    assert all("モーター部品" not in m["text"] for m in floor)
+
+
+def test_internal_fixes_are_batched_not_sent_individually():
+    """件数分バラバラに送ると、対応が必要なものが埋もれる。"""
+    reply = json.dumps({
+        "headline": "内製で直せる停止が2件",
+        "safety_items": [], "supply_blocked": [],
+        "internal": [
+            {"issue_key": "MFG-3", "line": "Cライン", "description": "センサー再調整",
+             "downtime_hours": 1},
+            {"issue_key": "MFG-4", "line": "Dライン", "description": "ベルト張り直し",
+             "downtime_hours": 1},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_downtime(reply=reply)
+    floor = [m for m in slack.posted if m["channel"] == "#line-a-floor"]
+
+    assert len(floor) == 1
+    assert "MFG-3" in floor[0]["text"] and "MFG-4" in floor[0]["text"]
+
+
+def test_nothing_is_said_when_no_stoppage_needs_attention():
+    _, slack = run_downtime(reply=NO_STOPPAGES_REPLY)
+    assert slack.posted == []

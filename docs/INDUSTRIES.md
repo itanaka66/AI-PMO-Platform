@@ -7,6 +7,7 @@
 | ソフトウェア開発 | `templates/examples/` | 会議・課題・スプリント |
 | 建設・施工管理 | `construction/site_meeting.yaml` | 工程会議と安全指摘 |
 | マーケティング | `marketing/campaign_check.yaml` | キャンペーン進行と承認待ち |
+| 製造 | `manufacturing/line_downtime_triage.yaml` | 生産ライン停止の仕分け |
 
 ---
 
@@ -58,6 +59,35 @@ holding it. Sent with the wording used for late work, it blames someone with no
 means to act, so approvals are separated and addressed differently. The launch
 date is treated as fixed, and the days remaining are counted before being
 handed over.
+
+### 製造 — 現場が悪いとは限らない
+
+生産ラインの停止は、二つの軸で分けて扱う必要があります。
+
+**安全に関わる停止は、単独で・即時に・専用チャンネルへ。** ロックアウト・
+タグアウトのような案件を、進捗報告の見出しの下に他の停止と並べて書くと、
+流し読みで飛ばされます。建設の安全指摘と同じ理由ですが、根拠は製造業に
+固有です — 労働災害はロックアウト手順の省略から起きることが多く、
+迷ったら安全側に倒すべき性質のものです。
+
+**資材待ちで止まっているものは、現場ではなく調達へ向けます。** 現場の
+担当者に確認しても、部品そのものは届きません。動かせるのは調達側だけです。
+遅れている作業と同じ扱いで現場へ催促すると、**動かせない人を責めることに
+なります。**「現場が悪い」とは限らないというのが、この業界に固有の点です。
+
+停止時間はデータにある値をそのまま使います。テンプレートに計算の仕組みは
+無いので、渡さなければモデルが自分で数えることになります。
+
+Production-line stoppages split along two axes. Safety-related ones are sent
+alone, immediately, to their own channel — same reasoning as construction's
+safety line, but the grounding is manufacturing-specific: injuries there
+typically trace back to a skipped lockout step, which is exactly the kind of
+thing that should be over-reported rather than missed. Parts-and-supply waits
+are addressed to procurement rather than the floor, since checking with the
+operator cannot make a part arrive — chasing the floor with the same wording
+used for ordinary delays would blame someone with no means to act, which is
+the field-specific twist: the floor is not always at fault. Downtime hours are
+used as given, not recomputed.
 
 ---
 
