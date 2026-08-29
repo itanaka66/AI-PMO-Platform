@@ -1,0 +1,117 @@
+name: legal_matter_deadline_triage
+version: "1"
+industry: legal
+description: |
+  法務案件の期限を確認し、対応が必要なものだけを報告する。
+  期限が迫っている案件は単独・即時に、相手方や裁判所待ちの案件は
+  担当者ではなく事務局へ、秘匿特権の対象案件は詳細を伏せて限定
+  チャンネルにのみ通知する。事実の報告に限り、法的な見解は述べない。
+
+trigger: "schedule:0 8 * * MON-FRI"
+
+params:
+  jira_project: LEGAL
+  team_channel: "#legal-ops"
+  urgent_channel: "#legal-urgent"
+  privileged_channel: "#legal-privileged"
+  urgent_within_days: 3
+
+steps:
+  - id: matters
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY duedate ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: legal_deadline_triage_ja
+    inputs:
+      today: "{{ run.date }}"
+      urgent_within_days: "{{ params.urgent_within_days }}"
+      matters: "{{ steps.matters.output.items }}"
+    output_format: json
+    output_schema:
+      required: [urgent, blocked, internal, privileged]
+
+  # 期限が迫っているものは、単独・即時に。事務的な遅れと違い、
+  # 期日を過ぎると却下・失権・制裁のような法的な効果が生じうる。
+  # まとめて翌朝に送っても意味がない。
+  #
+  # Deadline-critical matters are sent alone, immediately: unlike an ordinary
+  # schedule slip, missing a legal deadline can carry consequences (dismissal,
+  # waived rights, sanctions) that a next-morning digest cannot undo.
+  - id: notify_urgent
+    for_each: "{{ steps.triage.output.urgent }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.urgent_channel }}"
+      text: |
+        【期限】{{ item.matter_name }}（{{ item.issue_key }}）
+        期限: {{ item.deadline }}（残り {{ item.days_until_deadline }} 日）
+
+  # 相手方・裁判所・依頼者待ちの案件は、担当者にではなく事務局へ。
+  # 担当者に確認しても、相手方や裁判所は動かせない。動かせない人への
+  # 催促にしないため、まとめて状況共有として出す。
+  #
+  # Matters waiting on the other side, the court, or the client are routed as
+  # a status share, not a chase: confirming with the assigned attorney cannot
+  # move the opposing party or the court, so this is addressed differently
+  # from an ordinary internal delay.
+  - id: notify_blocked
+    when: "{{ steps.triage.output.blocked }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        相手方・裁判所・依頼者からの対応待ち ({{ run.date }})
+
+        {{ steps.triage.output.blocked }}
+
+        担当者の手を離れています。状況の把握のみで結構です。
+
+  # 担当者の判断で進められるものは、事務局向けに1通へまとめる。
+  - id: notify_internal
+    when: "{{ steps.triage.output.internal }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        対応が必要な案件 ({{ run.date }})
+
+        {{ steps.triage.output.internal }}
+
+  # 秘匿特権の対象案件は、案件番号と残り日数だけを、限定チャンネルへ。
+  # 緊急度に関わらず urgent / blocked / internal のいずれにも出さない
+  # ——自動化された経路が秘匿特権の内容に触れる範囲は、狭いほどよい。
+  #
+  # Privileged matters get only their id and days-remaining, on a
+  # restricted channel — regardless of urgency, never in urgent/blocked/
+  # internal. The less an automated path touches privileged substance,
+  # the better.
+  - id: notify_privileged
+    when: "{{ steps.triage.output.privileged }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.privileged_channel }}"
+      text: |
+        要確認の秘匿特権対象案件 ({{ run.date }})
+
+        {{ steps.triage.output.privileged }}
+
+        詳細は案件管理システムでご確認ください。

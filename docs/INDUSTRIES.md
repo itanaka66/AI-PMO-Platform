@@ -8,6 +8,7 @@
 | 建設・施工管理 | `construction/site_meeting.yaml` | 工程会議と安全指摘 |
 | マーケティング | `marketing/campaign_check.yaml` | キャンペーン進行と承認待ち |
 | 製造 | `manufacturing/line_downtime_triage.yaml` | 生産ライン停止の仕分け |
+| 法務・コンプライアンス | `legal/matter_deadline_triage.yaml` | 案件期限の確認と秘匿特権の扱い |
 
 ---
 
@@ -88,6 +89,46 @@ operator cannot make a part arrive — chasing the floor with the same wording
 used for ordinary delays would blame someone with no means to act, which is
 the field-specific twist: the floor is not always at fault. Downtime hours are
 used as given, not recomputed.
+
+### 法務・コンプライアンス — 期限を過ぎると取り返しがつかない
+
+この業界には、他の3つには無い制約がもう一つあります。**AI に法的な見解や
+助言を述べさせてはいけません。** プロンプトでは事実（期限・状況）の報告に
+限定するよう明示的に指示し、案件の是非や対応方針には触れさせません。
+これは弁護士法上の要請であって、単なる好みではありません。
+
+期限が迫っている案件は、他の業界の「安全」と同じ形で扱います —
+単独・即時に、専用チャンネルへ。ただし理由は異なります。工程の遅れは
+明日取り戻せますが、**法的な期限を過ぎると却下・失権・制裁のような、
+やり直しのきかない効果が生じることがあります。**
+
+相手方・裁判所・依頼者からの回答待ちの案件は、担当者への催促にしません。
+担当者に確認しても、相手方や裁判所は動かせないためです
+（マーケティングの承認待ちと同じ構造）。
+
+**秘匿特権の対象案件だけに固有の扱いがもう一つあります。** 緊急度や
+何を待っているかに関わらず、限定された人だけが見るチャンネルへ、
+案件番号と残り日数だけを通知します。案件名も内容も出しません。
+自動化された経路が秘匿特権の内容に触れる範囲は、狭いほど安全だからです。
+
+This field carries one constraint the other three do not: **the model must
+never state a legal opinion, give advice, or assess a matter's merits.** The
+prompt explicitly limits it to reporting facts — a deadline, a status — not
+whether the matter's position is sound or what to do about it. This is a
+requirement of the legal profession's own rules, not a stylistic choice.
+
+Deadline-critical matters get the same treatment as "safety" elsewhere — sent
+alone, immediately, to their own channel — but for a different reason: a
+schedule slip can be made up tomorrow, while missing a legal deadline can
+carry consequences (dismissal, waived rights, sanctions) that cannot be
+undone. Matters waiting on the other side, the court, or the client are never
+turned into a chase aimed at the assigned attorney, since confirming with them
+cannot move any of those three (the same shape as marketing's approval wait).
+
+**Privileged matters carry one further rule unique to this field:** regardless
+of urgency or what they're waiting on, they go only to a restricted channel,
+identified by matter number and days remaining alone — no name, no substance.
+The less an automated path touches privileged content, the safer it is.
 
 ---
 
