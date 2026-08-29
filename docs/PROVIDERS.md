@@ -176,12 +176,18 @@ llm:
     model: openai/gpt-oss-120b
 
 adapters:
-  qdrant:
+  qdrant:                       # pgvector / chroma / milvus / weaviate でも同じ
     embedding:
       provider: openai          # 埋め込みだけ別
       model: text-embedding-3-small
       dimension: 1536
 ```
+
+（`embedding` の書き方は5種類のベクトルストアで共通。詳しくは
+[docs/VECTOR_STORES.md](VECTOR_STORES.md)。）
+
+(The `embedding` block is the same shape across all five vector-store
+backends. See [docs/VECTOR_STORES.md](VECTOR_STORES.md).)
 
 この構成では鍵が2つ要ります（`GROQ_API_KEY` と `OPENAI_API_KEY`）。
 セットアップウィザードで Groq を選ぶと、この点を警告します。
@@ -210,12 +216,14 @@ For OpenRouter this depends on the routed model, so it is not sent by default.
 ### 埋め込みの次元が変わると、既存のベクトルは使えません
 
 提供元を乗り換えると次元が変わることがあります（OpenAI 1536 と別のモデルなど）。
-Qdrant のコレクションは次元が固定なので、**作り直しと再投入が要ります**。
-チャットの提供元は自由に変えられますが、埋め込みはそうではありません。
+どのベクトルストアもコレクション・テーブルの次元は固定なので、
+**作り直しと再投入が要ります**。チャットの提供元は自由に変えられますが、
+埋め込みはそうではありません。
 
-Changing embedding provider can change the vector dimension, and a Qdrant
-collection's dimension is fixed. Switching means **recreating the collection and
-re-indexing**. Chat providers can be swapped freely; embedding providers cannot.
+Changing embedding provider can change the vector dimension, and every
+vector store here has a fixed dimension per collection or table. Switching
+means **recreating it and re-indexing**. Chat providers can be swapped
+freely; embedding providers cannot.
 
 ---
 

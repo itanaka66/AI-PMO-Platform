@@ -53,7 +53,11 @@ them.
 | PyYAML | MIT | テンプレートの読み込み |
 | openai | Apache-2.0 | クラウド AI（`[cloud]`） |
 | psycopg | LGPL-3.0 | PostgreSQL（`[data]`） |
-| qdrant-client | Apache-2.0 | ベクトル検索（`[data]`） |
+| qdrant-client | Apache-2.0 | ベクトル検索・Qdrant（`[data]`） |
+| pgvector | MIT | ベクトル検索・pgvector（`[vector-pgvector]`） |
+| chromadb | Apache-2.0 | ベクトル検索・Chroma（`[vector-chroma]`） |
+| pymilvus | Apache-2.0 | ベクトル検索・Milvus（`[vector-milvus]`） |
+| weaviate-client | BSD-3-Clause | ベクトル検索・Weaviate（`[vector-weaviate]`） |
 | FastAPI | MIT | Web 画面（`[web]`） |
 | uvicorn | BSD-3-Clause | Web 画面（`[web]`） |
 
