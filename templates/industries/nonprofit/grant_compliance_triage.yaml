@@ -1,0 +1,94 @@
+name: nonprofit_grant_compliance_triage
+version: "1"
+industry: nonprofit
+description: |
+  助成金で運営する事業の進行状況を確認し、対応が必要なものだけを
+  報告する。助成元への報告期限が迫っているものは単独・即時に、
+  使途制限で止まっているものは現場ではなく助成金管理チームへ、
+  内部で完結するものはまとめて報告する。
+
+trigger: "schedule:0 8 * * MON"
+
+params:
+  jira_project: GRANTS
+  team_channel: "#program-delivery"
+  compliance_channel: "#grants-compliance"
+  funder_channel: "#funder-deadlines"
+  deadline_warning_days: 14
+
+steps:
+  - id: activities
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY duedate ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: grant_compliance_triage_ja
+    inputs:
+      today: "{{ run.date }}"
+      deadline_warning_days: "{{ params.deadline_warning_days }}"
+      activities: "{{ steps.activities.output.items }}"
+    output_format: json
+    output_schema:
+      required: [funder_deadline_at_risk, restricted_fund_hold, internal_program]
+
+  # 助成元への報告期限は、他業界の「安全」と同じ形で扱う——単独・即時に。
+  # 内部の遅れと違い、期限を過ぎると資金の返還（クローバック）や
+  # 次期助成の見送りにつながることがある。
+  #
+  # A funder reporting deadline is sent alone, immediately, the same shape as
+  # "safety" elsewhere: unlike an internal delay, missing it can trigger a
+  # clawback of funds already spent or the loss of the next funding tranche.
+  - id: notify_funder_deadline
+    for_each: "{{ steps.triage.output.funder_deadline_at_risk }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.funder_channel }}"
+      text: |
+        【報告期限】{{ item.funder }} — {{ item.report_name }}（{{ item.issue_key }}）
+        残り {{ item.days_until_deadline }} 日
+
+  # 使途制限で止まっているものは、現場ではなく助成金管理チームへ。
+  # 現場の担当者に確認しても、使途制限の解除や予算組み替えの承認は
+  # 得られない。動かせるのはコンプライアンス担当だけ。
+  #
+  # A fund-usage restriction hold is routed to the grants-compliance team, not
+  # the program staff: confirming with them cannot lift a usage restriction or
+  # approve a budget reallocation. Only compliance can act on it.
+  - id: notify_restricted_hold
+    when: "{{ steps.triage.output.restricted_fund_hold }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.compliance_channel }}"
+      text: |
+        使途制限で保留中の案件 ({{ run.date }})
+
+        {{ steps.triage.output.restricted_fund_hold }}
+
+        現場の判断だけでは進められません。制限の確認・解除手続きをお願いします。
+
+  # 内部で完結するものは事業担当チーム向けに1通へまとめる。
+  - id: notify_internal
+    when: "{{ steps.triage.output.internal_program }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        対応が必要な案件 ({{ run.date }})
+
+        {{ steps.triage.output.internal_program }}

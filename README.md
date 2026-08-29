@@ -42,6 +42,8 @@ New here? Start with the **[getting-started guide](docs/guide/README.md)**.
 | `customer_success/account_health_triage` | 顧客アカウントの状況確認（解約リスク・顧客待ち・自社遅延を分けて扱う） |
 | `financial_audit/finding_remediation_triage` | 監査指摘の是正状況確認（重要度に応じて宛先を分ける） |
 | `higher_education/curriculum_approval_triage` | カリキュラム審議の進行確認（段階ごとに宛先を動的に変える） |
+| `nonprofit/grant_compliance_triage` | 助成金事業の進行確認（報告期限・使途制限を分けて扱う） |
+| `insurance/claim_sla_triage` | 保険請求の期限確認（州別規制期限・不正疑い・契約者待ちを分けて扱う） |
 
 連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL · Qdrant
 AI: OpenAI · Gemini · Groq · OpenRouter · Ollama · vLLM · LM Studio

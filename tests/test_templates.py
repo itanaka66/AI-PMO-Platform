@@ -1005,6 +1005,76 @@ SearchingJiraProposals.search = action()(SearchingJiraProposals.search)
 def run_curriculum(reply=CURRICULUM_REPLY):
     adapters = AdapterRegistry()
     jira, slack = SearchingJiraProposals(), MockSlackAdapter()
+# --- 非営利・助成金事業 / nonprofit and grant-funded programs ----------------
+
+GRANT_REPLY = json.dumps({
+    "funder_deadline_at_risk": [
+        {"issue_key": "GRANTS-1", "funder": "〇〇財団", "report_name": "中間報告書",
+         "days_until_deadline": 5},
+    ],
+    "restricted_fund_hold": [
+        {"issue_key": "GRANTS-2", "funder": "△△基金",
+         "restriction": "設備費への充当は第2フェーズ開始後のみ許可"},
+    ],
+    "internal_program": [],
+}, ensure_ascii=False)
+
+NO_GRANT_ACTIVITY_REPLY = json.dumps({
+    "funder_deadline_at_risk": [], "restricted_fund_hold": [], "internal_program": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraGrants(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "GRANTS-1", "summary": "中間報告書の提出"},
+            {"key": "GRANTS-2", "summary": "設備調達"},
+        ], "count": 2}
+
+
+SearchingJiraGrants.search = action()(SearchingJiraGrants.search)
+
+
+def run_grants(reply=GRANT_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraGrants(), MockSlackAdapter()
+# --- 保険 / insurance claims --------------------------------------------------
+
+CLAIM_REPLY = json.dumps({
+    "deadline_at_risk": [
+        {"issue_key": "CLAIM-1", "claim_number": "CA-2026-0042",
+         "jurisdiction": "California", "days_until_deadline": 1},
+    ],
+    "fraud_referral": [
+        {"issue_key": "CLAIM-2", "claim_number": "TX-2026-0099", "days_until_deadline": 5},
+    ],
+    "policyholder_blocked": [
+        {"issue_key": "CLAIM-3", "claim_number": "NY-2026-0110",
+         "waiting_on": "被害箇所の写真提出"},
+    ],
+    "internal": [],
+}, ensure_ascii=False)
+
+NO_CLAIMS_REPLY = json.dumps({
+    "deadline_at_risk": [], "fraud_referral": [], "policyholder_blocked": [], "internal": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraClaims(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "CLAIM-1", "summary": "追突事故"},
+            {"key": "CLAIM-2", "summary": "火災損害"},
+            {"key": "CLAIM-3", "summary": "水漏れ損害"},
+        ], "count": 3}
+
+
+SearchingJiraClaims.search = action()(SearchingJiraClaims.search)
+
+
+def run_claims(reply=CLAIM_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraClaims(), MockSlackAdapter()
     adapters.register(jira)
     adapters.register(slack)
 
@@ -1052,4 +1122,82 @@ def test_returned_for_revision_goes_to_proposers_not_a_committee():
 
 def test_nothing_is_said_when_no_proposal_needs_attention():
     _, slack = run_curriculum(reply=NO_PROPOSALS_REPLY)
+        loader.load_file(INDUSTRIES / "nonprofit" / "grant_compliance_triage.yaml"))
+    return ctx, slack
+
+
+def test_funder_deadlines_are_sent_alone_immediately():
+    """報告期限を過ぎると、資金の返還や次期助成の見送りにつながりうる。"""
+    _, slack = run_grants()
+    funder = [m for m in slack.posted if m["channel"] == "#funder-deadlines"]
+
+    assert len(funder) == 1
+    assert "〇〇財団" in funder[0]["text"]
+    assert "残り 5 日" in funder[0]["text"]
+
+
+def test_restricted_fund_holds_go_to_compliance_not_the_program_team():
+    """現場に確認しても、使途制限の解除は現場の判断では進められない。"""
+    _, slack = run_grants()
+    compliance = [m for m in slack.posted if m["channel"] == "#grants-compliance"]
+    team = [m for m in slack.posted if m["channel"] == "#program-delivery"]
+
+    assert compliance and "設備費への充当" in compliance[0]["text"]
+    assert team == []
+
+
+def test_internal_program_activities_are_batched():
+    reply = json.dumps({
+        "funder_deadline_at_risk": [], "restricted_fund_hold": [],
+        "internal_program": [
+            {"issue_key": "GRANTS-3", "next_step": "研修資料の更新"},
+            {"issue_key": "GRANTS-4", "next_step": "参加者名簿の確定"},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_grants(reply=reply)
+    team = [m for m in slack.posted if m["channel"] == "#program-delivery"]
+
+    assert len(team) == 1
+    assert "GRANTS-3" in team[0]["text"] and "GRANTS-4" in team[0]["text"]
+
+
+def test_nothing_is_said_when_no_activity_needs_attention():
+    _, slack = run_grants(reply=NO_GRANT_ACTIVITY_REPLY)
+        loader.load_file(INDUSTRIES / "insurance" / "claim_sla_triage.yaml"))
+    return ctx, slack
+
+
+def test_deadline_at_risk_claims_are_sent_alone_immediately():
+    """規制期限は州ごとに異なり、守れないと行政処分につながりうる。"""
+    _, slack = run_claims()
+    urgent = [m for m in slack.posted if m["channel"] == "#claims-sla-alerts"]
+
+    assert len(urgent) == 1
+    assert "CA-2026-0042" in urgent[0]["text"]
+    assert "残り 1 日" in urgent[0]["text"]
+
+
+def test_fraud_referrals_go_only_to_siu_without_detail():
+    """不正の疑いは、期限や対応状況に関わらず調査部門だけに、詳細を伏せて。"""
+    _, slack = run_claims()
+    siu = [m for m in slack.posted if m["channel"] == "#siu-referrals"]
+    other_channels_text = "".join(
+        m["text"] for m in slack.posted if m["channel"] != "#siu-referrals")
+
+    assert siu and "TX-2026-0099" in siu[0]["text"]
+    assert "TX-2026-0099" not in other_channels_text
+
+
+def test_policyholder_waits_are_not_a_chase_aimed_at_the_adjuster():
+    """担当者に確認しても、契約者の対応は早まらない。"""
+    _, slack = run_claims()
+    blocked = [m for m in slack.posted if "被害箇所の写真提出" in m["text"]]
+
+    assert blocked
+    assert blocked[0]["channel"] == "#claims-processing"
+    assert "急かす連絡にはしないこと" in blocked[0]["text"]
+
+
+def test_nothing_is_said_when_no_claim_needs_attention():
+    _, slack = run_claims(reply=NO_CLAIMS_REPLY)
     assert slack.posted == []

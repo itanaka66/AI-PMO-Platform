@@ -12,6 +12,8 @@
 | カスタマーサクセス | `customer_success/account_health_triage.yaml` | 顧客アカウントの状況確認 |
 | 財務監査 | `financial_audit/finding_remediation_triage.yaml` | 監査指摘の重要度別振り分け |
 | 高等教育 | `higher_education/curriculum_approval_triage.yaml` | カリキュラム審議の段階別振り分け |
+| 非営利・助成金事業 | `nonprofit/grant_compliance_triage.yaml` | 助成元への報告期限と使途制限の仕分け |
+| 損害保険 | `insurance/claim_sla_triage.yaml` | 請求の州別規制期限と不正疑いの仕分け |
 
 ---
 
@@ -239,6 +241,73 @@ fault. **A risk to the whole approval chain's calendar deadline outweighs any
 single stage's delay** and is sent alone, immediately, to the registrar side,
 since missing a semester's registration window cannot be recovered
 afterward.
+
+### 非営利・助成金事業 — 進められるかどうかは、お金の出どころで決まる
+
+他の業界では、詰まりの原因はいつも「誰か」か「いつまでか」でした。
+**この業界では、そもそも今その支出をしてよいかどうかが、助成金の
+使途制限で決まっていることがあります。** 現場の担当者がどれだけ急いでも、
+制限が解除されるか予算の組み替えが承認されるまでは前に進められません。
+これは動かせる人を間違えているのではなく、**動かせる人がそもそも
+現場にいない**という、他業界とは異なる形の詰まりです。
+
+**助成元への報告期限は、他業界の「安全」と同じ形で単独・即時に扱います。**
+理由は業界固有です。報告期限を過ぎると、すでに使った資金の返還
+（クローバック）や、次期助成の見送りにつながることがあります——
+未来の資金だけでなく、**過去に使った分まで遡って失う**おそれがある点が、
+他の期限管理とは異なります。
+
+In every other field, what was blocking a task was always a matter of who or
+by when. **Here, an activity's fund-usage restriction can make the spending
+itself impermissible for now, independent of anyone's effort or urgency.**
+No amount of hustle from program staff lifts a restriction or approves a
+budget reallocation — this is not a case of chasing the wrong person, it is
+that **no one on the ground can act on it at all**, a different shape of
+blocker than anywhere else in this document.
+
+A funder reporting deadline gets the same alone-and-immediate treatment as
+"safety" elsewhere, for reasons specific to this field: missing it can
+trigger a clawback of funds already spent, not only the loss of future
+funding — unlike every other deadline here, the risk reaches backward as
+well as forward.
+
+### 損害保険 — 期限そのものが州によって変わる
+
+マーケティングの公開日や法務の裁判期限は、1つの案件に1つの固定日でした。
+**この業界はそこが違います。** 対応期限は契約者の居住する州の規制で
+決まり、州ごとに日数が異なります。そのため「残り何日」は単一の
+しきい値との比較では出せず、**請求ごとに管轄地域の規則から算出済みの
+値として渡ってきます。** 守れないと行政処分や不誠実処理 (bad faith) の
+主張につながるため、迫っているものは単独・即時に扱います。
+
+**不正の疑いがある請求には、法務の秘匿特権と同じ形の扱いをします。**
+期限や契約者対応の状況に関わらず、詳細を伏せて調査部門 (SIU) だけに
+通知します。理由は法務とは異なります——捜査中であることが早期に
+広く伝わると、証拠隠滅や口裏合わせのおそれがあるためです。**不正か
+どうかの判定自体は AI にさせません。** 財務監査の重要度分類と同じ理由で、
+データに既にある fraud_flag をそのまま使うだけです。
+
+契約者からの書類待ちは、カスタマーサクセスの顧客待ちと同じ形で、
+担当者を責めない文面にします。
+
+Marketing's launch date and legal's court deadline were each a single fixed
+date per matter. **This field is different: the response deadline is set by
+the policyholder's state regulator, and the number of days varies by state.**
+"Days remaining" cannot come from one fixed threshold — it arrives **already
+computed per claim from that jurisdiction's rule.** Missing it can trigger
+regulatory penalties or a bad-faith claim, so an at-risk one is sent alone,
+immediately.
+
+**Fraud-flagged claims get the same shape of handling as legal's privileged
+matters:** regardless of deadline or policyholder status, they go only to the
+Special Investigations Unit, with minimal detail. The reason differs from
+legal's, though — surfacing an active investigation too widely too soon risks
+evidence tampering or collusion. **Whether something is fraud is never the
+model's call either** — for the same reason the audit template never judges
+severity — it only relays the fraud_flag already present in the data.
+
+Waiting on the policyholder is handled the same way as customer success's
+customer wait: no wording that blames the adjuster.
 
 ---
 

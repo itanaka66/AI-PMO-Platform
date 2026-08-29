@@ -1,0 +1,117 @@
+name: insurance_claim_sla_triage
+version: "1"
+industry: insurance
+description: |
+  損害保険の請求案件を確認し、対応が必要なものだけを報告する。
+  規制上の対応期限が迫っているものは単独・即時に、不正の疑いがある
+  ものは詳細を伏せて調査部門へ、契約者対応待ちは担当者を責めない
+  文面で、内部で完結するものはまとめて報告する。
+
+trigger: "schedule:0 8 * * MON-FRI"
+
+params:
+  jira_project: CLAIMS
+  team_channel: "#claims-processing"
+  urgent_channel: "#claims-sla-alerts"
+  siu_channel: "#siu-referrals"
+  urgent_within_days: 2
+
+steps:
+  - id: claims
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY duedate ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: claim_sla_triage_ja
+    inputs:
+      today: "{{ run.date }}"
+      urgent_within_days: "{{ params.urgent_within_days }}"
+      claims: "{{ steps.claims.output.items }}"
+    output_format: json
+    output_schema:
+      required: [deadline_at_risk, fraud_referral, policyholder_blocked, internal]
+
+  # 規制上の対応期限は州ごとに異なり、他業界のような単一のしきい値では
+  # なくデータ側ですでに管轄地域の規則から算出されている。守れないと
+  # 行政処分や不誠実処理 (bad faith) の主張につながりうるため、
+  # 単独・即時に。
+  #
+  # The statutory response deadline varies by jurisdiction rather than being
+  # one fixed threshold like the other templates, and arrives already
+  # computed from that jurisdiction's rule. Missing it can trigger regulatory
+  # penalties or a bad-faith claim, so it is sent alone, immediately.
+  - id: notify_deadline_risk
+    for_each: "{{ steps.triage.output.deadline_at_risk }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.urgent_channel }}"
+      text: |
+        【期限】請求 {{ item.claim_number }}（{{ item.jurisdiction }}）
+        規制期限まで残り {{ item.days_until_deadline }} 日
+
+  # 不正の疑いがある請求は、期限や契約者対応の状況に関わらず、
+  # 詳細を伏せて調査部門 (SIU) だけへ。捜査中であることが早期に
+  # 広く伝わると、証拠隠滅や口裏合わせのおそれがある——法務の秘匿特権と
+  # 同じ理由で、自動化された経路が触れる範囲は狭いほど安全。
+  #
+  # Fraud-flagged claims go only to the Special Investigations Unit, with
+  # minimal detail, regardless of deadline or policyholder status — the same
+  # reasoning as legal's privileged carve-out: an active investigation
+  # surfacing too widely too soon risks evidence tampering or collusion.
+  - id: notify_fraud_referral
+    when: "{{ steps.triage.output.fraud_referral }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.siu_channel }}"
+      text: |
+        要確認の不正疑い案件 ({{ run.date }})
+
+        {{ steps.triage.output.fraud_referral }}
+
+        詳細は請求管理システムでご確認ください。
+
+  # 契約者対応待ちは、担当者への催促にしない。担当者に確認しても
+  # 契約者の対応は早まらない。
+  #
+  # Waiting on the policyholder is never framed as a chase aimed at the
+  # adjuster: confirming with them cannot make the policyholder respond any
+  # sooner.
+  - id: notify_policyholder_blocked
+    when: "{{ steps.triage.output.policyholder_blocked }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        契約者対応待ちの請求 ({{ run.date }})
+
+        {{ steps.triage.output.policyholder_blocked }}
+
+        丁寧なフォローアップをお願いします。急かす連絡にはしないこと。
+
+  - id: notify_internal
+    when: "{{ steps.triage.output.internal }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        対応が必要な請求 ({{ run.date }})
+
+        {{ steps.triage.output.internal }}
