@@ -1,10 +1,10 @@
 @echo off
 rem AI-PMO Platform - Windows installer entry point
 rem
-rem ãƒ€ãƒ–ãƒ«ã‚¯ãƒªãƒƒã‚¯ã§å®Ÿè¡Œã—ã¦ãã ã•ã„ / Double-click to run.
+rem ƒ_ƒuƒ‹ƒNƒŠƒbƒN‚ÅÀs‚µ‚Ä‚­‚¾‚³‚¢ / Double-click to run.
 rem
-rem PowerShell ã‚¹ã‚¯ãƒªãƒ—ãƒˆã¯æ—¢å®šã®å®Ÿè¡Œãƒãƒªã‚·ãƒ¼ã§ãƒ–ãƒ­ãƒƒã‚¯ã•ã‚Œã‚‹ãŸã‚ã€
-rem ã“ã® .bat ã‹ã‚‰ -ExecutionPolicy Bypass ã‚’ä»˜ã‘ã¦èµ·å‹•ã™ã‚‹ã€‚
+rem PowerShell ƒXƒNƒŠƒvƒg‚ÍŠù’è‚ÌÀsƒ|ƒŠƒV[‚ÅƒuƒƒbƒN‚³‚ê‚é‚½‚ßA
+rem ‚±‚Ì .bat ‚©‚ç -ExecutionPolicy Bypass ‚ğ•t‚¯‚Ä‹N“®‚·‚éB
 rem PowerShell scripts are blocked by the default execution policy, so this
 rem wrapper launches install.ps1 with -ExecutionPolicy Bypass.
 
@@ -17,9 +17,9 @@ echo.
 
 where powershell >nul 2>&1
 if errorlevel 1 (
-    echo ã‚¨ãƒ©ãƒ¼: PowerShell ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚
+    echo ƒGƒ‰[: PowerShell ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñB
     echo Error: PowerShell was not found.
-    echo Windows 10 ä»¥é™ãŒå¿…è¦ã§ã™ / Windows 10 or later is required.
+    echo Windows 10 ˆÈ~‚ª•K—v‚Å‚· / Windows 10 or later is required.
     echo.
     pause
     exit /b 1
@@ -30,7 +30,7 @@ set EXITCODE=%ERRORLEVEL%
 
 if not "%EXITCODE%"=="0" (
     echo.
-    echo ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ«ã«å¤±æ•—ã—ã¾ã—ãŸ / Installation failed. Code: %EXITCODE%
+    echo ƒCƒ“ƒXƒg[ƒ‹‚É¸”s‚µ‚Ü‚µ‚½ / Installation failed. Code: %EXITCODE%
     echo.
     pause
 )
