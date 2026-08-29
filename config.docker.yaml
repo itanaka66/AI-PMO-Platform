@@ -18,6 +18,9 @@ prompts_dir: prompts
 
 adapters:
   mode: mock          # Step 2 で real に切替 / switch to real in Step 2
+  slack:
+    token: ${SLACK_BOT_TOKEN}
+    default_channel: "#project-updates"
   postgres:
     dsn: postgresql://aipmo:aipmo@postgres:5432/aipmo
     queries_file: queries.yaml
