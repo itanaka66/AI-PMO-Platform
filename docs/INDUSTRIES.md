@@ -11,6 +11,7 @@
 | 法務・コンプライアンス | `legal/matter_deadline_triage.yaml` | 案件期限の確認と秘匿特権の扱い |
 | カスタマーサクセス | `customer_success/account_health_triage.yaml` | 顧客アカウントの状況確認 |
 | 財務監査 | `financial_audit/finding_remediation_triage.yaml` | 監査指摘の重要度別振り分け |
+| 高等教育 | `higher_education/curriculum_approval_triage.yaml` | カリキュラム審議の段階別振り分け |
 | 非営利・助成金事業 | `nonprofit/grant_compliance_triage.yaml` | 助成元への報告期限と使途制限の仕分け |
 | 損害保険 | `insurance/claim_sla_triage.yaml` | 請求の州別規制期限と不正疑いの仕分け |
 
@@ -201,6 +202,45 @@ immediately, to the audit committee. A significant deficiency goes to
 management, since the audit team's own remediation owner often cannot move
 the control's actual business owner by themselves. A control deficiency
 follows the ordinary remediation flow, batched for the audit team.
+
+### 高等教育 — 宛先そのものが段階によって変わる
+
+他の業界はどれも、詰まりの種類によって宛先を選んでいました
+（安全か資材待ちか、承認待ちか遅れか）。**この業界はそこも違います。**
+カリキュラム提案がどの審議段階（学部委員会・学科委員会・教授会）に
+あるかによって、そもそも動かせる相手そのものが変わります。段階を
+飛ばして次の委員会に伝えても、その委員会にはまだ権限がありません。
+
+そのためテンプレートは、段階名から連絡先チャンネルへの対応表を渡し、
+**AI に該当するチャンネルを選ばせて、通知そのものを動的な宛先で送ります。**
+固定の1チャンネルでは、この構造を表せません。
+
+**差し戻し中の提案は、停滞として扱いません。** 提案者に正しく戻っている
+途中であり、審議機関側の遅れではないためです。差し戻しを停滞と同じ
+警報で扱うと、審議機関を誤って急かすことになります。
+
+**プロセス全体がカタログ掲載期限に間に合わないおそれは、1段階の停滞より
+重く扱います。** 教務側へ単独・即時に届けます——学期の履修登録に
+間に合わないと、後から取り返せないためです。
+
+Every other field chose an audience based on the kind of blockage — safety
+versus supply, approval versus delay. **Here, the reachable audience itself
+changes with which governance stage a proposal is at** (department committee,
+college committee, faculty senate); notifying the wrong stage's committee
+reaches a body that does not yet have authority over it at all.
+
+The template addresses this by handing the model a stage-to-channel map and
+letting it **choose the matching channel itself, so the notification's
+destination is resolved dynamically** — something a single fixed channel
+cannot express.
+
+**A proposal under revision is never treated as stalled:** it is correctly on
+its way back to the proposer, not delayed by the committee, and sounding the
+same alarm for both would wrongly rush a governance body that is not at
+fault. **A risk to the whole approval chain's calendar deadline outweighs any
+single stage's delay** and is sent alone, immediately, to the registrar side,
+since missing a semester's registration window cannot be recovered
+afterward.
 
 ### 非営利・助成金事業 — 進められるかどうかは、お金の出どころで決まる
 

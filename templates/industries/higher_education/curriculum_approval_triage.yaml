@@ -1,0 +1,102 @@
+name: higher_education_curriculum_approval_triage
+version: "1"
+industry: higher_education
+description: |
+  カリキュラム・制度変更の審議プロセスを確認し、対応が必要なものだけを
+  報告する。段階の停滞は、いま提案を持っている審議機関へ動的に届け先を
+  変えて通知する。差し戻し中の提案は停滞として扱わない。カタログ掲載
+  期限に全体が間に合わないおそれがあるものは単独・即時に報告する。
+
+trigger: "schedule:0 8 * * MON"
+
+params:
+  jira_project: CURRICULUM
+  proposer_channel: "#curriculum-proposers"
+  calendar_channel: "#registrar-deadlines"
+  # 審議段階ごとの連絡先。今どの段階にあるかで宛先が変わる——
+  # 固定の1チャンネルでは表せない、この業界に固有の構造。
+  # One channel per stage: who needs to act depends on which stage a proposal
+  # currently sits in, which a single fixed channel cannot express.
+  stage_channels:
+    department_committee: "#dept-curriculum-committee"
+    college_committee: "#college-curriculum-committee"
+    faculty_senate: "#faculty-senate-curriculum"
+  stalled_after_days: 21
+
+steps:
+  - id: proposals
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY updated ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: curriculum_approval_triage_ja
+    inputs:
+      today: "{{ run.date }}"
+      stage_channels: "{{ params.stage_channels }}"
+      stalled_after_days: "{{ params.stalled_after_days }}"
+      proposals: "{{ steps.proposals.output.items }}"
+    output_format: json
+    output_schema:
+      required: [calendar_at_risk, stalled_at_stage, returned_for_revision]
+
+  # プロセス全体がカタログ掲載期限に間に合わないおそれは、
+  # 1段階の停滞より重い——単独・即時に、教務側へ。
+  #
+  # A risk to the whole chain's calendar deadline outweighs a single stage's
+  # delay, so it is sent alone, immediately, to the registrar side.
+  - id: notify_calendar_risk
+    for_each: "{{ steps.triage.output.calendar_at_risk }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.calendar_channel }}"
+      text: |
+        【掲載期限】{{ item.proposal_name }}（{{ item.issue_key }}）
+        現在の段階: {{ item.current_stage }} / 掲載期限まで残り {{ item.days_until_catalog_deadline }} 日
+
+  # 停滞している段階の委員会へ、その段階専用のチャンネルで通知する。
+  # 宛先は段階によって変わるため、固定チャンネルではなく仕分け結果の
+  # channel をそのまま使う——他業界には無い、宛先自体が動的な通知。
+  #
+  # Notifies whichever committee currently holds a stalled proposal, on that
+  # stage's own channel. The destination changes with the stage, so this uses
+  # the resolved channel from triage rather than one fixed channel — a
+  # dynamically-addressed notification unlike anywhere else in this codebase.
+  - id: notify_stalled
+    for_each: "{{ steps.triage.output.stalled_at_stage }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ item.channel }}"
+      text: |
+        {{ item.current_stage }} で {{ item.days_in_current_stage }} 日
+        停滞中: {{ item.proposal_name }}（{{ item.issue_key }}）
+
+  # 差し戻し中は審議機関の遅れではない。提案者へまとめて1通で伝える。
+  #
+  # A return for revision is not the committee's delay; it is reported to the
+  # proposers as one batched message.
+  - id: notify_returned
+    when: "{{ steps.triage.output.returned_for_revision }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.proposer_channel }}"
+      text: |
+        差し戻し中の提案 ({{ run.date }})
+
+        {{ steps.triage.output.returned_for_revision }}
