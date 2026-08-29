@@ -965,3 +965,87 @@ def test_control_deficiencies_are_batched_for_the_audit_team():
 def test_nothing_is_said_when_no_finding_needs_attention():
     _, slack = run_audit(reply=NO_FINDINGS_REPLY)
     assert slack.posted == []
+
+
+# --- 保険 / insurance claims --------------------------------------------------
+
+CLAIM_REPLY = json.dumps({
+    "deadline_at_risk": [
+        {"issue_key": "CLAIM-1", "claim_number": "CA-2026-0042",
+         "jurisdiction": "California", "days_until_deadline": 1},
+    ],
+    "fraud_referral": [
+        {"issue_key": "CLAIM-2", "claim_number": "TX-2026-0099", "days_until_deadline": 5},
+    ],
+    "policyholder_blocked": [
+        {"issue_key": "CLAIM-3", "claim_number": "NY-2026-0110",
+         "waiting_on": "被害箇所の写真提出"},
+    ],
+    "internal": [],
+}, ensure_ascii=False)
+
+NO_CLAIMS_REPLY = json.dumps({
+    "deadline_at_risk": [], "fraud_referral": [], "policyholder_blocked": [], "internal": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraClaims(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "CLAIM-1", "summary": "追突事故"},
+            {"key": "CLAIM-2", "summary": "火災損害"},
+            {"key": "CLAIM-3", "summary": "水漏れ損害"},
+        ], "count": 3}
+
+
+SearchingJiraClaims.search = action()(SearchingJiraClaims.search)
+
+
+def run_claims(reply=CLAIM_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraClaims(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "insurance" / "claim_sla_triage.yaml"))
+    return ctx, slack
+
+
+def test_deadline_at_risk_claims_are_sent_alone_immediately():
+    """規制期限は州ごとに異なり、守れないと行政処分につながりうる。"""
+    _, slack = run_claims()
+    urgent = [m for m in slack.posted if m["channel"] == "#claims-sla-alerts"]
+
+    assert len(urgent) == 1
+    assert "CA-2026-0042" in urgent[0]["text"]
+    assert "残り 1 日" in urgent[0]["text"]
+
+
+def test_fraud_referrals_go_only_to_siu_without_detail():
+    """不正の疑いは、期限や対応状況に関わらず調査部門だけに、詳細を伏せて。"""
+    _, slack = run_claims()
+    siu = [m for m in slack.posted if m["channel"] == "#siu-referrals"]
+    other_channels_text = "".join(
+        m["text"] for m in slack.posted if m["channel"] != "#siu-referrals")
+
+    assert siu and "TX-2026-0099" in siu[0]["text"]
+    assert "TX-2026-0099" not in other_channels_text
+
+
+def test_policyholder_waits_are_not_a_chase_aimed_at_the_adjuster():
+    """担当者に確認しても、契約者の対応は早まらない。"""
+    _, slack = run_claims()
+    blocked = [m for m in slack.posted if "被害箇所の写真提出" in m["text"]]
+
+    assert blocked
+    assert blocked[0]["channel"] == "#claims-processing"
+    assert "急かす連絡にはしないこと" in blocked[0]["text"]
+
+
+def test_nothing_is_said_when_no_claim_needs_attention():
+    _, slack = run_claims(reply=NO_CLAIMS_REPLY)
+    assert slack.posted == []

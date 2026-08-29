@@ -41,6 +41,7 @@ New here? Start with the **[getting-started guide](docs/guide/README.md)**.
 | `legal/matter_deadline_triage` | 法務案件の期限確認（緊急・相手方待ち・秘匿特権を分けて扱う） |
 | `customer_success/account_health_triage` | 顧客アカウントの状況確認（解約リスク・顧客待ち・自社遅延を分けて扱う） |
 | `financial_audit/finding_remediation_triage` | 監査指摘の是正状況確認（重要度に応じて宛先を分ける） |
+| `insurance/claim_sla_triage` | 保険請求の期限確認（州別規制期限・不正疑い・契約者待ちを分けて扱う） |
 
 連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL · Qdrant
 AI: OpenAI · Gemini · Groq · OpenRouter · Ollama · vLLM · LM Studio
@@ -65,7 +66,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 624 件
+pytest                               # 631 件
 ```
 
 ---
@@ -383,9 +384,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-624 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+631 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-624 tests, aimed at the guarantees and at the failure shapes that look like
+631 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
