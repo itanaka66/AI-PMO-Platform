@@ -794,3 +794,88 @@ def test_privileged_matters_go_only_to_the_restricted_channel_without_detail():
 def test_nothing_is_said_when_no_matter_needs_attention():
     _, slack = run_legal(reply=NO_MATTERS_REPLY)
     assert slack.posted == []
+
+
+# --- カスタマーサクセス / customer success -----------------------------------
+
+ACCOUNT_HEALTH_REPLY = json.dumps({
+    "at_risk": [
+        {"issue_key": "CS-1", "account_name": "株式会社アクメ",
+         "reason": "ヘルススコア低下、更新間近", "days_until_renewal": 14},
+    ],
+    "waiting_on_customer": [
+        {"issue_key": "CS-2", "account_name": "株式会社ベータ",
+         "waiting_on": "導入データの提供待ち"},
+    ],
+    "internal_delivery": [],
+}, ensure_ascii=False)
+
+NO_ACCOUNTS_REPLY = json.dumps({
+    "at_risk": [], "waiting_on_customer": [], "internal_delivery": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraAccounts(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "CS-1", "summary": "株式会社アクメ 更新前レビュー"},
+            {"key": "CS-2", "summary": "株式会社ベータ 導入対応"},
+        ], "count": 2}
+
+
+SearchingJiraAccounts.search = action()(SearchingJiraAccounts.search)
+
+
+def run_account_health(reply=ACCOUNT_HEALTH_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraAccounts(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "customer_success" / "account_health_triage.yaml"))
+    return ctx, slack
+
+
+def test_at_risk_accounts_are_escalated_alone_to_leadership():
+    """解約は後戻りしにくい。翌朝まとめて送っても対処の時間が削られるだけ。"""
+    _, slack = run_account_health()
+    escalated = [m for m in slack.posted if m["channel"] == "#cs-leadership"]
+
+    assert len(escalated) == 1
+    assert "株式会社アクメ" in escalated[0]["text"]
+    assert "残り 14 日" in escalated[0]["text"]
+
+
+def test_customer_waits_are_not_framed_as_blaming_the_owner():
+    """社内の遅れと違い、担当者の落ち度ではない。"""
+    _, slack = run_account_health()
+    waiting = [m for m in slack.posted if m["channel"] == "#csm-followups"]
+
+    assert waiting and "導入データの提供待ち" in waiting[0]["text"]
+    assert "急かす連絡にはしない" in waiting[0]["text"]
+
+
+def test_internal_delays_go_to_the_team_not_the_csm_channel():
+    """自社側の遅れは、緊急度を上げて配送チームへ。顧客の遅れとは別扱い。"""
+    reply = json.dumps({
+        "at_risk": [], "waiting_on_customer": [],
+        "internal_delivery": [
+            {"issue_key": "CS-3", "account_name": "株式会社ガンマ",
+             "next_step": "導入手順書の送付"},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_account_health(reply=reply)
+    team = [m for m in slack.posted if m["channel"] == "#customer-success"]
+    csm = [m for m in slack.posted if m["channel"] == "#csm-followups"]
+
+    assert team and "株式会社ガンマ" in team[0]["text"]
+    assert csm == []
+
+
+def test_nothing_is_said_when_every_account_is_healthy():
+    _, slack = run_account_health(reply=NO_ACCOUNTS_REPLY)
+    assert slack.posted == []

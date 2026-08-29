@@ -1,0 +1,100 @@
+name: customer_success_account_health_triage
+version: "1"
+industry: customer_success
+description: |
+  顧客アカウントの状況を確認し、対応が必要なものだけを報告する。
+  解約リスクが高いものは単独・即時にリーダー層へ、顧客の返答待ちは
+  担当者を責めない文面で CSM へ、自社側の遅れは緊急度を上げて配送
+  チームへ通知する。
+
+trigger: "schedule:0 9 * * MON-FRI"
+
+params:
+  jira_project: CS
+  team_channel: "#customer-success"
+  csm_channel: "#csm-followups"
+  escalation_channel: "#cs-leadership"
+  renewal_within_days: 30
+
+steps:
+  - id: accounts
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY duedate ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt: customer_health_triage_ja
+    inputs:
+      today: "{{ run.date }}"
+      renewal_within_days: "{{ params.renewal_within_days }}"
+      accounts: "{{ steps.accounts.output.items }}"
+    output_format: json
+    output_schema:
+      required: [at_risk, waiting_on_customer, internal_delivery]
+
+  # 解約リスクが高いものは、単独・即時にリーダー層へ。翌朝まとめて
+  # 送っても、対処できる時間が削られるだけ。
+  #
+  # High-churn-risk accounts are sent alone, immediately, to leadership:
+  # batching them into a next-morning digest only shrinks the window left to
+  # act.
+  - id: notify_at_risk
+    for_each: "{{ steps.triage.output.at_risk }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.escalation_channel }}"
+      text: |
+        【解約リスク】{{ item.account_name }}（{{ item.issue_key }}）
+        理由: {{ item.reason }} / 更新まで残り {{ item.days_until_renewal }} 日
+
+  # 顧客の返答待ちは、担当者への催促にしない。社内の遅れと違い、
+  # 動いてもらうには顧客へこちらから丁寧に連絡するだけで、
+  # 担当者の落ち度ではない。
+  #
+  # Waiting on the customer is never framed as a chase aimed at the account
+  # owner: unlike an internal delay, moving it just takes a considerate
+  # outreach to the customer, not a fault of the person assigned.
+  - id: notify_customer_wait
+    when: "{{ steps.triage.output.waiting_on_customer }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.csm_channel }}"
+      text: |
+        顧客からの返答待ち ({{ run.date }})
+
+        {{ steps.triage.output.waiting_on_customer }}
+
+        丁寧なフォローアップをお願いします。急かす連絡にはしないこと。
+
+  # 自社側の遅れは、顧客の遅れより緊急度を上げて扱う。約束を守れて
+  # いないのは自社の側であり、関係そのものへのリスクになる。
+  #
+  # Internal delivery delays are treated with more urgency than a customer
+  # wait: here it is the company that is failing to keep its own commitment,
+  # which risks the relationship itself.
+  - id: notify_internal
+    when: "{{ steps.triage.output.internal_delivery }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        自社対応が遅れているアカウント ({{ run.date }})
+
+        {{ steps.triage.output.internal_delivery }}
+
+        顧客との約束が守れなくなる前に対応してください。

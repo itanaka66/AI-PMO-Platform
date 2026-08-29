@@ -9,6 +9,7 @@
 | マーケティング | `marketing/campaign_check.yaml` | キャンペーン進行と承認待ち |
 | 製造 | `manufacturing/line_downtime_triage.yaml` | 生産ライン停止の仕分け |
 | 法務・コンプライアンス | `legal/matter_deadline_triage.yaml` | 案件期限の確認と秘匿特権の扱い |
+| カスタマーサクセス | `customer_success/account_health_triage.yaml` | 顧客アカウントの状況確認 |
 
 ---
 
@@ -129,6 +130,44 @@ cannot move any of those three (the same shape as marketing's approval wait).
 of urgency or what they're waiting on, they go only to a restricted channel,
 identified by matter number and days remaining alone — no name, no substance.
 The less an automated path touches privileged content, the safer it is.
+
+### カスタマーサクセス — 詰まらせているのは顧客自身かもしれない
+
+他の4つでは、詰まっている先は社内の誰か・相手方・裁判所・調達先の
+いずれかでした。この業界では**お金を払っている顧客自身**が詰まりの原因に
+なり得ます。これは他業界に無い性質で、催促のやり方そのものを変える
+必要があります。
+
+**顧客の返答待ちは、担当者を責める書き方にしません。** 社内の遅れなら
+「対応してください」で動きますが、顧客に動いてもらうには、こちらから
+丁寧に連絡する以外に手段がありません。同じ文面を使うと、動かせない人を
+責めることになります（マーケティングの承認待ちと同じ構造ですが、
+相手が社外の顧客である点が異なります）。
+
+**自社側の遅れは、顧客の遅れより緊急度を上げて扱います。** 顧客との
+約束を守れていないのは自社の側であり、放置すると関係そのものへの
+リスクになります。「相手が詰まっている」のと「自分が詰まらせている」を
+同じ扱いにしないということです。
+
+**解約リスクが高いものは、単独・即時にリーダー層へ。** 更新間近かつ
+ヘルススコアが低い、または重大な未解決課題があるものが対象です。
+解約は取り返しのつかない結果なので、翌朝まとめて送る余裕はありません。
+
+In the other four, whatever was blocking a task was always some other
+internal party, the opposing side, the court, or a supplier. Here, **the
+party causing the delay can be the paying customer themselves** — a property
+none of the other fields have, and it changes how a delay gets communicated
+at all. Waiting on the customer is never framed as a chase aimed at the
+account owner: unlike an internal delay, moving it takes considerate outreach
+to the customer, not a demand — the same shape as marketing's approval wait,
+except the party on the other end is an external customer rather than an
+internal approver. Internal delivery delays are treated with more urgency
+than a customer wait, since here the company is the one failing to keep its
+own commitment, which risks the relationship itself — "they are stuck" and
+"we are stalling them" are not the same thing and are not handled the same
+way. Accounts at high risk of churn (renewal approaching and a low health
+score, or an unresolved critical issue) are escalated alone and immediately,
+since a lost renewal cannot be undone by a next-morning digest.
 
 ---
 
