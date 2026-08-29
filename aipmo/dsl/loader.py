@@ -50,7 +50,7 @@ def load_dict(raw: dict[str, Any], source: str = "<inline>") -> Template:
         description=str(raw.get("description", "")),
         trigger=_parse_trigger(raw.get("trigger"), source),
         params=dict(raw.get("params") or {}),
-        steps=[_parse_step(s, i, source) for i, s in enumerate(raw["steps"])],
+        steps=[_parse_step(s, f"{source}: steps[{i}]") for i, s in enumerate(raw["steps"])],
     )
     _validate_references(template, source)
     return template
@@ -79,8 +79,7 @@ def _parse_trigger(raw: Any, source: str) -> TriggerSpec:
     raise TemplateError(f"{source}: trigger の形式が不正です")
 
 
-def _parse_step(raw: Any, index: int, source: str) -> Step:
-    where = f"{source}: steps[{index}]"
+def _parse_step(raw: Any, where: str) -> Step:
     if not isinstance(raw, dict):
         raise TemplateError(f"{where}: マッピングである必要があります")
 
@@ -148,6 +147,28 @@ def _parse_step(raw: Any, index: int, source: str) -> Step:
                 f"{where}: agent には prompt が必要です / an agent step needs a prompt"
             )
         step.llm = _parse_llm_spec(raw.get("llm"), where, allow_profiles=False)
+
+    if kind is StepKind.PARALLEL:
+        if any(k in raw for k in ("adapter", "llm", "expression", "agent")):
+            raise TemplateError(
+                f"{where}: parallel は adapter / llm / expression / agent と"
+                f"同時に指定できません "
+                f"/ parallel cannot be combined with adapter, llm, expression or agent"
+            )
+        if step.for_each is not None:
+            raise TemplateError(
+                f"{where}: parallel は for_each と組み合わせられません "
+                f"/ parallel cannot be combined with for_each"
+            )
+        parallel_raw = raw.get("parallel")
+        if not isinstance(parallel_raw, list) or len(parallel_raw) < 2:
+            raise TemplateError(
+                f"{where}: parallel には2件以上のステップの並びが必要です "
+                f"/ parallel must list two or more steps"
+            )
+        step.parallel = [
+            _parse_step(s, f"{where}.parallel[{j}]") for j, s in enumerate(parallel_raw)
+        ]
 
     if step.for_each is not None:
         max_items = raw.get("max_items", 50)
@@ -235,52 +256,96 @@ def _infer_kind(raw: dict[str, Any], where: str) -> StepKind:
             raise TemplateError(f"{where}: 不明な kind '{raw['kind']}'") from None
 
     # agent は llm と併記されるので先に見る / agent coexists with llm, so check first
-    if "agent" in raw:
-        return StepKind.AGENT
+    structural = [k for k in ("agent", "parallel") if k in raw]
+    if len(structural) > 1:
+        raise TemplateError(
+            f"{where}: agent と parallel は同時に指定できません "
+            f"/ agent and parallel cannot both be specified"
+        )
+    if structural:
+        return {"agent": StepKind.AGENT, "parallel": StepKind.PARALLEL}[structural[0]]
 
     present = [k for k in ("adapter", "llm", "expression") if k in raw]
     if len(present) != 1:
         raise TemplateError(
-            f"{where}: adapter / llm / expression / agent のいずれか 1 つを指定してください "
-            f"(検出: {present or 'なし'})"
+            f"{where}: adapter / llm / expression / agent / parallel のいずれか "
+            f"1 つを指定してください (検出: {present or 'なし'})"
         )
     return {"adapter": StepKind.ADAPTER, "llm": StepKind.LLM,
             "expression": StepKind.TRANSFORM}[present[0]]
 
 
 def _validate_references(template: Template, source: str) -> None:
-    """前方参照と重複 ID を検出する。"""
-    seen: set[str] = set()
+    """前方参照と重複 ID を検出する。
+
+    重複検出用の declared と、参照先として見えるかどうかの visible を分けて
+    持つ。並列グループの中では、宣言と同時に declared へ積んで重複だけは
+    即座に検出しつつ、グループ全体が終わるまで visible には積まない —
+    同時に走る工程どうしは互いの出力を参照できないため。
+
+    Two sets are tracked: `declared` catches duplicate ids the moment a step is
+    seen, while `visible` gates forward references. Inside a parallel group,
+    siblings are added to `declared` immediately (so duplicates among them are
+    still caught) but withheld from `visible` until the whole group is done —
+    steps running at the same time cannot reference each other's output.
+    """
+    declared: set[str] = set()
+    visible: set[str] = set()
     for step in template.steps:
-        if step.id in seen:
-            raise TemplateError(f"{source}: ステップ ID '{step.id}' が重複しています")
+        visible |= _check_step(step, declared, visible, source)
 
-        available = {"params", "trigger", "run"} | {f"steps.{s}" for s in seen}
-        # 繰り返しの要素名は、実行時にその工程の中でだけ束縛される。
-        # 前方参照の検査対象にすると、正しいテンプレートが弾かれる。
-        # The loop variable is bound at run time, inside this step only.
-        # Treating it as a forward reference would reject valid templates.
-        bound = {"params", "trigger", "run"}
-        if step.for_each is not None:
-            # 要素そのものと、位置情報 / the element itself and its position
-            bound = bound | {step.as_name, "loop"}
 
-        for ref in _collect_refs(step):
-            root = ref.split(".")[0]
-            if root in bound:
-                continue
-            if root != "steps":
-                raise TemplateError(
-                    f"{source}: ステップ '{step.id}' の参照 '{ref}' の起点が不正です "
-                    f"(params / trigger / run / steps.* のみ)"
-                )
-            target = ".".join(ref.split(".")[:2])
-            if target not in available:
-                raise TemplateError(
-                    f"{source}: ステップ '{step.id}' が未定義または後方のステップ "
-                    f"'{target}' を参照しています"
-                )
-        seen.add(step.id)
+def _check_step(step: Step, declared: set[str], visible: set[str],
+                source: str) -> set[str]:
+    """このステップ（とあれば中の全ステップ）を検証し、検証が終わった後に
+    visible へ加えるべき ID の集まりを返す。
+
+    visible そのものはここでは書き換えない。並列グループの中を再帰する間、
+    このステップに渡された visible は最後まで変わらないので、兄弟どうしは
+    互いを検証結果に含められない — 呼び出し元（グループの外側）が全員分の
+    戻り値をまとめてから、一度に visible へ加える。
+
+    Does not mutate `visible` itself. While recursing through a parallel
+    group, the `visible` a step sees stays fixed for the whole call, so
+    siblings cannot end up in each other's result — only the caller (outside
+    the group) merges everyone's return value into `visible`, all at once.
+    """
+    if step.id in declared:
+        raise TemplateError(f"{source}: ステップ ID '{step.id}' が重複しています")
+    declared.add(step.id)
+
+    available = {"params", "trigger", "run"} | {f"steps.{s}" for s in visible}
+    # 繰り返しの要素名は、実行時にその工程の中でだけ束縛される。
+    # 前方参照の検査対象にすると、正しいテンプレートが弾かれる。
+    # The loop variable is bound at run time, inside this step only.
+    # Treating it as a forward reference would reject valid templates.
+    bound = {"params", "trigger", "run"}
+    if step.for_each is not None:
+        # 要素そのものと、位置情報 / the element itself and its position
+        bound = bound | {step.as_name, "loop"}
+
+    for ref in _collect_refs(step):
+        root = ref.split(".")[0]
+        if root in bound:
+            continue
+        if root != "steps":
+            raise TemplateError(
+                f"{source}: ステップ '{step.id}' の参照 '{ref}' の起点が不正です "
+                f"(params / trigger / run / steps.* のみ)"
+            )
+        target = ".".join(ref.split(".")[:2])
+        if target not in available:
+            raise TemplateError(
+                f"{source}: ステップ '{step.id}' が未定義または後方のステップ "
+                f"'{target}' を参照しています"
+            )
+
+    if step.kind is StepKind.PARALLEL:
+        revealed = {step.id}
+        for nested in step.parallel:
+            revealed |= _check_step(nested, declared, visible, source)
+        return revealed
+    return {step.id}
 
 
 def _collect_refs(step: Step) -> list[str]:

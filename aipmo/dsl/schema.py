@@ -17,6 +17,7 @@ class StepKind(str, Enum):
     LLM = "llm"           # LLM 呼び出し
     TRANSFORM = "transform"  # 純粋なデータ変換 (LLM を使わない)
     AGENT = "agent"       # LLM が道具を選んで自分で呼ぶ / the LLM drives
+    PARALLEL = "parallel"  # 独立したステップの集まりを同時に実行する
 
 
 class OutputFormat(str, Enum):
@@ -121,6 +122,17 @@ class Step:
 
     # --- kind == AGENT ---
     agent: AgentSpec | None = None
+
+    # --- kind == PARALLEL ---
+    # 互いに依存しないステップの集まりを、同時に実行する。
+    # グループの中の工程どうしは互いの出力を参照できない
+    # （ロード時に検証される）。全員が同じ、グループ開始前の
+    # スコープを見て走る。
+    #
+    # A group of steps with no dependency between them, run at the same time.
+    # Steps inside one group cannot reference each other's output (checked at
+    # load time); every one of them sees the same pre-group scope.
+    parallel: list[Step] = field(default_factory=list)
 
     # --- 繰り返し / iteration ---
     # 値の並びに対して、同じ工程を1件ずつ実行する。
