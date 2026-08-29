@@ -101,6 +101,64 @@ something this software can guess, so it does not invent a default.
 
 ---
 
+## 複数の提供元を同時に呼ぶ / Calling several providers at once
+
+`profile` の代わりに `profiles`（複数形）を並びで書くと、同じプロンプトを
+Ollama・Gemini・ChatGPT のような複数の提供元に**同時に**投げて、
+結果を並べて比較できます。速さのためではなく、書きぶりを見比べたり、
+人が選んだりする用途を想定しています。
+
+Write `profiles` (plural) instead of `profile` and the same prompt goes out to
+several providers — Ollama, Gemini, ChatGPT, say — **at the same time**, with
+every answer kept for comparison. This is for weighing wording side by side or
+letting a person pick, not for speed.
+
+```yaml
+- id: draft_minutes
+  llm:
+    profiles: [local, gemini, openai]   # Docker のローカル + クラウド2つ
+  prompt: minutes_ja
+  inputs:
+    transcript: "{{ steps.fetch_transcript.output.text }}"
+```
+```yaml
+# config 側 / in config
+llm:
+  local:
+    provider: ollama
+    model: qwen2.5:14b
+  gemini:
+    provider: gemini
+    model: gemini-3.5-flash
+  openai:
+    provider: openai
+    model: gpt-4o-mini
+```
+
+結果は `steps.draft_minutes.output.results` に、宣言した順の並びで入ります。
+各要素は `{ profile, model, ok, text }`（JSON 出力なら `text` の代わりに
+`data`）で、失敗した要素は `{ profile, ok: false, error }` になります。
+`count` が成功数、`failed` が失敗数です。
+
+Results land in `steps.draft_minutes.output.results`, in the order declared.
+Each entry is `{ profile, model, ok, text }` (or `data` instead of `text` when
+`output_format: json`); a failed one is `{ profile, ok: false, error }`.
+`count` and `failed` give the totals.
+
+**1つが落ちても他は止まりません。** 全滅したときだけステップが失敗になり、
+通常のリトライに乗ります。`profile`（単数）と `profiles` は同時に指定でき
+ません。エージェント (`agent:`) ステップでは使えません — 1本の会話で道具を
+呼び続けるエージェントには、そもそも「並行した複数の答え」という概念が
+成立しないためです。
+
+**One provider going down does not stop the others.** The step only fails when
+every provider does, and that failure goes through the normal retry path.
+`profile` (singular) and `profiles` cannot both be set. Agent steps
+(`agent:`) cannot use `profiles`: an agent is a single ongoing conversation
+driving tools, and "several parallel answers" has no meaning there.
+
+---
+
 ## 注意すべき差 / Differences that bite
 
 ### Groq と OpenRouter には埋め込み API がありません

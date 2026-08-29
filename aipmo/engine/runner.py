@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable
 
 from ..adapters.base import AdapterRegistry
 from ..dsl.expr import ResolutionError, evaluate_condition, render
-from ..dsl.schema import OutputFormat, Step, StepKind, Template
-from ..llm.base import LLMRequest
+from ..dsl.schema import LLMSpec, OutputFormat, Step, StepKind, Template
+from ..llm.base import LLMRequest, LLMResponse
 from ..llm.registry import LLMRegistry
 from .agent import run_agent
 from .context import RunContext, StepResult
@@ -337,13 +338,21 @@ class Engine:
     def _run_llm(self, step: Step, scope: dict[str, Any]) -> Any:
         spec = step.llm
         assert spec is not None
-        provider = self.llms.get(spec.profile)
 
         raw_prompt = step.prompt_inline or self.prompts.get(step.prompt or "")
         prompt = render(raw_prompt, {**scope, "inputs": render(step.inputs, scope)})
-
         want_json = step.output_format is OutputFormat.JSON
-        response = provider.complete(
+
+        if not spec.profiles:
+            response = self._complete(spec.profile, step, spec, prompt, want_json)
+            return self._extract(response, step, want_json)
+
+        return self._run_llm_fanout(step, spec, prompt, want_json)
+
+    def _complete(self, profile: str, step: Step, spec: LLMSpec, prompt: str,
+                  want_json: bool) -> LLMResponse:
+        provider = self.llms.get(profile)
+        return provider.complete(
             LLMRequest(
                 prompt=prompt,
                 system=step.config.get("system"),
@@ -353,13 +362,60 @@ class Engine:
             )
         )
 
+    def _extract(self, response: LLMResponse, step: Step, want_json: bool) -> Any:
         if not want_json:
             return response.text
-
         data = response.as_json()
         if step.output_schema:
             _check_schema(data, step.output_schema, step.id)
         return data
+
+    def _run_llm_fanout(self, step: Step, spec: LLMSpec, prompt: str,
+                        want_json: bool) -> Any:
+        """同じプロンプトを複数の提供元に同時に投げ、比較できる形で返す。
+
+        1件の失敗で全体を止めない。全滅したときだけ例外にして、
+        通常のリトライ・失敗経路に乗せる。for_each の失敗の扱いと同じ考え方。
+
+        One dead provider does not sink the rest: this only raises when every
+        profile fails, so the normal step retry path takes over. Same reasoning
+        as `for_each`.
+        """
+        profiles = spec.profiles
+        with ThreadPoolExecutor(max_workers=len(profiles)) as pool:
+            futures = {
+                pool.submit(self._complete, profile, step, spec, prompt, want_json): profile
+                for profile in profiles
+            }
+            by_profile: dict[str, dict[str, Any]] = {}
+            for future, profile in futures.items():
+                try:
+                    response = future.result()
+                    entry: dict[str, Any] = {
+                        "profile": profile, "model": response.model, "ok": True,
+                    }
+                    entry["data" if want_json else "text"] = self._extract(
+                        response, step, want_json
+                    )
+                except Exception as exc:
+                    entry = {
+                        "profile": profile, "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                by_profile[profile] = entry
+
+        # 呼び出した順を保つ / preserve the order the template declared
+        results = [by_profile[profile] for profile in profiles]
+        failed = [r for r in results if not r["ok"]]
+
+        if len(failed) == len(results):
+            detail = "; ".join(f"{r['profile']}: {r['error']}" for r in failed)
+            raise RuntimeError(
+                f"すべての提供元が失敗しました / every profile failed: {detail}"
+            )
+
+        return {"results": results, "count": len(results) - len(failed),
+                "failed": len(failed)}
 
     def _run_agent(self, step: Step, scope: dict[str, Any]) -> Any:
         spec = step.agent

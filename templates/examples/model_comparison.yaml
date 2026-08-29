@@ -1,0 +1,35 @@
+name: model_comparison
+version: "1"
+industry: software
+description: |
+  同じプロンプトを複数の提供元（Ollama・Gemini・ChatGPT など）に同時に投げて、
+  書きぶりを並べて比較する。速さのためではなく、人が選ぶための材料を作る。
+
+  Sends the same prompt to several providers (Ollama, Gemini, ChatGPT, ...) at
+  once and lines up the answers for comparison — not for speed, but to give a
+  person something to choose between.
+
+trigger: manual
+
+params:
+  topic: "認証基盤の移行方針"
+  slack_channel: "#project-updates"
+
+steps:
+  - id: draft
+    llm:
+      profiles: [ollama, gemini, openai]   # config 側で提供元を割り当てる
+      temperature: 0.3
+    prompt_inline: |
+      次の議題について、3行以内で短い提案を書いてください。
+      議題: {{ params.topic }}
+
+  - id: notify
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        「{{ params.topic }}」への提案（{{ steps.draft.output.count }} 件成功 / {{ steps.draft.output.failed }} 件失敗）:
+        {{ steps.draft.output.results }}

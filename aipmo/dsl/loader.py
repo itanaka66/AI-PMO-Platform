@@ -117,17 +117,7 @@ def _parse_step(raw: Any, index: int, source: str) -> Step:
         raise TemplateError(f"{where}: output_format は text / json のいずれかです") from None
 
     if kind is StepKind.LLM:
-        llm_raw = raw.get("llm")
-        if isinstance(llm_raw, str):
-            step.llm = LLMSpec(profile=llm_raw)
-        elif isinstance(llm_raw, dict):
-            step.llm = LLMSpec(
-                profile=llm_raw.get("profile", "default"),
-                temperature=float(llm_raw.get("temperature", 0.2)),
-                max_tokens=int(llm_raw.get("max_tokens", 4096)),
-            )
-        else:
-            step.llm = LLMSpec()
+        step.llm = _parse_llm_spec(raw.get("llm"), where, allow_profiles=True)
         if not (step.prompt or step.prompt_inline):
             raise TemplateError(f"{where}: LLM ステップには prompt が必要です")
 
@@ -157,17 +147,7 @@ def _parse_step(raw: Any, index: int, source: str) -> Step:
             raise TemplateError(
                 f"{where}: agent には prompt が必要です / an agent step needs a prompt"
             )
-        llm_raw = raw.get("llm")
-        if isinstance(llm_raw, str):
-            step.llm = LLMSpec(profile=llm_raw)
-        elif isinstance(llm_raw, dict):
-            step.llm = LLMSpec(
-                profile=llm_raw.get("profile", "default"),
-                temperature=float(llm_raw.get("temperature", 0.2)),
-                max_tokens=int(llm_raw.get("max_tokens", 4096)),
-            )
-        else:
-            step.llm = LLMSpec()
+        step.llm = _parse_llm_spec(raw.get("llm"), where, allow_profiles=False)
 
     if step.for_each is not None:
         max_items = raw.get("max_items", 50)
@@ -202,6 +182,44 @@ def _parse_step(raw: Any, index: int, source: str) -> Step:
         step.retry = RetrySpec(max_attempts=retry_raw)
 
     return step
+
+
+def _parse_llm_spec(llm_raw: Any, where: str, allow_profiles: bool) -> LLMSpec:
+    if isinstance(llm_raw, str):
+        return LLMSpec(profile=llm_raw)
+    if not isinstance(llm_raw, dict):
+        return LLMSpec()
+
+    profiles_raw = llm_raw.get("profiles")
+    profiles: list[str] = []
+    if profiles_raw is not None:
+        if not allow_profiles:
+            raise TemplateError(
+                f"{where}: llm.profiles はエージェントステップでは使えません "
+                f"/ llm.profiles is not supported on agent steps"
+            )
+        if "profile" in llm_raw:
+            raise TemplateError(
+                f"{where}: llm.profile と llm.profiles は同時に指定できません "
+                f"/ specify either profile or profiles, not both"
+            )
+        if not isinstance(profiles_raw, list) or not profiles_raw:
+            raise TemplateError(
+                f"{where}: llm.profiles は1件以上の並びである必要があります "
+                f"/ llm.profiles must be a non-empty list"
+            )
+        profiles = [str(p) for p in profiles_raw]
+        if len(set(profiles)) != len(profiles):
+            raise TemplateError(
+                f"{where}: llm.profiles に重複があります / duplicate profiles"
+            )
+
+    return LLMSpec(
+        profile=llm_raw.get("profile", "default"),
+        profiles=profiles,
+        temperature=float(llm_raw.get("temperature", 0.2)),
+        max_tokens=int(llm_raw.get("max_tokens", 4096)),
+    )
 
 
 def _infer_kind(raw: dict[str, Any], where: str) -> StepKind:

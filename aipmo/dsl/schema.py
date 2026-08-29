@@ -61,6 +61,12 @@ class LLMSpec:
     temperature: float = 0.2
     max_tokens: int = 4096
 
+    # 複数の提供元に同じプロンプトを同時に投げ、比較する。
+    # 指定があれば profile より優先される。
+    # Fan out the same prompt to several providers at once for comparison.
+    # Takes priority over `profile` when non-empty.
+    profiles: list[str] = field(default_factory=list)
+
 
 @dataclass
 class AgentSpec:
