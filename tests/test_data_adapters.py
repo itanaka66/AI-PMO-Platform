@@ -19,7 +19,7 @@ from aipmo.dsl import loader
 from aipmo.engine.runner import Engine, StepFailure
 from aipmo.llm.embeddings import HashEmbedder
 from aipmo.llm.registry import LLMRegistry
-from aipmo.llm.base import EchoProvider
+from aipmo.llm.base import EchoProvider, LLMResponse, ToolCall
 
 ROOT = Path(__file__).resolve().parents[1]
 # 手書きで写さず、実際に出荷する queries.yaml を読む。
@@ -558,3 +558,101 @@ def test_parallel_group_members_are_each_recorded():
 
     recorded = _string_values(connection.log, "INSERT INTO step_results")
     assert {"broadcast", "notify_a", "notify_b"} <= recorded
+
+
+# --- 匿名化・一般化エージェント / the generalization agent ------------------
+#
+# templates/examples/generalize_knowledge.yaml を実物のまま動かす。
+# 手で似せた縮小版ではなく、出荷するテンプレートそのものが対象。
+#
+# Runs templates/examples/generalize_knowledge.yaml itself, not a hand-rolled
+# stand-in — this exercises the exact template that ships.
+
+def _says(text: str) -> LLMResponse:
+    return LLMResponse(text=text, model="scripted")
+
+
+def _calls_tool(name: str, arguments: dict, call_id: str = "c1") -> LLMResponse:
+    return LLMResponse(text="", model="scripted",
+                       tool_calls=[ToolCall(id=call_id, name=name, arguments=arguments)])
+
+
+def _build_generalize_engine(consent_rows, script):
+    connection = FakeConnection(rows=consent_rows)
+    postgres = PostgresAdapter(queries=REAL_QUERIES, tenant="company_a",
+                               connection=connection)
+    qdrant_client = FakeQdrantClient()
+    qdrant = QdrantAdapter(tenant="company_a", embedder=HashEmbedder(),
+                           client=qdrant_client)
+    slack = MockSlackAdapter()
+
+    adapters = AdapterRegistry()
+    adapters.register(postgres)
+    adapters.register(qdrant)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider(script=script))
+
+    engine = Engine(adapters, llms)
+    return engine, qdrant_client, slack
+
+
+def test_generalize_knowledge_submits_a_candidate_when_consent_allows_it():
+    engine, qdrant_client, slack = _build_generalize_engine(
+        consent_rows=[("B",)],
+        script=[
+            _calls_tool("qdrant__submit_candidate", {
+                "knowledge": {"pattern_name": "key_person_dependency",
+                              "text": "主要担当者一人への依存は、離脱時に"
+                                      "スケジュールへ不均衡な影響を与える"},
+                "knowledge_level": 5,
+                "consent_level": "B",
+            }),
+            _says("提出しました"),
+        ],
+    )
+    template = loader.load_file(ROOT / "templates/examples/generalize_knowledge.yaml")
+
+    ctx = engine.run(template, params={"raw_knowledge": "田中さんが抜けてPROJ-9が遅延した"})
+
+    assert ctx.results["generalize"].status == "success"
+    collection, points = qdrant_client.upserts[0]
+    assert collection == "tenant_company_a"
+    assert points[0].payload["review_status"] == "pending"
+    assert points[0].payload["knowledge_level"] == 5
+    # 一般化された文面に、元の固有名詞が残っていないこと。
+    assert "田中" not in str(points[0].payload)
+    assert slack.posted and "レビュー待ち" in slack.posted[0]["text"]
+
+
+def test_generalize_knowledge_is_skipped_entirely_when_consent_is_a():
+    """A（二次利用不可）なら、そもそも一般化を試みない。"""
+    engine, qdrant_client, slack = _build_generalize_engine(
+        consent_rows=[],  # 該当なし → consent_level のフォールバックで A
+        script=[],
+    )
+    template = loader.load_file(ROOT / "templates/examples/generalize_knowledge.yaml")
+
+    ctx = engine.run(template, params={"raw_knowledge": "社外秘の内容"})
+
+    assert ctx.results["generalize"].status == "skipped"
+    assert ctx.results["notify_reviewer"].status == "skipped"
+    assert qdrant_client.upserts == []
+    assert slack.posted == []
+
+
+def test_generalize_knowledge_does_not_notify_when_nothing_was_submitted():
+    """一般化できる知見が無いと AI が判断したら、提出も通知もしない。"""
+    engine, qdrant_client, slack = _build_generalize_engine(
+        consent_rows=[("B",)],
+        script=[_says("固有の事情が強く、一般化できる知見がありません")],
+    )
+    template = loader.load_file(ROOT / "templates/examples/generalize_knowledge.yaml")
+
+    ctx = engine.run(template, params={"raw_knowledge": "この件に限った特殊な事情"})
+
+    assert ctx.results["generalize"].status == "success"
+    assert qdrant_client.upserts == []
+    assert ctx.results["notify_reviewer"].status == "skipped"
+    assert slack.posted == []
