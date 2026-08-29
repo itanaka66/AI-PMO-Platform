@@ -1005,6 +1005,17 @@ SearchingJiraProposals.search = action()(SearchingJiraProposals.search)
 def run_curriculum(reply=CURRICULUM_REPLY):
     adapters = AdapterRegistry()
     jira, slack = SearchingJiraProposals(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "higher_education" / "curriculum_approval_triage.yaml"))
+    return ctx, slack
+
+
 # --- 非営利・助成金事業 / nonprofit and grant-funded programs ----------------
 
 GRANT_REPLY = json.dumps({
@@ -1038,6 +1049,17 @@ SearchingJiraGrants.search = action()(SearchingJiraGrants.search)
 def run_grants(reply=GRANT_REPLY):
     adapters = AdapterRegistry()
     jira, slack = SearchingJiraGrants(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "nonprofit" / "grant_compliance_triage.yaml"))
+    return ctx, slack
+
+
 # --- 保険 / insurance claims --------------------------------------------------
 
 CLAIM_REPLY = json.dumps({
@@ -1082,7 +1104,7 @@ def run_claims(reply=CLAIM_REPLY):
     llms.register("default", Scripted([reply]))
 
     ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
-        loader.load_file(INDUSTRIES / "higher_education" / "curriculum_approval_triage.yaml"))
+        loader.load_file(INDUSTRIES / "insurance" / "claim_sla_triage.yaml"))
     return ctx, slack
 
 
@@ -1122,8 +1144,7 @@ def test_returned_for_revision_goes_to_proposers_not_a_committee():
 
 def test_nothing_is_said_when_no_proposal_needs_attention():
     _, slack = run_curriculum(reply=NO_PROPOSALS_REPLY)
-        loader.load_file(INDUSTRIES / "nonprofit" / "grant_compliance_triage.yaml"))
-    return ctx, slack
+    assert slack.posted == []
 
 
 def test_funder_deadlines_are_sent_alone_immediately():
@@ -1163,8 +1184,7 @@ def test_internal_program_activities_are_batched():
 
 def test_nothing_is_said_when_no_activity_needs_attention():
     _, slack = run_grants(reply=NO_GRANT_ACTIVITY_REPLY)
-        loader.load_file(INDUSTRIES / "insurance" / "claim_sla_triage.yaml"))
-    return ctx, slack
+    assert slack.posted == []
 
 
 def test_deadline_at_risk_claims_are_sent_alone_immediately():

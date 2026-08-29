@@ -1,0 +1,159 @@
+# どのクラウド・VPS でも使える構成 / a deployment that works on any cloud or VPS.
+#
+# 既定（プロファイル無し）は caddy + aipmo + scheduler の3つだけ。
+# 1GB RAM クラスの無料枠（GCP e2-micro・Azure B1S・AWS t2/t3.micro）を
+# 想定した最小構成で、PostgreSQL は Aiven や RDS など外部の無料プランに置く
+# 前提です。ベクトル検索 (Qdrant) はここには含めません — 1GB では同時に
+# 走らせる余地がほぼ無いためです。
+#
+# The default (no profile) starts only caddy + aipmo + scheduler — a minimal
+# footprint sized for 1GB-class free tiers (GCP e2-micro, Azure B1S, AWS
+# t2/t3.micro), assuming PostgreSQL lives externally (Aiven, RDS, etc.).
+# Vector search (Qdrant) is left out by default: there is little room left
+# for it at 1GB.
+#
+# 有料 VPS のように RAM に余裕がある場合は、プロファイルで足せます:
+# With more RAM (a paid VPS), add services back with profiles:
+#
+#   docker compose --profile full up -d              # + Qdrant
+#   docker compose --profile full --profile selfhosted up -d
+#                                                      # + Qdrant + 自前 Postgres
+#                                                      # + Qdrant + your own Postgres
+#
+# selfhosted を使う場合、.env の AIPMO_PG_DSN をこのコンテナ (postgres) へ
+# 向けてください: postgresql://aipmo:aipmo@postgres:5432/aipmo
+# With selfhosted, point .env's AIPMO_PG_DSN at this container instead:
+#   postgresql://aipmo:aipmo@postgres:5432/aipmo
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    depends_on:
+      - aipmo
+    restart: unless-stopped
+    # TLS はここで終端する。アプリ側は TLS を持たない。
+    # TLS terminates here; the application does not implement it.
+    deploy:
+      resources:
+        limits: { memory: 128M }
+
+  aipmo:
+    build:
+      context: ../..
+      dockerfile: deploy/generic/Dockerfile
+    env_file: .env
+    environment:
+      AIPMO_CONFIG: /app/config.yaml
+      AIPMO_WEB_TOKEN: ${AIPMO_WEB_TOKEN:?set AIPMO_WEB_TOKEN in .env}
+      AIPMO_VIEWER_TOKEN: ${AIPMO_VIEWER_TOKEN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
+    volumes:
+      - ../../templates:/app/templates:ro
+      - ../../prompts:/app/prompts:ro
+      - ./config.yaml:/app/config.yaml:ro
+      # Aiven / RDS など、証明書検証つきの外部 DB を使うときだけ要る。
+      # 使わない場合はこの行を削除して構わない。
+      # Only needed for an externally verified DB (Aiven, RDS). Remove this
+      # line if you are not using one.
+      - ./db-ca.pem:/app/db-ca.pem:ro
+    restart: unless-stopped
+    # 公開はしない。Caddy 経由でのみ届く。
+    # Not published: reachable only through Caddy.
+    expose:
+      - "8765"
+    command: ["serve", "--host", "0.0.0.0", "--port", "8765"]
+    deploy:
+      resources:
+        limits: { memory: 512M }
+
+  # 定時実行。画面とは別のコンテナにする。
+  # 画面の再起動で予定が止まるのは困るし、逆に定時処理が重いときに
+  # 画面が応答しなくなるのも困る。
+  #
+  # The scheduler runs as its own container: a restart of the interface should
+  # not stop the schedule, and a heavy scheduled run should not make the
+  # interface unresponsive.
+  scheduler:
+    build:
+      context: ../..
+      dockerfile: deploy/generic/Dockerfile
+    env_file: .env
+    environment:
+      AIPMO_CONFIG: /app/config.yaml
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
+    volumes:
+      - ../../templates:/app/templates:ro
+      - ../../prompts:/app/prompts:ro
+      - ./config.yaml:/app/config.yaml:ro
+      - ./db-ca.pem:/app/db-ca.pem:ro
+    restart: unless-stopped
+    command: ["schedule"]
+    # 実行中のテンプレートを最後まで走らせてから止まる。途中で切ると、
+    # 課題は起票されたのに通知されていない、といった半端が残る。
+    # Lets the current run finish: cutting it short leaves half-states, such
+    # as issues filed but nobody told.
+    stop_grace_period: 120s
+    deploy:
+      resources:
+        limits: { memory: 512M }
+
+  # ベクトル検索。1GB クラスの無料枠には基本的に乗らないので既定では
+  # 外す。--profile full で足す。
+  # Vector search. Left out by default since it rarely fits a 1GB-class free
+  # tier; add it with --profile full.
+  qdrant:
+    image: qdrant/qdrant:latest
+    profiles: ["full"]
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { memory: 1G }
+
+  # 自前の PostgreSQL。RAM に余裕がある有料 VPS 向け。無料枠の小さな
+  # 機械では Aiven や RDS など外部の無料プランを使う方が現実的。
+  # Your own PostgreSQL, for a paid VPS with RAM to spare. On a small free-tier
+  # machine, an external free plan (Aiven, RDS) is the more realistic choice.
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["selfhosted"]
+    environment:
+      POSTGRES_USER: aipmo
+      POSTGRES_PASSWORD: aipmo
+      POSTGRES_DB: aipmo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../../sql/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aipmo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { memory: 512M }
+
+volumes:
+  scheduler_state:
+  caddy_data:
+  caddy_config:
+  qdrant_data:
+  postgres_data:

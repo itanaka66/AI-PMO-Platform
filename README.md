@@ -69,7 +69,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 638 件
+pytest                               # 657 件
 ```
 
 ---
@@ -387,9 +387,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-638 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+657 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-638 tests, aimed at the guarantees and at the failure shapes that look like
+657 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
@@ -417,7 +417,12 @@ success:
 | [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |
 | [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
 | [docs/INDUSTRIES.md](docs/INDUSTRIES.md) | 業界別テンプレート / industry templates |
-| [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md) | 無料クラウド構成 / free-tier deployment |
+| [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md) | 無料クラウド構成（Oracle）/ free-tier deployment |
+| [docs/DEPLOY-GCP.md](docs/DEPLOY-GCP.md) | 無料クラウド構成（Google Cloud）/ free-tier deployment |
+| [docs/DEPLOY-AZURE.md](docs/DEPLOY-AZURE.md) | 無料クラウド構成（Azure）/ free-tier deployment |
+| [docs/DEPLOY-AWS.md](docs/DEPLOY-AWS.md) | 無料クラウド構成（AWS EC2）/ free-tier deployment |
+| [docs/DEPLOY-VPS.md](docs/DEPLOY-VPS.md) | 有料 VPS 構成（さくらの VPS 等）/ paid VPS deployment |
+| [docs/DEPLOY-HETZNER.md](docs/DEPLOY-HETZNER.md) | 有料 VPS 構成（Hetzner）/ paid VPS deployment |
 | [NOTICE.md](NOTICE.md) | ライセンスと依存ライブラリ / licensing and dependencies |
 
 ---
