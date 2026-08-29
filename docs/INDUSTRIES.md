@@ -12,6 +12,7 @@
 | カスタマーサクセス | `customer_success/account_health_triage.yaml` | 顧客アカウントの状況確認 |
 | 財務監査 | `financial_audit/finding_remediation_triage.yaml` | 監査指摘の重要度別振り分け |
 | 損害保険 | `insurance/claim_sla_triage.yaml` | 請求の州別規制期限と不正疑いの仕分け |
+| 政府調達 | `government_contracting/clearance_deliverable_triage.yaml` | クリアランス状況と納品期限の仕分け |
 
 ---
 
@@ -238,6 +239,37 @@ severity — it only relays the fraud_flag already present in the data.
 
 Waiting on the policyholder is handled the same way as customer success's
 customer wait: no wording that blames the adjuster.
+
+### 政府調達 — 資格が無ければ、そもそも作業を続けられない
+
+非営利事業の使途制限は「お金」の観点での制約でした。**この業界には、
+「人」の観点での同じ形の制約があります。** 担当者のセキュリティ
+クリアランスが失効・未取得・失効間近であれば、どれだけ急いでも
+その人はその作業を法令上続けられません。現場のプログラムマネージャーに
+確認しても、クリアランスの発給・更新そのものは進められません——動かせる
+のは施設セキュリティ責任者 (FSO) だけです。
+
+**クリアランスの適格性判定はデータに既にある clearance_status を
+そのまま使い、AI が資格の有無を判断することはありません。** 財務監査の
+重要度分類・保険の不正疑いフラグと同じ理由です。
+
+契約上の納品物 (CDRL) の期限は、他業界の「安全」と同じ形で単独・即時に
+扱います。契約履行評価 (CPARS) に影響しうるためです。
+
+Nonprofit's fund-usage restriction was a constraint on money. **This field
+carries the same shape of constraint on people:** if an assignee's security
+clearance has lapsed, is pending, or is expiring soon, no amount of urgency
+lets that person continue the work legally. Confirming with the program
+manager cannot issue or renew a clearance — only the Facility Security
+Officer can act on it.
+
+**Clearance eligibility is read from the data's own `clearance_status`, never
+judged by the model** — the same reasoning as the audit template's severity
+tiers and insurance's fraud flag.
+
+A contractual deliverable (CDRL) deadline gets the same alone-and-immediate
+treatment as "safety" elsewhere, since missing one can affect the
+contractor's performance rating (CPARS).
 
 ---
 

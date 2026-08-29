@@ -1,0 +1,94 @@
+name: government_contracting_clearance_deliverable_triage
+version: "1"
+industry: government_contracting
+description: |
+  政府調達案件の進行状況を確認し、対応が必要なものだけを報告する。
+  担当者のセキュリティクリアランスが失効・未取得・失効間近の案件は
+  現場ではなく施設セキュリティ責任者 (FSO) へ、納品期限が迫っている
+  ものは単独・即時に、内部で完結するものはまとめて報告する。
+
+trigger: "schedule:0 8 * * MON-FRI"
+
+params:
+  jira_project: GOVCON
+  team_channel: "#program-delivery"
+  fso_channel: "#fso-clearance-alerts"
+  deliverable_channel: "#cdrl-deadlines"
+  clearance_warning_days: 30
+
+steps:
+  - id: tasks
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY duedate ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: clearance_deliverable_triage_ja
+    inputs:
+      today: "{{ run.date }}"
+      clearance_warning_days: "{{ params.clearance_warning_days }}"
+      tasks: "{{ steps.tasks.output.items }}"
+    output_format: json
+    output_schema:
+      required: [clearance_blocked, deliverable_at_risk, internal]
+
+  # 担当者のクリアランスが失効・未取得・失効間近な案件は、現場の
+  # プログラムマネージャーではなく FSO へ。現場に確認しても、
+  # クリアランスの発給・更新そのものは進められない——資格が無い人は
+  # 法令上、作業を続けられない。
+  #
+  # A task whose assignee's clearance is lapsed, pending, or expiring soon
+  # goes to the Facility Security Officer, not the program manager: checking
+  # with the program side cannot issue or renew a clearance, and the work
+  # legally cannot continue without one.
+  - id: notify_clearance_blocked
+    when: "{{ steps.triage.output.clearance_blocked }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.fso_channel }}"
+      text: |
+        クリアランス確認が必要な案件 ({{ run.date }})
+
+        {{ steps.triage.output.clearance_blocked }}
+
+        現場の判断だけでは進められません。資格状況の確認をお願いします。
+
+  # 納品物 (CDRL) の期限は、他業界の「安全」と同じ形で単独・即時に。
+  # 契約上の納品期限を過ぎると、契約履行評価 (CPARS) に影響しうる。
+  #
+  # A CDRL deadline gets the same alone-and-immediate treatment as "safety"
+  # elsewhere: missing a contractual deliverable date can affect the
+  # contractor performance rating (CPARS).
+  - id: notify_deliverable_risk
+    for_each: "{{ steps.triage.output.deliverable_at_risk }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.deliverable_channel }}"
+      text: |
+        【納品期限】{{ item.deliverable_name }}（{{ item.issue_key }}）
+        残り {{ item.days_until_deadline }} 日
+
+  - id: notify_internal
+    when: "{{ steps.triage.output.internal }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        対応が必要な案件 ({{ run.date }})
+
+        {{ steps.triage.output.internal }}
