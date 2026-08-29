@@ -1,13 +1,13 @@
 # AI-PMO Platform
 
-初心者向けはじめての方は **[はじめてのガイド](docs/guide/README.md)**（8言語）をどうぞ。
-New here? Start with the **[getting-started guide](docs/guide/README.md)** (8 languages) for beginers.
+はじめての方は **[はじめてのガイド](docs/guide/README.md)**（8言語）をどうぞ。
+New here? Start with the **[getting-started guide](docs/guide/README.md)** (8 languages).
 
-<a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">AI-PMO
+<a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">初心者向けAI-PMO
 はじめてのガイド</a>  PMO 業務のノウハウを「実行可能なテンプレート」として記述し、LLM と外部ツール連携を
 組み合わせて自動実行する基盤。 
 
-<a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">AI-PMO Getting Started Guide</a>  A runtime that encodes PMO know-how as executable templates and runs them by
+<a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">AI-PMO Getting Started Guide for beginers</a>  A runtime that encodes PMO know-how as executable templates and runs them by
 combining LLM calls with the tools a team already uses.
 
 **すべて無料です。** 機能制限版でも試用版でもありません。MIT License なので、
