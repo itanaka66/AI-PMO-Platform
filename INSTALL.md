@@ -51,7 +51,7 @@ must run on Windows.
 
 ```powershell
 .\installer\build.ps1
-# → dist\AI-PMO-Setup-0.1.0.exe
+# → dist\AI-PMO-Setup-0.1.1.exe
 ```
 
 タグを push すると GitHub Actions が同じものを作ります。
