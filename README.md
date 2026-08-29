@@ -416,8 +416,6 @@ success:
 
 ## 未着手 / Not yet built
 
-- **コード署名 / code signing** — 未署名の `.exe` は Windows が警告を出す。
-  回避策はあるが解決ではない / there are workarounds, but they are not a fix
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
 - **上記3業界以外のテンプレート**
 

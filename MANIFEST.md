@@ -65,5 +65,14 @@ includes the templates and prompts.
 
 ## まだ決めていないこと / Not yet decided
 
-**署名されていません。** 未署名の `.exe` は Windows が警告を出します。
-[INSTALL.md](INSTALL.md) に回避策はありますが、緩和であって解決ではありません。
+**証明書がありません。** コード署名の仕組み自体は配線済みで、証明書さえ
+用意すれば `aipmo.exe` とインストーラの両方に自動で署名されます。
+証明書の購入自体はこのリポジトリの範囲外です。詳しくは
+[INSTALL.md](INSTALL.md)。それまでは、`.exe` は
+これまでどおり未署名のままです。
+
+**There is no certificate yet.** The signing mechanism itself is wired up —
+provide a certificate and both `aipmo.exe` and the installer are signed
+automatically. Purchasing one is outside what this repository can do; see
+[INSTALL.md](INSTALL.md). Until then, the `.exe`
+stays unsigned exactly as before.
