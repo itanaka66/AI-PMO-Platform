@@ -1,7 +1,7 @@
 # AI-PMO Platform
 
-はじめての方は **[はじめてのガイド](docs/guide/README.md)**（8言語）をどうぞ。
-New here? Start with the **[getting-started guide](docs/guide/README.md)** (8 languages).
+はじめての方は [はじめてのガイド（8言語）](docs/guide/README.md) をどうぞ。
+New here? Start with the [getting-started guide (8 languages)](docs/guide/README.md) .
 
 <a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">初心者向けAI-PMO
 はじめてのガイド</a>  PMO 業務のノウハウを「実行可能なテンプレート」として記述し、LLM と外部ツール連携を
