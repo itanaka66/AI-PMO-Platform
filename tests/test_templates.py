@@ -965,3 +965,91 @@ def test_control_deficiencies_are_batched_for_the_audit_team():
 def test_nothing_is_said_when_no_finding_needs_attention():
     _, slack = run_audit(reply=NO_FINDINGS_REPLY)
     assert slack.posted == []
+
+
+# --- 高等教育 / higher education governance ----------------------------------
+
+CURRICULUM_REPLY = json.dumps({
+    "calendar_at_risk": [
+        {"issue_key": "CURR-1", "proposal_name": "データサイエンス副専攻の新設",
+         "days_until_catalog_deadline": 10, "current_stage": "faculty_senate"},
+    ],
+    "stalled_at_stage": [
+        {"issue_key": "CURR-2", "proposal_name": "統計学入門の必修化",
+         "current_stage": "college_committee",
+         "channel": "#college-curriculum-committee", "days_in_current_stage": 30},
+    ],
+    "returned_for_revision": [
+        {"issue_key": "CURR-3", "proposal_name": "選択科目の単位数変更",
+         "reason": "シラバスの補足が必要"},
+    ],
+}, ensure_ascii=False)
+
+NO_PROPOSALS_REPLY = json.dumps({
+    "calendar_at_risk": [], "stalled_at_stage": [], "returned_for_revision": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraProposals(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "CURR-1", "summary": "データサイエンス副専攻"},
+            {"key": "CURR-2", "summary": "統計学入門の必修化"},
+            {"key": "CURR-3", "summary": "選択科目の単位数変更"},
+        ], "count": 3}
+
+
+SearchingJiraProposals.search = action()(SearchingJiraProposals.search)
+
+
+def run_curriculum(reply=CURRICULUM_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraProposals(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "higher_education" / "curriculum_approval_triage.yaml"))
+    return ctx, slack
+
+
+def test_calendar_at_risk_proposals_are_sent_alone_to_the_registrar():
+    """1段階の停滞より、プロセス全体の期限超過の方が重い。"""
+    _, slack = run_curriculum()
+    calendar = [m for m in slack.posted if m["channel"] == "#registrar-deadlines"]
+
+    assert len(calendar) == 1
+    assert "データサイエンス副専攻" in calendar[0]["text"]
+    assert "残り 10 日" in calendar[0]["text"]
+
+
+def test_stalled_proposals_are_routed_to_whichever_committee_holds_them():
+    """宛先は固定チャンネルではなく、いま持っている審議段階で変わる。"""
+    _, slack = run_curriculum()
+    stalled = [m for m in slack.posted if m["channel"] == "#college-curriculum-committee"]
+
+    assert stalled
+    assert "統計学入門" in stalled[0]["text"]
+    assert "30 日" in stalled[0]["text"]
+    # 他の段階のチャンネルには出ていないこと。
+    assert all("統計学入門" not in m["text"] for m in slack.posted
+              if m["channel"] != "#college-curriculum-committee")
+
+
+def test_returned_for_revision_goes_to_proposers_not_a_committee():
+    """差し戻し中は審議機関の遅れとして扱わない。"""
+    _, slack = run_curriculum()
+    proposers = [m for m in slack.posted if m["channel"] == "#curriculum-proposers"]
+    committees = [m for m in slack.posted
+                  if m["channel"] not in ("#curriculum-proposers", "#registrar-deadlines")]
+
+    assert proposers and "選択科目の単位数変更" in proposers[0]["text"]
+    assert all("選択科目の単位数変更" not in m["text"] for m in committees)
+
+
+def test_nothing_is_said_when_no_proposal_needs_attention():
+    _, slack = run_curriculum(reply=NO_PROPOSALS_REPLY)
+    assert slack.posted == []
