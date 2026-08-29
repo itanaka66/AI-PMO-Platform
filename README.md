@@ -33,6 +33,7 @@ New here? Start with the **[getting-started guide](docs/guide/README.md)**.
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 |
 | `model_comparison` | 同じプロンプトを複数の AI に同時投稿し、書きぶりを比較 |
+| `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める |
 | `construction/site_meeting` | 工程会議 → 是正起票・安全指摘の即時通知 |
 | `marketing/campaign_check` | キャンペーン進行（承認待ちを分けて扱う） |
 
@@ -139,6 +140,34 @@ The step kind is inferred from which of `adapter` / `llm` / `agent` /
 
 One failure does not stop the rest. `when` is evaluated once before the loop, so
 filtering on an element's own values needs `where`.
+
+### 並列実行 / Parallel steps
+
+互いに依存しないステップを `parallel:` にまとめると、同時に実行される。
+Jira への起票と Slack への通知のように、片方の結果をもう片方が待つ必要が
+ない工程を並べるのに使う。
+
+```yaml
+- id: notify_everyone
+  parallel:
+    - id: notify_slack
+      adapter: slack
+      action: post_message
+      inputs: { channel: "#project-updates", text: "..." }
+    - id: notify_teams
+      adapter: teams
+      action: post_message
+      inputs: { channel: "{{ params.teams_channel }}", text: "..." }
+```
+
+グループの中の工程どうしは、互いの出力を参照できない（ロード時に検証される）。
+後続のステップからは `steps.notify_slack.output` のようにそのまま参照できる。
+1件の失敗で全体を止めない。全滅したときだけこの工程自体が失敗になる。
+
+Steps inside one group cannot reference each other's output (checked when the
+template is loaded, not at run time). Later steps can reference any of them
+directly, e.g. `steps.notify_slack.output`. One failure does not stop the
+rest; the group itself only fails when every step inside it does.
 
 ### エージェント / Agents
 
@@ -318,7 +347,6 @@ success:
 - **公開可能性スコアの算出** — 保存はできるが計算は未実装 / the field is stored,
   the computation is not
 - **実行履歴の永続化配線** — スキーマとクエリはあるが、エンジンからの自動書き込みは未接続
-- **並列ステップ実行** — 現状は逐次のみ / sequential only
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
 - **上記3業界以外のテンプレート**
 

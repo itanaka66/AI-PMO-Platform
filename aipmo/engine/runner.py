@@ -172,6 +172,9 @@ class Engine:
         if step.for_each is not None:
             return self._run_for_each(step, ctx, scope)
 
+        if step.kind is StepKind.PARALLEL:
+            return self._run_parallel(step, ctx)
+
         started = time.monotonic()
         last_error: str | None = None
 
@@ -293,6 +296,51 @@ class Engine:
                     "failed": len(failures), "errors": failures,
                     "skipped": skipped, "truncated": truncated},
             error=f"{len(failures)} 件が失敗 / {len(failures)} failed" if failures else None,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
+    def _run_parallel(self, step: Step, ctx: RunContext) -> StepResult:
+        """互いに依存しないステップを同時に実行する。
+
+        グループの中の工程は、グループが始まる前の ctx.results だけを見る。
+        誰も他人の出力を待たずに走るので、そもそも参照できてはいけない
+        （ロード時にも検証済み）。結果は全員そろってから、宣言順に
+        まとめて ctx.results へ書き込む — 走っている間は誰も書き込まない
+        ので、途中経過を別の工程が覗き見ることもない。
+
+        1件の失敗で全体を止めない。全滅したときだけこの工程自体が失敗になる。
+        for_each と同じ考え方。
+
+        Steps in the group only ever see ctx.results as it stood before the
+        group started — nobody waits on anybody else, so nobody should be able
+        to reference another's output either (checked at load time too).
+        Results are written into ctx.results together, in declared order, only
+        after everyone has finished; nothing is written while the group is
+        still running, so there is nothing mid-flight for another step to see.
+
+        One failure does not sink the group; it fails only when every nested
+        step does — the same reasoning as `for_each`.
+        """
+        started = time.monotonic()
+        nested_steps = step.parallel
+
+        with ThreadPoolExecutor(max_workers=len(nested_steps)) as pool:
+            futures = {pool.submit(self._run_step, nested, ctx): nested
+                       for nested in nested_steps}
+            results_by_id = {nested.id: future.result()
+                             for future, nested in futures.items()}
+
+        for nested in nested_steps:
+            ctx.results[nested.id] = results_by_id[nested.id]
+
+        failed = [r for r in results_by_id.values() if r.status == "failed"]
+        status = "failed" if len(failed) == len(results_by_id) else "success"
+
+        return StepResult(
+            id=step.id,
+            status=status,
+            output={"count": len(results_by_id) - len(failed), "failed": len(failed)},
+            error=f"{len(failed)} 件が失敗 / {len(failed)} failed" if failed else None,
             duration_ms=int((time.monotonic() - started) * 1000),
         )
 

@@ -104,6 +104,76 @@ def test_agent_step_cannot_use_llm_profiles():
         loader.load_dict(raw)
 
 
+def test_parallel_requires_at_least_two_steps():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "parallel": [
+            {"id": "only", "adapter": "slack", "action": "post_message"},
+        ]},
+    ]}
+    with pytest.raises(loader.TemplateError, match="2件以上"):
+        loader.load_dict(raw)
+
+
+def test_parallel_cannot_be_combined_with_adapter():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "adapter": "slack", "parallel": [
+            {"id": "b", "adapter": "slack", "action": "post_message"},
+            {"id": "c", "adapter": "slack", "action": "post_message"},
+        ]},
+    ]}
+    with pytest.raises(loader.TemplateError, match="同時に指定できません"):
+        loader.load_dict(raw)
+
+
+def test_parallel_cannot_be_combined_with_for_each():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "for_each": "{{ params.items }}", "parallel": [
+            {"id": "b", "adapter": "slack", "action": "post_message"},
+            {"id": "c", "adapter": "slack", "action": "post_message"},
+        ]},
+    ]}
+    with pytest.raises(loader.TemplateError, match="for_each と組み合わせられません"):
+        loader.load_dict(raw)
+
+
+def test_siblings_inside_a_parallel_group_cannot_reference_each_other():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "parallel": [
+            {"id": "b", "adapter": "slack", "action": "post_message",
+             "inputs": {"text": "hi"}},
+            {"id": "c", "adapter": "slack", "action": "post_message",
+             "inputs": {"text": "{{ steps.b.output.ts }}"}},
+        ]},
+    ]}
+    with pytest.raises(loader.TemplateError, match="未定義または後方"):
+        loader.load_dict(raw)
+
+
+def test_a_later_step_can_reference_any_step_from_an_earlier_group():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "parallel": [
+            {"id": "b", "adapter": "slack", "action": "post_message",
+             "inputs": {"text": "hi"}},
+            {"id": "c", "adapter": "slack", "action": "post_message",
+             "inputs": {"text": "hi"}},
+        ]},
+        {"id": "d", "adapter": "slack", "action": "post_message",
+         "inputs": {"text": "{{ steps.b.output.ts }} / {{ steps.c.output.ts }}"}},
+    ]}
+    loader.load_dict(raw)  # 例外が出なければ成功 / passes if no exception
+
+
+def test_duplicate_ids_across_a_parallel_group_are_rejected():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "parallel": [
+            {"id": "same", "adapter": "slack", "action": "post_message"},
+            {"id": "same", "adapter": "slack", "action": "post_message"},
+        ]},
+    ]}
+    with pytest.raises(loader.TemplateError, match="重複"):
+        loader.load_dict(raw)
+
+
 def test_example_template_loads():
     template = loader.load_file(ROOT / "templates/examples/meeting_minutes.yaml")
     assert template.industry == "software"
@@ -333,6 +403,148 @@ def test_fanout_parses_json_per_profile_and_checks_the_schema():
     by_profile = {r["profile"]: r for r in result.output["results"]}
     assert by_profile["a"] == {"profile": "a", "model": "echo", "ok": True, "data": {"x": 1}}
     assert by_profile["b"]["ok"] is False
+
+
+# --- 並列ステップ実行 / parallel step execution -----------------------------
+
+def test_parallel_steps_each_write_their_own_result():
+    adapters = AdapterRegistry()
+    slack = MockSlackAdapter()
+    adapters.register(slack)
+
+    raw = {
+        "name": "fanout",
+        "steps": [{
+            "id": "notify_both",
+            "parallel": [
+                {"id": "notify_a", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#a", "text": "hi a"}},
+                {"id": "notify_b", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#b", "text": "hi b"}},
+            ],
+        }],
+    }
+    ctx = Engine(adapters, LLMRegistry()).run(loader.load_dict(raw))
+
+    assert ctx.results["notify_both"].status == "success"
+    assert ctx.results["notify_both"].output == {"count": 2, "failed": 0}
+    assert ctx.results["notify_a"].status == "success"
+    assert ctx.results["notify_b"].status == "success"
+    assert {m["channel"] for m in slack.posted} == {"#a", "#b"}
+
+
+def test_one_step_in_a_group_failing_does_not_sink_the_others():
+    class Picky(MockSlackAdapter):
+        def post_message(self, channel, text, thread_ts=None):
+            if channel == "#bad":
+                raise RuntimeError("no such channel")
+            return super().post_message(channel, text, thread_ts)
+
+    adapters = AdapterRegistry()
+    adapters.register(Picky())
+
+    raw = {
+        "name": "fanout",
+        "steps": [{
+            "id": "notify_both",
+            "parallel": [
+                {"id": "notify_ok", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#ok", "text": "hi"}},
+                {"id": "notify_bad", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#bad", "text": "hi"}},
+            ],
+        }],
+    }
+    ctx = Engine(adapters, LLMRegistry()).run(loader.load_dict(raw))
+
+    assert ctx.results["notify_both"].status == "success"
+    assert ctx.results["notify_both"].output == {"count": 1, "failed": 1}
+    assert ctx.results["notify_ok"].status == "success"
+    assert ctx.results["notify_bad"].status == "failed"
+
+
+def test_all_steps_in_a_group_failing_marks_the_group_failed():
+    class AlwaysFails(MockSlackAdapter):
+        def post_message(self, channel, text, thread_ts=None):
+            raise RuntimeError("down")
+
+    adapters = AdapterRegistry()
+    adapters.register(AlwaysFails())
+
+    raw = {
+        "name": "fanout",
+        "steps": [{
+            "id": "notify_both",
+            "parallel": [
+                {"id": "notify_a", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#a", "text": "hi"}},
+                {"id": "notify_b", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#b", "text": "hi"}},
+            ],
+        }],
+    }
+    with pytest.raises(StepFailure, match="notify_both"):
+        Engine(adapters, LLMRegistry()).run(loader.load_dict(raw))
+
+
+def test_a_step_after_the_group_can_reference_any_nested_output():
+    adapters = AdapterRegistry()
+    slack = MockSlackAdapter()
+    adapters.register(slack)
+
+    raw = {
+        "name": "fanout",
+        "steps": [
+            {"id": "notify_both", "parallel": [
+                {"id": "notify_a", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#a", "text": "hi"}},
+                {"id": "notify_b", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#b", "text": "hi"}},
+            ]},
+            {"id": "summarize", "adapter": "slack", "action": "post_message",
+             "inputs": {"channel": "#summary",
+                        "text": "a={{ steps.notify_a.output.ok }} "
+                                "b={{ steps.notify_b.output.ok }}"}},
+        ],
+    }
+    ctx = Engine(adapters, LLMRegistry()).run(loader.load_dict(raw))
+
+    summary = [m for m in slack.posted if m["channel"] == "#summary"][0]
+    assert "a=True" in summary["text"]
+    assert "b=True" in summary["text"]
+
+
+def test_parallel_steps_actually_overlap_in_time():
+    """速さのための機能なので、実際に重なって走ることそのものを確認する。"""
+    import time as time_module
+
+    class SlowAdapter(MockSlackAdapter):
+        def post_message(self, channel, text, thread_ts=None):
+            time_module.sleep(0.15)
+            return super().post_message(channel, text, thread_ts)
+
+    adapters = AdapterRegistry()
+    adapters.register(SlowAdapter())
+
+    raw = {
+        "name": "fanout",
+        "steps": [{
+            "id": "notify_all",
+            "parallel": [
+                {"id": "notify_a", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#a", "text": "hi"}},
+                {"id": "notify_b", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#b", "text": "hi"}},
+                {"id": "notify_c", "adapter": "slack", "action": "post_message",
+                 "inputs": {"channel": "#c", "text": "hi"}},
+            ],
+        }],
+    }
+    ctx = Engine(adapters, LLMRegistry()).run(loader.load_dict(raw))
+
+    # 3 件を順番に実行すれば 450ms 前後かかる。同時に走れば 150ms 強で済む。
+    # Run sequentially, three would take ~450ms; run together, just over 150ms.
+    assert ctx.results["notify_all"].duration_ms < 300
 
 
 # --- 人が読む文への差し込み / interpolation into prose ----------------------

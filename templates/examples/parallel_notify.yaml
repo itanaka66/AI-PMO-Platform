@@ -1,0 +1,42 @@
+name: parallel_notify
+version: "1"
+industry: software
+description: |
+  互いに依存しない通知を同時に送る例。片方がもう片方の結果を待つ理由が
+  ないので、parallel でまとめて実行時間を縮める。
+
+  An example of sending independent notifications at once. Neither waits on
+  the other's result, so `parallel` groups them to cut wall-clock time.
+
+trigger: manual
+
+params:
+  headline: "本日のリリースは予定どおり完了しました。"
+  team_channel: "#project-updates"
+  exec_channel: "#exec-digest"
+
+steps:
+  - id: broadcast
+    parallel:
+      - id: notify_team
+        adapter: slack
+        action: post_message
+        inputs:
+          channel: "{{ params.team_channel }}"
+          text: "{{ params.headline }}"
+      - id: notify_exec
+        adapter: slack
+        action: post_message
+        inputs:
+          channel: "{{ params.exec_channel }}"
+          text: "{{ params.headline }}"
+
+  - id: confirm
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "#pmo"
+      text: |
+        {{ params.team_channel }} と {{ params.exec_channel }} へ同時送信
+        （{{ steps.broadcast.output.count }} 件成功 / {{ steps.broadcast.output.failed }} 件失敗）
