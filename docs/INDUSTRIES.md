@@ -10,6 +10,7 @@
 | 製造 | `manufacturing/line_downtime_triage.yaml` | 生産ライン停止の仕分け |
 | 法務・コンプライアンス | `legal/matter_deadline_triage.yaml` | 案件期限の確認と秘匿特権の扱い |
 | カスタマーサクセス | `customer_success/account_health_triage.yaml` | 顧客アカウントの状況確認 |
+| 財務監査 | `financial_audit/finding_remediation_triage.yaml` | 監査指摘の重要度別振り分け |
 
 ---
 
@@ -168,6 +169,36 @@ own commitment, which risks the relationship itself — "they are stuck" and
 way. Accounts at high risk of churn (renewal approaching and a low health
 score, or an unresolved critical issue) are escalated alone and immediately,
 since a lost renewal cannot be undone by a next-morning digest.
+
+### 財務監査 — 重要度は AI が決めない
+
+他の5つは、AI がデータを読んで自分で分類していました（安全かどうか、
+承認待ちかどうか、緊急かどうか）。**この業界はそこが違います。**
+material weakness（重要な不備）・significant deficiency（有意な不備）・
+control deficiency（統制上の不備）という3段階の重要度は、監査人が
+すでに判定した結果としてデータに入っています。**AI の仕事はその分類を
+そのまま使って宛先を振り分けることだけで、重要度を判定し直すことは
+一切させません。**
+
+重要度がそのまま宛先を決めます。重要な不備は財務諸表の信頼性そのものに
+関わるため、単独・即時に監査委員会へ。有意な不備は、監査チームの是正
+担当者だけでは統制の所有者（業務側の責任者）を動かせないことが多いため、
+経営層へ。統制上の不備は通常の是正フローとして、監査チーム向けにまとめて
+報告します。
+
+The other five all had the model read the data and classify it itself — safe
+or not, blocked or not, urgent or not. **This one is different.** The
+three-tier severity — material weakness, significant deficiency, control
+deficiency — arrives already determined by the auditor. **The model's only
+job is to route based on that given classification; re-judging severity is
+never something it is asked, or permitted, to do.**
+
+Severity alone decides the audience. A material weakness bears on the
+reliability of the financial statements themselves, so it goes alone,
+immediately, to the audit committee. A significant deficiency goes to
+management, since the audit team's own remediation owner often cannot move
+the control's actual business owner by themselves. A control deficiency
+follows the ordinary remediation flow, batched for the audit team.
 
 ---
 

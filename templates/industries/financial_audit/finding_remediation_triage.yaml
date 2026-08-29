@@ -1,0 +1,92 @@
+name: financial_audit_finding_remediation_triage
+version: "1"
+industry: financial_audit
+description: |
+  未是正の監査指摘を確認し、重要度に応じて宛先を分ける。
+  重要な不備は単独・即時に監査委員会へ、有意な不備は経営層へ、
+  統制上の不備は監査チーム向けにまとめて報告する。重要度そのものの
+  判定はしない — データに既にある分類を機械的に振り分けるだけ。
+
+trigger: "schedule:0 8 * * MON"
+
+params:
+  jira_project: AUDIT
+  team_channel: "#audit-remediation"
+  management_channel: "#audit-management"
+  board_channel: "#audit-committee"
+  reporting_deadline: "2026-12-31"
+
+steps:
+  - id: findings
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY duedate ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: audit_finding_triage_ja
+    inputs:
+      today: "{{ run.date }}"
+      reporting_deadline: "{{ params.reporting_deadline }}"
+      findings: "{{ steps.findings.output.items }}"
+    output_format: json
+    output_schema:
+      required: [material_weakness, significant_deficiency, control_deficiency]
+
+  # 重要な不備 (material weakness) は、単独・即時に監査委員会へ。
+  # 財務諸表の信頼性そのものに関わるため、翌週の定例報告まで
+  # まとめて待つと、是正の時間がその分だけ削られる。
+  #
+  # A material weakness is sent alone, immediately, to the audit committee:
+  # it bears on the reliability of the financial statements themselves, and
+  # holding it for the next routine digest only shrinks the time left to
+  # remediate before the reporting deadline.
+  - id: notify_material_weakness
+    for_each: "{{ steps.triage.output.material_weakness }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.board_channel }}"
+      text: |
+        【重要な不備】{{ item.finding }}（{{ item.issue_key }}）
+        報告期日まで残り {{ item.days_until_deadline }} 日
+
+  # 有意な不備は経営層へ。監査チーム内の是正担当者だけでは、
+  # 統制の所有者（業務側の責任者）を動かせないことが多い。
+  #
+  # A significant deficiency goes to management: the audit team's own
+  # remediation owner often cannot move the control's actual business owner
+  # by themselves.
+  - id: notify_significant_deficiency
+    when: "{{ steps.triage.output.significant_deficiency }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.management_channel }}"
+      text: |
+        有意な不備 — 是正状況の確認をお願いします ({{ run.date }})
+
+        {{ steps.triage.output.significant_deficiency }}
+
+  # 統制上の不備は、通常の是正フローとして監査チーム向けに1通へ。
+  - id: notify_control_deficiency
+    when: "{{ steps.triage.output.control_deficiency }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        是正待ちの指摘事項 ({{ run.date }})
+
+        {{ steps.triage.output.control_deficiency }}

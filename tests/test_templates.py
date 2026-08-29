@@ -879,3 +879,89 @@ def test_internal_delays_go_to_the_team_not_the_csm_channel():
 def test_nothing_is_said_when_every_account_is_healthy():
     _, slack = run_account_health(reply=NO_ACCOUNTS_REPLY)
     assert slack.posted == []
+
+
+# --- 財務監査 / financial services and audit ---------------------------------
+
+FINDING_REPLY = json.dumps({
+    "material_weakness": [
+        {"issue_key": "AUDIT-1", "finding": "決算処理の承認統制が機能していない",
+         "days_until_deadline": 14},
+    ],
+    "significant_deficiency": [
+        {"issue_key": "AUDIT-2", "finding": "アクセス権限の定期棚卸が未実施",
+         "owner": "情報システム部長", "days_until_deadline": 30},
+    ],
+    "control_deficiency": [],
+}, ensure_ascii=False)
+
+NO_FINDINGS_REPLY = json.dumps({
+    "material_weakness": [], "significant_deficiency": [], "control_deficiency": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraFindings(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "AUDIT-1", "summary": "決算処理の承認統制"},
+            {"key": "AUDIT-2", "summary": "アクセス権限の棚卸"},
+        ], "count": 2}
+
+
+SearchingJiraFindings.search = action()(SearchingJiraFindings.search)
+
+
+def run_audit(reply=FINDING_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraFindings(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "financial_audit" / "finding_remediation_triage.yaml"))
+    return ctx, slack
+
+
+def test_material_weakness_is_sent_alone_to_the_audit_committee():
+    """財務諸表の信頼性に関わるため、翌週の定例報告まで待たない。"""
+    _, slack = run_audit()
+    board = [m for m in slack.posted if m["channel"] == "#audit-committee"]
+
+    assert len(board) == 1
+    assert "承認統制が機能していない" in board[0]["text"]
+    assert "残り 14 日" in board[0]["text"]
+
+
+def test_significant_deficiency_goes_to_management_not_the_audit_team():
+    """監査チームの是正担当者だけでは、統制の所有者を動かせないことが多い。"""
+    _, slack = run_audit()
+    management = [m for m in slack.posted if m["channel"] == "#audit-management"]
+    team = [m for m in slack.posted if m["channel"] == "#audit-remediation"]
+
+    assert management and "アクセス権限" in management[0]["text"]
+    assert team == []
+
+
+def test_control_deficiencies_are_batched_for_the_audit_team():
+    reply = json.dumps({
+        "material_weakness": [], "significant_deficiency": [],
+        "control_deficiency": [
+            {"issue_key": "AUDIT-3", "finding": "証憑の保管ルール未整備",
+             "next_step": "保管ルールの策定"},
+            {"issue_key": "AUDIT-4", "finding": "承認履歴の記録漏れ",
+             "next_step": "記録様式の見直し"},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_audit(reply=reply)
+    team = [m for m in slack.posted if m["channel"] == "#audit-remediation"]
+
+    assert len(team) == 1
+    assert "AUDIT-3" in team[0]["text"] and "AUDIT-4" in team[0]["text"]
+
+
+def test_nothing_is_said_when_no_finding_needs_attention():
+    _, slack = run_audit(reply=NO_FINDINGS_REPLY)
+    assert slack.posted == []
