@@ -70,6 +70,40 @@ def test_ambiguous_step_kind_is_rejected():
         loader.load_dict(raw)
 
 
+def test_llm_profiles_must_be_a_nonempty_list():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "llm": {"profiles": []}, "prompt_inline": "hi"},
+    ]}
+    with pytest.raises(loader.TemplateError, match="profiles"):
+        loader.load_dict(raw)
+
+
+def test_llm_profile_and_profiles_conflict_is_rejected():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "llm": {"profile": "default", "profiles": ["a", "b"]},
+         "prompt_inline": "hi"},
+    ]}
+    with pytest.raises(loader.TemplateError, match="同時に指定できません"):
+        loader.load_dict(raw)
+
+
+def test_llm_profiles_rejects_duplicates():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "llm": {"profiles": ["ollama", "ollama"]}, "prompt_inline": "hi"},
+    ]}
+    with pytest.raises(loader.TemplateError, match="重複"):
+        loader.load_dict(raw)
+
+
+def test_agent_step_cannot_use_llm_profiles():
+    raw = {"name": "x", "steps": [
+        {"id": "a", "agent": {"tools": ["jira"]},
+         "llm": {"profiles": ["ollama", "gemini"]}, "prompt_inline": "hi"},
+    ]}
+    with pytest.raises(loader.TemplateError, match="エージェント"):
+        loader.load_dict(raw)
+
+
 def test_example_template_loads():
     template = loader.load_file(ROOT / "templates/examples/meeting_minutes.yaml")
     assert template.industry == "software"
@@ -203,6 +237,102 @@ def test_retry_then_success():
     ctx = Engine(adapters, llms).run(loader.load_dict(raw))
     assert ctx.results["post"].status == "success"
     assert ctx.results["post"].attempts == 2
+
+
+# --- 複数の提供元への同時実行 / fan-out to multiple providers ---------------
+
+class FailingProvider(EchoProvider):
+    def complete(self, request):
+        raise RuntimeError("provider unavailable")
+
+
+def test_a_step_can_fan_out_to_multiple_profiles():
+    llms = LLMRegistry()
+    llms.register("ollama", EchoProvider(canned="ollama says hi"))
+    llms.register("gemini", EchoProvider(canned="gemini says hi"))
+    llms.register("openai", EchoProvider(canned="openai says hi"))
+
+    raw = {
+        "name": "compare",
+        "steps": [{
+            "id": "ask", "llm": {"profiles": ["ollama", "gemini", "openai"]},
+            "prompt_inline": "hello",
+        }],
+    }
+    ctx = Engine(AdapterRegistry(), llms).run(loader.load_dict(raw))
+    result = ctx.results["ask"]
+
+    assert result.status == "success"
+    assert result.output["count"] == 3
+    assert result.output["failed"] == 0
+    # 宣言した順を保つ / preserves the declared order
+    assert [r["profile"] for r in result.output["results"]] == ["ollama", "gemini", "openai"]
+    assert result.output["results"][0]["text"] == "ollama says hi"
+
+
+def test_one_provider_failing_does_not_sink_the_others():
+    llms = LLMRegistry()
+    llms.register("ollama", EchoProvider(canned="ollama ok"))
+    llms.register("gemini", FailingProvider())
+
+    raw = {
+        "name": "compare",
+        "steps": [{
+            "id": "ask", "llm": {"profiles": ["ollama", "gemini"]},
+            "prompt_inline": "hello",
+        }],
+    }
+    ctx = Engine(AdapterRegistry(), llms).run(loader.load_dict(raw))
+    result = ctx.results["ask"]
+
+    assert result.status == "success"
+    assert result.output["count"] == 1
+    assert result.output["failed"] == 1
+    by_profile = {r["profile"]: r for r in result.output["results"]}
+    assert by_profile["ollama"] == {"profile": "ollama", "model": "echo",
+                                     "ok": True, "text": "ollama ok"}
+    assert by_profile["gemini"]["ok"] is False
+    assert "provider unavailable" in by_profile["gemini"]["error"]
+
+
+def test_all_providers_failing_marks_the_step_failed():
+    llms = LLMRegistry()
+    llms.register("ollama", FailingProvider())
+    llms.register("gemini", FailingProvider())
+
+    raw = {
+        "name": "compare",
+        "steps": [{
+            "id": "ask", "llm": {"profiles": ["ollama", "gemini"]},
+            "prompt_inline": "hello",
+        }],
+    }
+    with pytest.raises(StepFailure, match="ask"):
+        Engine(AdapterRegistry(), llms).run(loader.load_dict(raw))
+
+
+def test_fanout_parses_json_per_profile_and_checks_the_schema():
+    llms = LLMRegistry()
+    llms.register("a", EchoProvider(canned=json.dumps({"x": 1})))
+    llms.register("b", EchoProvider(canned=json.dumps({"y": 2})))  # missing required "x"
+
+    raw = {
+        "name": "compare",
+        "steps": [{
+            "id": "ask", "llm": {"profiles": ["a", "b"]},
+            "prompt_inline": "hello", "output_format": "json",
+            "output_schema": {"required": ["x"]},
+        }],
+    }
+    ctx = Engine(AdapterRegistry(), llms).run(loader.load_dict(raw))
+    result = ctx.results["ask"]
+
+    # b の欠落はその1件だけを失敗にする。ステップ全体は a が通っているので成功。
+    # b's missing key fails only that entry; the step still succeeds via a.
+    assert result.status == "success"
+    by_profile = {r["profile"]: r for r in result.output["results"]}
+    assert by_profile["a"] == {"profile": "a", "model": "echo", "ok": True, "data": {"x": 1}}
+    assert by_profile["b"]["ok"] is False
 
 
 # --- 人が読む文への差し込み / interpolation into prose ----------------------

@@ -32,6 +32,7 @@ New here? Start with the **[getting-started guide](docs/guide/README.md)**.
 | `overdue_triage` | 遅延状況をエージェントが調査して報告 |
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 |
+| `model_comparison` | 同じプロンプトを複数の AI に同時投稿し、書きぶりを比較 |
 | `construction/site_meeting` | 工程会議 → 是正起票・安全指摘の即時通知 |
 | `marketing/campaign_check` | キャンペーン進行（承認待ちを分けて扱う） |
 
@@ -154,6 +155,26 @@ filtering on an element's own values needs `where`.
 ```
 
 詳しくは [docs/AGENTS.md](docs/AGENTS.md)。
+
+### 複数の提供元を同時に呼ぶ / Multiple providers at once
+
+`profile` の代わりに `profiles` を並びで書くと、同じプロンプトを複数の
+LLM に同時に投げて、結果を並べて比較できる。
+
+```yaml
+- id: draft_minutes
+  llm:
+    profiles: [ollama, gemini, openai]   # ローカル + クラウド2つを同時に
+  prompt: minutes_ja
+```
+
+1つが落ちても他は止まらない。全滅したときだけステップが失敗になる。
+詳しくは [docs/PROVIDERS.md](docs/PROVIDERS.md)。
+
+Write `profiles` instead of `profile` and the same prompt is sent to several
+LLMs at once, with every answer kept for comparison. One provider going down
+does not stop the others; the step only fails when all of them do. See
+[docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ---
 
