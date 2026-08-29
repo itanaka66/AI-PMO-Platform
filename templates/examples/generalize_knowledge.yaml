@@ -1,0 +1,86 @@
+name: generalize_knowledge
+version: "1"
+industry: generic
+description: |
+  社内固有の知見を、社外の別のチームでもそのまま使える一般化された形に
+  書き直し、レビュー待ちの候補として提出する。書き直しと提出は AI が行うが、
+  公開してよいかどうかは必ず人間が判断する — ここでは何も公開されない。
+
+  Rewrites an internal insight into a generalized, anonymized form and
+  submits it as a candidate awaiting review. The model does the rewriting and
+  the submitting; whether it is ever published stays a human's call — nothing
+  here publishes anything.
+
+trigger: manual
+
+params:
+  raw_knowledge: ""
+  review_channel: "#pmo"
+
+steps:
+  # 利用許諾レベルは AI に判断させない。接続設定に紐づく事実であり、
+  # テナントが二次利用不可（A）なら、この先の一般化そのものに意味が無い。
+  # The consent level is a fact tied to the connection, not the model's to
+  # judge. If the tenant disallows secondary use (A), generalizing further
+  # would be pointless regardless of how it turns out.
+  - id: consent
+    adapter: postgres
+    action: consent_level
+
+  - id: generalize
+    when: "{{ steps.consent.output.level }} != 'A'"
+    agent:
+      tools:
+        - qdrant.submit_candidate
+      # 提出そのものが書き込みなので明示的に許可する。それ以外の書き込み
+      # （公開コレクションへの直接書き込みなど）は道具として渡していない
+      # ので、そもそも呼べない。
+      # The submission itself is a write, so it is explicitly allowed. No
+      # other write (e.g. writing straight to the public collection) is
+      # handed to it as a tool, so it cannot be called regardless.
+      allow_writes: true
+      max_iterations: 3
+    llm:
+      profile: default
+      temperature: 0.2
+    prompt_inline: |
+      次の社内の知見を、社外の別のチームでもそのまま使える一般化された
+      知見に書き直してください。
+
+      社内の原文:
+      {{ params.raw_knowledge }}
+
+      必ず守ること:
+      - 会社名・担当者名・プロジェクト名・課題番号・具体的な日付など、
+        どの会社の話かが分かる識別情報はすべて取り除くこと。
+      - 「何が原因で何が起きたか」という構造は残すこと。単なる要約や
+        感想にしないこと。
+      - 一般化の度合いに応じて knowledge_level を 3〜6 の整数で自分で
+        判断すること（3 = まだ具体的な状況が残っている、6 = 業界を
+        問わず通用する原則）。
+      - この提出における利用許諾レベルは「{{ steps.consent.output.level }}」
+        です。submit_candidate を呼ぶときは consent_level にこの値を
+        そのまま渡してください。自分で判断しないこと。
+      - 書き直した結果は submit_candidate で提出すること。これは公開では
+        なく、人間のレビュー待ちに載せるだけです。
+      - 識別情報を取り除くと意味のある知見が残らない場合は、
+        submit_candidate を呼ばずに、その理由を答えてください。
+
+  # 何が届いたかを、実際に届いたときだけ知らせる。
+  # consent が A で generalize が飛ばされたときは、この工程も飛ばされる
+  # （未実行のステップを参照しようとして解決できないため）。
+  #
+  # Only speaks up when something actually arrived. When consent is A and
+  # generalize was skipped, this step is skipped too — referencing a step
+  # that never ran cannot resolve.
+  - id: notify_reviewer
+    adapter: slack
+    action: post_message
+    when: "{{ steps.generalize.output.tool_calls }}"
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.review_channel }}"
+      text: |
+        レビュー待ちの知見候補が1件届きました。
+
+        {{ steps.generalize.output.answer }}

@@ -175,3 +175,15 @@ llm:
 aipmo validate templates/examples/overdue_triage.yaml
 aipmo run templates/examples/overdue_triage.yaml
 ```
+
+書き込みを許可したエージェントの例は
+`templates/examples/generalize_knowledge.yaml`。社内固有の知見を読み、
+識別情報を落として書き直し、`qdrant.submit_candidate` で提出する
+（提出は「レビュー待ちに載せる」ところまでで、公開そのものではない）。
+渡している道具はそれ1つだけで、`allow_writes: true` を明示している。
+
+An example with write access allowed: `templates/examples/generalize_knowledge.yaml`.
+It reads an internal insight, rewrites it with identifying detail stripped
+out, and submits the result via `qdrant.submit_candidate` — submitting only
+means landing in the review queue, not publishing. It is handed exactly that
+one tool, with `allow_writes: true` stated explicitly.

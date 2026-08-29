@@ -34,6 +34,7 @@ New here? Start with the **[getting-started guide](docs/guide/README.md)**.
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 |
 | `model_comparison` | 同じプロンプトを複数の AI に同時投稿し、書きぶりを比較 |
 | `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める |
+| `generalize_knowledge` | 社内知見を匿名化・一般化し、レビュー待ちの候補として提出 |
 | `construction/site_meeting` | 工程会議 → 是正起票・安全指摘の即時通知 |
 | `marketing/campaign_check` | キャンペーン進行（承認待ちを分けて扱う） |
 
@@ -288,6 +289,33 @@ publish cannot be undone if wrong, and that is not a call to hand to something
 that is plausible even when mistaken. Consent level A (no secondary use)
 forces a score of 0 unconditionally, regardless of anything else.
 
+### 一般化はエージェント、公開はやはり人間
+
+社内固有の知見を一般化して候補として提出するところまでは、
+`templates/examples/generalize_knowledge.yaml` がそのままエージェントとして
+動く。識別情報を落とし、構造を残すという書き換えは言語モデルの仕事に
+向くので、ここは既存の `agent` の仕組みをそのまま使っている——新しい
+エンジンの機能は要らなかった。
+
+変わらないもの: エージェントに渡す道具は `qdrant.submit_candidate` だけで、
+`allow_writes: true` を明示しないと呼べない。利用許諾レベルは
+`postgres.consent_level` から取った値をそのままプロンプトへ渡し、
+**AI 自身には判断させない。** 提出は「レビュー待ちに載せる」ところまでで、
+公開そのものは相変わらずここでは起こらない。
+
+Generalizing an internal insight and submitting it as a candidate is now a
+working agent, `templates/examples/generalize_knowledge.yaml`. Stripping
+identifying detail while keeping the structure is exactly the kind of
+rewriting a language model is suited for, so this reuses the existing `agent`
+mechanism as-is — no new engine capability was needed.
+
+What stays the same: the only tool handed to the agent is
+`qdrant.submit_candidate`, and it cannot be called without an explicit
+`allow_writes: true`. The consent level is fetched from
+`postgres.consent_level` and passed into the prompt as a given fact — **not
+something the model decides for itself.** Submitting only ever means landing
+in the review queue; publication still does not happen here.
+
 ### 書き込みは読み取りより厳しく扱う
 
 エージェントに `tools: [jira]` を渡しても課題は作られない。外の世界を変える操作には
@@ -390,8 +418,6 @@ success:
 
 - **コード署名 / code signing** — 未署名の `.exe` は Windows が警告を出す。
   回避策はあるが解決ではない / there are workarounds, but they are not a fix
-- **匿名化・一般化エージェント** — `submit_candidate` は候補を受け取る器であって、
-  一般化そのものは行わない / it accepts candidates but does not generalize
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
 - **上記3業界以外のテンプレート**
 
