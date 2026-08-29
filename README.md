@@ -1,7 +1,12 @@
 # AI-PMO Platform
 
+<a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">AI-PMO
+はじめてのガイド</a> 
+
 PMO 業務のノウハウを「実行可能なテンプレート」として記述し、LLM と外部ツール連携を
 組み合わせて自動実行する基盤。
+
+<a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">AI-PMO Getting Started Guide</a> 
 
 A runtime that encodes PMO know-how as executable templates and runs them by
 combining LLM calls with the tools a team already uses.
