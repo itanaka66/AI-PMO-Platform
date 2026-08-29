@@ -31,6 +31,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from ..knowledge import score_publicability
 from ..llm.embeddings import Embedder
 from .base import Adapter, AdapterError, action
 
@@ -193,19 +194,46 @@ class QdrantAdapter(Adapter):
     def submit_candidate(
         self,
         knowledge: dict[str, Any],
+        knowledge_level: int = 3,
+        consent_level: str | None = None,
         publicability_score: float | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
         """公開候補として提出する。これ自体は公開しない。
 
+        公開可能性スコアは自動で算出する。テンプレート側が数値を用意する
+        必要はない — レビューの並び順を決める下書きの値であって、
+        承認・却下そのものはここでは決まらない。明示的に渡せばそちらが
+        優先される。consent_level は `postgres.consent_level` の結果
+        （A/B/C）をそのまま渡すことを想定している。
+
         Submit a candidate for publication. This does not publish anything.
         The record lands in the private collection tagged for review; a human
         approves it in the promotion workflow, which runs outside any template.
+
+        The publicability score is computed automatically — a template need
+        not supply one. It is a draft value used only to order the review
+        queue; nothing here approves or rejects anything. An explicit value,
+        if given, takes priority. `consent_level` is meant to be passed
+        straight from the result of `postgres.consent_level` (A/B/C).
         """
+        scored = score_publicability(
+            knowledge, knowledge_level=knowledge_level,
+            consent_level=consent_level, tenant=self.tenant,
+        )
+        score = scored.value if publicability_score is None else publicability_score
+
         payload = {
             **knowledge,
             "review_status": "pending",
-            "publicability_score": publicability_score,
+            "knowledge_level": knowledge_level,
+            "publicability_score": score,
+            "publicability_reasons": scored.reasons,
         }
         result = self.upsert([payload], scope=PRIVATE, idempotency_key=idempotency_key)
-        return {**result, "review_status": "pending"}
+        return {
+            **result,
+            "review_status": "pending",
+            "publicability_score": score,
+            "publicability_reasons": scored.reasons,
+        }
