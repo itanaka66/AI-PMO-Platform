@@ -10,6 +10,11 @@
 ;
 ; コンパイル / Compile:
 ;   iscc installer\aipmo.iss
+;
+; 署名する場合 / To sign while compiling ― installer/build.ps1 does this for
+; you automatically when a certificate is configured (see there); calling
+; iscc directly needs both flags:
+;   iscc /DSIGN /Saipmosign="signtool.exe sign ... $f" installer\aipmo.iss
 
 #define AppName "AI-PMO Platform"
 #define AppVersion "0.1.0"
@@ -38,6 +43,19 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 UninstallDisplayIcon={app}\{#AppExeName}
+
+; SIGN が定義されているとき（build.ps1 が証明書を見つけたとき）だけ、
+; インストーラ本体とアンインストーラに署名する。未定義のときは何もしない
+; ので、証明書の無いビルドはこれまでどおり通る。
+;
+; Signs the installer itself and the uninstaller, but only when SIGN is
+; defined (build.ps1 defines it once it has found a certificate). Left
+; undefined, this does nothing, so a build with no certificate still compiles
+; exactly as before.
+#ifdef SIGN
+SignTool=aipmosign
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"

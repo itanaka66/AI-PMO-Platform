@@ -388,8 +388,6 @@ success:
 
 ## 未着手 / Not yet built
 
-- **コード署名 / code signing** — 未署名の `.exe` は Windows が警告を出す。
-  回避策はあるが解決ではない / there are workarounds, but they are not a fix
 - **匿名化・一般化エージェント** — `submit_candidate` は候補を受け取る器であって、
   一般化そのものは行わない / it accepts candidates but does not generalize
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
