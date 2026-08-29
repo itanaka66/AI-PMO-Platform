@@ -710,3 +710,87 @@ def test_internal_fixes_are_batched_not_sent_individually():
 def test_nothing_is_said_when_no_stoppage_needs_attention():
     _, slack = run_downtime(reply=NO_STOPPAGES_REPLY)
     assert slack.posted == []
+
+
+# --- 法務 / legal and compliance ---------------------------------------------
+
+DEADLINE_REPLY = json.dumps({
+    "urgent": [
+        {"issue_key": "LEGAL-1", "matter_name": "契約更新期限", "deadline": "2026-09-01",
+         "days_until_deadline": 2},
+    ],
+    "blocked": [
+        {"issue_key": "LEGAL-2", "matter_name": "係争案件A", "waiting_on": "相手方の回答待ち"},
+    ],
+    "internal": [],
+    "privileged": [
+        {"issue_key": "LEGAL-3", "days_until_deadline": 5},
+    ],
+}, ensure_ascii=False)
+
+NO_MATTERS_REPLY = json.dumps({
+    "urgent": [], "blocked": [], "internal": [], "privileged": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraMatters(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "LEGAL-1", "summary": "契約更新"},
+            {"key": "LEGAL-2", "summary": "係争案件A"},
+            {"key": "LEGAL-3", "summary": "秘匿特権対象案件"},
+        ], "count": 3}
+
+
+SearchingJiraMatters.search = action()(SearchingJiraMatters.search)
+
+
+def run_legal(reply=DEADLINE_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraMatters(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "legal" / "matter_deadline_triage.yaml"))
+    return ctx, slack
+
+
+def test_urgent_deadlines_are_sent_alone_to_the_urgent_channel():
+    """期日を過ぎると法的な効果が生じうる。まとめて翌朝に送らない。"""
+    _, slack = run_legal()
+    urgent = [m for m in slack.posted if m["channel"] == "#legal-urgent"]
+
+    assert len(urgent) == 1
+    assert "契約更新期限" in urgent[0]["text"]
+    assert "残り 2 日" in urgent[0]["text"]
+
+
+def test_matters_blocked_on_the_other_side_are_not_a_chase():
+    """担当者に確認しても、相手方や裁判所は動かせない。"""
+    _, slack = run_legal()
+    blocked = [m for m in slack.posted if "相手方の回答待ち" in m["text"]]
+
+    assert blocked
+    assert blocked[0]["channel"] == "#legal-ops"
+    assert "担当者の手を離れています" in blocked[0]["text"]
+
+
+def test_privileged_matters_go_only_to_the_restricted_channel_without_detail():
+    """秘匿特権の対象は、緊急度に関わらず限定チャンネルへ、詳細を伏せて。"""
+    _, slack = run_legal()
+    privileged = [m for m in slack.posted if m["channel"] == "#legal-privileged"]
+    other_channels_text = "".join(
+        m["text"] for m in slack.posted if m["channel"] != "#legal-privileged")
+
+    assert privileged and "LEGAL-3" in privileged[0]["text"]
+    # 案件名や内容は他のどの通知にも出てこないこと。
+    assert "LEGAL-3" not in other_channels_text
+
+
+def test_nothing_is_said_when_no_matter_needs_attention():
+    _, slack = run_legal(reply=NO_MATTERS_REPLY)
+    assert slack.posted == []
