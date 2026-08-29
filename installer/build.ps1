@@ -1,13 +1,13 @@
-# .exe ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ©ã®ãƒ“ãƒ«ãƒ‰ / Build the .exe installer
+# .exe ƒCƒ“ƒXƒg[ƒ‰‚Ìƒrƒ‹ƒh / Build the .exe installer
 #
 #   installer\build.ps1
 #
-# å‡ºåŠ› / Output: dist\AI-PMO-Setup-0.1.0.exe
+# o—Í / Output: dist\AI-PMO-Setup-0.1.0.exe
 #
-# å¿…è¦ãªã‚‚ã® / Requires:
-#   - Windows (PyInstaller ã¯ã‚¯ãƒ­ã‚¹ã‚³ãƒ³ãƒ‘ã‚¤ãƒ«ã§ããªã„ / it cannot cross-compile)
+# •K—v‚È‚à‚Ì / Requires:
+#   - Windows (PyInstaller ‚ÍƒNƒƒXƒRƒ“ƒpƒCƒ‹‚Å‚«‚È‚¢ / it cannot cross-compile)
 #   - Python 3.10+
-#   - Inno Setup 6 (iscc.exe ãŒ PATH ã«ã‚ã‚‹ã“ã¨ / iscc.exe on PATH)
+#   - Inno Setup 6 (iscc.exe ‚ª PATH ‚É‚ ‚é‚±‚Æ / iscc.exe on PATH)
 
 [CmdletBinding()]
 param([switch]$SkipInno)
@@ -17,38 +17,38 @@ $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 
 try {
-    Write-Host "==> ãƒ“ãƒ«ãƒ‰ç’°å¢ƒã‚’æº–å‚™ã—ã¦ã„ã¾ã™ / Preparing the build environment" -ForegroundColor Cyan
+    Write-Host "==> ƒrƒ‹ƒhŠÂ‹«‚ğ€”õ‚µ‚Ä‚¢‚Ü‚· / Preparing the build environment" -ForegroundColor Cyan
     python -m venv .build-venv
     $py = ".build-venv\Scripts\python.exe"
     & $py -m pip install --upgrade pip --quiet
     & $py -m pip install --quiet ".[cloud,data]" pyinstaller
 
-    Write-Host "==> å®Ÿè¡Œãƒ•ã‚¡ã‚¤ãƒ«ã‚’ä½œæˆã—ã¦ã„ã¾ã™ / Building the executable" -ForegroundColor Cyan
+    Write-Host "==> Àsƒtƒ@ƒCƒ‹‚ğì¬‚µ‚Ä‚¢‚Ü‚· / Building the executable" -ForegroundColor Cyan
     & $py -m PyInstaller --noconfirm --clean installer\aipmo.spec
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
-    Write-Host "==> å‹•ä½œç¢ºèª / Smoke test" -ForegroundColor Cyan
+    Write-Host "==> “®ìŠm”F / Smoke test" -ForegroundColor Cyan
     & "dist\aipmo\aipmo.exe" validate templates\examples\meeting_minutes.yaml
     if ($LASTEXITCODE -ne 0) { throw "Smoke test failed" }
 
     if (-not $SkipInno) {
-        Write-Host "==> ã‚¤ãƒ³ã‚¹ãƒˆãƒ¼ãƒ©ã‚’ä½œæˆã—ã¦ã„ã¾ã™ / Building the installer" -ForegroundColor Cyan
+        Write-Host "==> ƒCƒ“ƒXƒg[ƒ‰‚ğì¬‚µ‚Ä‚¢‚Ü‚· / Building the installer" -ForegroundColor Cyan
         $iscc = Get-Command iscc -ErrorAction SilentlyContinue
         if (-not $iscc) {
-            throw "iscc.exe ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã€‚Inno Setup 6 ã‚’å°å…¥ã—ã¦ãã ã•ã„ / install Inno Setup 6"
+            throw "iscc.exe ‚ªŒ©‚Â‚©‚è‚Ü‚¹‚ñBInno Setup 6 ‚ğ“±“ü‚µ‚Ä‚­‚¾‚³‚¢ / install Inno Setup 6"
         }
         & $iscc.Source installer\aipmo.iss
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
     }
 
     Write-Host ""
-    Write-Host "å®Œäº† / Done: dist\" -ForegroundColor Green
+    Write-Host "Š®—¹ / Done: dist\" -ForegroundColor Green
     Get-ChildItem dist\*.exe | ForEach-Object { Write-Host "  $($_.Name)" }
     Write-Host ""
-    Write-Host "ç½²åã«ã¤ã„ã¦ / On code signing:" -ForegroundColor Yellow
-    Write-Host "  æœªç½²åã® .exe ã¯ SmartScreen ã«è­¦å‘Šã•ã‚Œã¾ã™ã€‚"
+    Write-Host "–¼‚É‚Â‚¢‚Ä / On code signing:" -ForegroundColor Yellow
+    Write-Host "  –¢–¼‚Ì .exe ‚Í SmartScreen ‚ÉŒx‚³‚ê‚Ü‚·B"
     Write-Host "  An unsigned .exe triggers a SmartScreen warning."
-    Write-Host "  é…å¸ƒã™ã‚‹ãªã‚‰ã‚³ãƒ¼ãƒ‰ç½²åè¨¼æ˜æ›¸ã§ã®ç½²åã‚’å¼·ãæ¨å¥¨ã—ã¾ã™ã€‚"
+    Write-Host "  ”z•z‚·‚é‚È‚çƒR[ƒh–¼Ø–¾‘‚Å‚Ì–¼‚ğ‹­‚­„§‚µ‚Ü‚·B"
     Write-Host "  Sign it with a code-signing certificate before distributing:"
     Write-Host "    signtool sign /fd SHA256 /tr <timestamp-url> /td SHA256 dist\*.exe"
 } finally {
