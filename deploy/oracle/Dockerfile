@@ -1,5 +1,5 @@
 # arm64 向け / built for arm64 (Ampere A1).
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
