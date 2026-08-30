@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import sys
+from typing import cast
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,7 @@ from .adapters.milvus import MilvusAdapter
 from .adapters.pgvector import PgVectorAdapter
 from .adapters.postgres import PostgresAdapter
 from .adapters.qdrant import QdrantAdapter
+from .adapters.slack import SlackAdapter
 from .adapters.weaviate import WeaviateAdapter
 from .dsl import loader
 from .engine.agent import ApprovalCallback
@@ -153,8 +155,6 @@ def build_engine(
             adapters.register(JiraAgileAdapter(**spec))
 
         if "slack" in adapter_config:
-            from .adapters.slack import SlackAdapter
-
             adapters.register(SlackAdapter(**dict(adapter_config["slack"])))
 
     if "postgres" in adapter_config:
@@ -223,7 +223,7 @@ def build_engine(
         from .approval import SlackApprover
 
         approve = SlackApprover(
-            slack=adapters.get("slack"),
+            slack=cast(SlackAdapter, adapters.get("slack")),
             channel=channel,
             poll_seconds=float(slack_cfg.get("poll_seconds", 5.0)),
             timeout_seconds=float(slack_cfg.get("timeout_seconds", 300.0)),

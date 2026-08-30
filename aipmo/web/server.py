@@ -65,6 +65,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..dsl import loader
+from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
 
@@ -279,6 +280,7 @@ def create_app(
         except loader.TemplateError as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc)})
 
+        ctx: RunContext | None
         try:
             ctx = engine.run(
                 template,
@@ -292,7 +294,7 @@ def create_app(
             status = "failed"
             error = str(exc)
             if ctx is None:
-                record = {
+                record: dict[str, Any] = {
                     "id": secrets.token_hex(6), "template": template.name,
                     "started_by": role,
                     "status": status, "error": error, "steps": [],

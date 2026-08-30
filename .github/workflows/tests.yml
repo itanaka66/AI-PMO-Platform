@@ -15,4 +15,5 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - run: ruff check aipmo/ tests/
+      - run: mypy aipmo/
       - run: pytest -q

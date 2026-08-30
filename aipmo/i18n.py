@@ -405,9 +405,15 @@ def detect() -> str:
         try:
             import ctypes
 
-            lcid = ctypes.windll.kernel32.GetUserDefaultUILanguage()
+            # windll は Windows 専用で、typeshed の ctypes スタブは実行環境の
+            # プラットフォームに関わらず宣言していない。os.name == "nt" で
+            # 実行時には守られている。
+            # windll is Windows-only; typeshed's ctypes stub omits it
+            # regardless of the platform mypy itself runs on. Guarded at
+            # runtime by os.name == "nt" above.
+            lcid = ctypes.windll.kernel32.GetUserDefaultUILanguage()  # type: ignore[attr-defined]
             buffer = ctypes.create_unicode_buffer(85)
-            ctypes.windll.kernel32.LCIDToLocaleName(lcid, buffer, 85, 0)
+            ctypes.windll.kernel32.LCIDToLocaleName(lcid, buffer, 85, 0)  # type: ignore[attr-defined]
             return normalize(buffer.value)
         except Exception:
             pass

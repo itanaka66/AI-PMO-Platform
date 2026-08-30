@@ -90,7 +90,7 @@ class PgVectorAdapter(VectorStoreAdapter):
             cur.execute(sql, values)
             rows = cur.fetchall()
 
-        items = [
+        items: list[dict[str, Any]] = [
             {"id": str(row[0]), "score": float(row[2]), "payload": dict(row[1] or {})}
             for row in rows
         ]
