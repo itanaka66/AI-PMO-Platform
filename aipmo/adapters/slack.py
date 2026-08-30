@@ -178,6 +178,29 @@ class SlackAdapter(Adapter):
         return self.post_message(text=text, channel=channel, thread_ts=thread_ts)
 
     @action()
+    def get_reactions(self, channel: str, ts: str) -> dict[str, Any]:
+        """指定したメッセージに付いた絵文字リアクションを取得する。
+
+        非同期の承認フロー（Slack 上での承認・却下の合図拾い）のためだけに
+        用意した、最小限の読み取り。反応が1つも無いメッセージでは
+        Slack が `reactions` を返さないので、その場合は空にする。
+
+        A minimal read, built only to pick up a signal for the async approval
+        flow (approve/decline over Slack). Slack omits `reactions` entirely on
+        a message with none, which is treated as empty here.
+        """
+        query = urllib.parse.urlencode({"channel": channel, "timestamp": ts})
+        data = self._call(f"reactions.get?{query}", {})
+        message = data.get("message") or {}
+        reactions = message.get("reactions") or []
+        return {
+            "reactions": [
+                {"name": r.get("name"), "users": r.get("users") or []}
+                for r in reactions
+            ]
+        }
+
+    @action()
     def find_user(self, email: str) -> dict[str, Any]:
         """メールアドレスから利用者を引く / look up a user by email.
 

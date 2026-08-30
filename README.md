@@ -66,7 +66,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 703 件
+pytest                               # 717 件
 ```
 
 ---
@@ -377,6 +377,18 @@ happens when a scheduler or web server, having no interactive terminal, runs
 the step. There is no path where it passes through unattended: a gate with no
 one to approve through it would defeat the point of having one.
 
+`config.yaml` の `approval.slack` を設定すれば、対話端末の代わりに
+Slack が承認の場になる — スケジューラや Web からの実行でも、この
+ゲートを実際に使えるようになる。Slack の Events API は使わず、
+ボットトークンだけで動くポーリングにしている。詳しくは
+[docs/AGENTS.md](docs/AGENTS.md)。
+
+Setting `approval.slack` in `config.yaml` makes Slack the approval venue
+instead of a terminal — so the gate becomes usable from a scheduled or
+web-triggered run too, not just `aipmo run`. It polls rather than using
+Slack's Events API, so it needs nothing beyond the bot token already in use
+elsewhere. See [docs/AGENTS.md](docs/AGENTS.md).
+
 ### 冪等キーはトリガー由来
 
 `run_id` ではなく `meeting_id` を起点にする。同じ会議を再処理しても Jira の
@@ -428,9 +440,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-703 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+717 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-703 tests, aimed at the guarantees and at the failure shapes that look like
+717 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
