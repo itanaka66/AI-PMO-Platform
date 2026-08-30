@@ -15,7 +15,7 @@ Written for people who are not comfortable with a terminal. Pick one.
 
 ## A. Windows インストーラ / Windows installer
 
-1. [AI-PMO-Setup-0.1.3.exe](https://github.com/itanaka66/AI-PMO-Platform/releases/download/v0.1.3/AI-PMO-Setup-0.1.3.exe) をダウンロードする / download it
+1. [AI-PMO-Setup-0.1.3.exe](https://github.com/itanaka66/AI-PMO-Platform/releases/download/v0.1.2/AI-PMO-Setup-0.1.3.exe) をダウンロードする / download it
 2. ダブルクリックする / double-click it
 3. 画面の指示に従う / follow the prompts
 
