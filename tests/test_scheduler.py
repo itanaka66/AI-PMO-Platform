@@ -231,7 +231,6 @@ def build(tmp_path, jobs, start, llm=None):
 
 
 def job_from(templates: str, path) -> Job:
-    from aipmo.dsl import loader
 
     (path / "j.yaml").write_text(templates, encoding="utf-8")
     jobs, _ = discover_jobs(path)
@@ -448,7 +447,6 @@ def test_concurrent_completions_do_not_corrupt_state(tmp_path):
 
 def test_the_trigger_carries_the_scheduled_time(tmp_path, templates):
     """テンプレートから「いつの予定か」を参照できること。"""
-    from aipmo.dsl import loader
 
     seen = {}
 

@@ -163,7 +163,7 @@ def test_the_documented_test_count_matches_reality():
     )
 
     for name in ("README.md", "MANIFEST.md"):
-        for stated in re.findall(r"(\d{3}) ?(?:件|tests)", 
+        for stated in re.findall(r"(\d{3}) ?(?:件|tests)",
                                  (ROOT / name).read_text(encoding="utf-8")):
             # パラメータ化で実数は増えるので、下回っていないことだけ見る。
             # Parametrisation inflates the real number, so only the floor is checked.

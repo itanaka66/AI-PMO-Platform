@@ -507,7 +507,7 @@ def test_a_step_after_the_group_can_reference_any_nested_output():
                                 "b={{ steps.notify_b.output.ok }}"}},
         ],
     }
-    ctx = Engine(adapters, LLMRegistry()).run(loader.load_dict(raw))
+    Engine(adapters, LLMRegistry()).run(loader.load_dict(raw))
 
     summary = [m for m in slack.posted if m["channel"] == "#summary"][0]
     assert "a=True" in summary["text"]
