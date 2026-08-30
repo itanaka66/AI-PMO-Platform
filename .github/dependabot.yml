@@ -1,0 +1,28 @@
+version: 2
+
+updates:
+  # Python 依存 (pyproject.toml) / Python dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # ワークフローで使う GitHub Actions 自体 / the Actions used by the workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+
+  # コンテナのベースイメージ / container base images
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/deploy/generic"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/deploy/oracle"
+    schedule:
+      interval: "weekly"

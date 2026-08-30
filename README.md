@@ -456,6 +456,16 @@ success:
 - 前方参照・ID 重複・不正な cron はロード時に検出される
 - 8言語のガイドとカタログに抜けが無い
 
+push・PR のたびに GitHub Actions で自動実行される
+（[.github/workflows/tests.yml](.github/workflows/tests.yml)）。
+依存ライブラリの更新は Dependabot が週次で提案する
+（[.github/dependabot.yml](.github/dependabot.yml)）。
+
+Run automatically by GitHub Actions on every push and PR
+([.github/workflows/tests.yml](.github/workflows/tests.yml)). Dependency
+updates are proposed weekly by Dependabot
+([.github/dependabot.yml](.github/dependabot.yml)).
+
 ---
 
 ## ドキュメント / Documentation
