@@ -8,6 +8,8 @@ on:
 jobs:
   windows-exe:
     runs-on: windows-latest
+    env:
+      AIPMO_SIGN_CERT_BASE64: ${{ secrets.AIPMO_SIGN_CERT_BASE64 }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,10 +28,8 @@ jobs:
       # unset, this step does nothing and the build proceeds unsigned exactly
       # as before.
       - name: Import the code-signing certificate
-        if: ${{ secrets.AIPMO_SIGN_CERT_BASE64 != '' }}
+        if: ${{ env.AIPMO_SIGN_CERT_BASE64 != '' }}
         shell: pwsh
-        env:
-          AIPMO_SIGN_CERT_BASE64: ${{ secrets.AIPMO_SIGN_CERT_BASE64 }}
         run: |
           $bytes = [Convert]::FromBase64String($env:AIPMO_SIGN_CERT_BASE64)
           $path = Join-Path $env:RUNNER_TEMP "aipmo-sign.pfx"
