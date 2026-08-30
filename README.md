@@ -460,11 +460,15 @@ push・PR のたびに GitHub Actions で自動実行される
 （[.github/workflows/tests.yml](.github/workflows/tests.yml)）。
 依存ライブラリの更新は Dependabot が週次で提案する
 （[.github/dependabot.yml](.github/dependabot.yml)）。
+コード自体の脆弱性は CodeQL が push・PR・週次で静的解析する
+（[.github/workflows/codeql.yml](.github/workflows/codeql.yml)）。
 
 Run automatically by GitHub Actions on every push and PR
 ([.github/workflows/tests.yml](.github/workflows/tests.yml)). Dependency
 updates are proposed weekly by Dependabot
-([.github/dependabot.yml](.github/dependabot.yml)).
+([.github/dependabot.yml](.github/dependabot.yml)). The code itself is
+statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
+([.github/workflows/codeql.yml](.github/workflows/codeql.yml)).
 
 ---
 
