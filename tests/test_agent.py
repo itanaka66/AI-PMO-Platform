@@ -138,6 +138,87 @@ def test_malformed_arguments_are_handed_back():
     assert "valid JSON" in result.tool_calls[0].error
 
 
+# --- 4段階の輪 / the four-phase loop ----------------------------------------
+#
+# run_agent は RECOGNIZE → DECIDE → ACT → OBSERVE を繰り返す。ここでは
+# その各段階を担う関数を個別に確かめる — 輪全体のふるまいは他のテストが
+# すでに確認している。
+#
+# run_agent repeats RECOGNIZE → DECIDE → ACT → OBSERVE. These tests check
+# each phase's own function directly; the loop's overall behaviour is already
+# covered elsewhere in this file.
+
+def test_recognize_request_carries_the_system_and_user_messages():
+    from aipmo.engine.agent import _recognize_request
+
+    messages = _recognize_request("あなたは PMO です", "調べて")
+
+    assert messages == [
+        {"role": "system", "content": "あなたは PMO です"},
+        {"role": "user", "content": "調べて"},
+    ]
+
+
+def test_recognize_request_omits_the_system_message_when_none_is_given():
+    from aipmo.engine.agent import _recognize_request
+
+    messages = _recognize_request(None, "調べて")
+
+    assert messages == [{"role": "user", "content": "調べて"}]
+
+
+def test_decide_reads_a_tool_call_as_wanting_to_act():
+    from aipmo.engine.agent import _decided_to_act
+
+    assert _decided_to_act(calls("jira__find_overdue", {"project": "PROJ"})) is True
+
+
+def test_decide_reads_no_tool_call_as_the_answer_having_arrived():
+    from aipmo.engine.agent import _decided_to_act
+
+    assert _decided_to_act(says("遅延はありません")) is False
+
+
+def test_act_runs_the_tool_and_returns_its_record():
+    from aipmo.engine.agent import _act
+
+    adapters = registry()
+    box = ToolBox(adapters, AgentSpec(tools=["jira"]))
+    call = ToolCall(id="c1", name="jira__find_overdue", arguments={"project": "PROJ"})
+
+    record = _act(box, call)
+
+    assert record.ok is True
+    assert record.name == "jira__find_overdue"
+
+
+def test_observe_shapes_a_successful_record_as_a_tool_message():
+    from aipmo.engine.agent import ToolRecord, _observe
+
+    call = ToolCall(id="c1", name="jira__find_overdue", arguments={})
+    record = ToolRecord(name="jira__find_overdue", arguments={}, ok=True,
+                        result={"count": 0})
+
+    message = _observe(call, record)
+
+    assert message["role"] == "tool"
+    assert message["tool_call_id"] == "c1"
+    assert "count" in message["content"]
+
+
+def test_observe_shapes_a_failed_record_as_an_error_payload():
+    from aipmo.engine.agent import ToolRecord, _observe
+
+    call = ToolCall(id="c1", name="jira__find_overdue", arguments={})
+    record = ToolRecord(name="jira__find_overdue", arguments={}, ok=False,
+                        error="project が足りません")
+
+    message = _observe(call, record)
+
+    assert message["role"] == "tool"
+    assert "project が足りません" in message["content"]
+
+
 # --- 止まること / stopping --------------------------------------------------
 
 def test_iteration_limit_stops_the_loop():

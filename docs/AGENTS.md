@@ -38,6 +38,42 @@ steps:
 
 ---
 
+## 中で何が起きているか / What happens inside
+
+`aipmo/engine/agent.py` の `run_agent` は、次の4段階を道具を呼ばなくなるまで
+繰り返します。
+
+`run_agent` in `aipmo/engine/agent.py` repeats four phases until the model
+stops calling tools:
+
+| 段階 | すること | コード上の名前 |
+|---|---|---|
+| ① RECOGNIZE 認識 | ここまでの会話履歴をモデルに渡す | `_recognize` |
+| ② DECIDE 判断 | 道具を呼ぶか、答えを返すかを応答から読み取る | `_decided_to_act` |
+| ③ ACT 行動 | 呼ぶと決まった道具を実際に実行する | `_act` |
+| ④ OBSERVE 観測 | 結果を会話履歴に積み、続けるか終えるかを決める | `_observe` |
+
+②で「道具を呼ばない」と判断したときだけ輪を抜け、それ以外は④の結果を
+持って①に戻ります。これは新しい仕組みではなく、以前からの動きを
+4つの名前で明示しただけです — 挙動は変わっていません。
+
+The loop is left only when ② finds no tool call; otherwise ④'s outcome
+carries back into the next ①. This is not new behaviour — it names four
+phases that were already happening, without changing what they do.
+
+```
+ユーザー要求
+     │
+     ▼
+① RECOGNIZE ──▶ ② DECIDE ──「答えが出た」──▶ 完了・回答 ──▶ ユーザー
+     ▲                │
+     │           「道具を呼ぶ」
+     │                ▼
+     └────── ④ OBSERVE ◀── ③ ACT
+```
+
+---
+
 ## 許可の設計 / How permission works
 
 ### 道具は必ず列挙する
