@@ -78,6 +78,14 @@ RECOGNIZE_RETRY_BASE_SECONDS = 1.0
 # succeed gets retried verbatim until the iteration ceiling is hit.
 REPEATED_FAILURE_THRESHOLD = 2
 
+# ④ OBSERVE が「同じ道具に同じ引数を連続して呼んでいる」と見なす回数。
+# 失敗が続く場合だけでなく、成功が続いていても新しい情報を得ていない
+# （足踏みしている）ことがある。
+# How many consecutive identical calls OBSERVE treats as worth flagging —
+# not only when they keep failing, but also when they keep succeeding
+# without moving the work forward.
+REPEATED_CALL_THRESHOLD = REPEATED_FAILURE_THRESHOLD
+
 
 class AgentError(Exception):
     pass
@@ -185,6 +193,22 @@ class ToolBox:
 
     def definitions(self) -> list[dict[str, Any]]:
         return list(self._definitions)
+
+    def writes_tool(self, name: str) -> bool:
+        """この道具が外の世界を変える（書き込み系の）道具かどうか。
+
+        並行実行の範囲を決めるのに使う — 読むだけの道具同士は競合しないが、
+        書き込み系はアダプタ内部の状態やリモート側で競合しうる。
+
+        Used to decide the scope of concurrent execution: read-only tools
+        cannot conflict with one another, but write actions can race, either
+        against adapter-internal state or on the remote side.
+        """
+        entry = self._allowed.get(name)
+        if entry is None:
+            return False
+        adapter_name, action_name = entry
+        return self.adapters.get(adapter_name).writes(action_name)
 
     def call(self, call: ToolCall) -> ToolRecord:
         if call.name not in self._allowed:
@@ -307,13 +331,14 @@ def run_agent(
                 input_tokens=used_in, output_tokens=used_out,
             )
 
-        # ③ ACT — この周に呼ぶと決まった道具を並行して実行する。
-        # 互いに独立した道具呼び出しを1つずつ待つ理由はない。
-        # Run this round's tool calls concurrently — nothing requires waiting
-        # on one independent tool call before starting the next.
-        batch = _act_batch(toolbox, response.tool_calls)
+        # ③ ACT — この周に呼ぶと決まった道具を実行する。読み取り系は並行に、
+        # 書き込み系は互いに順番に（cancel_check も見ながら）実行する。
+        # Run this round's tool calls: reads concurrently, writes one at a
+        # time relative to each other, watching cancel_check as it goes.
+        batch = _act_batch(toolbox, response.tool_calls, cancel_check)
 
         fatal_record: ToolRecord | None = None
+        was_cancelled = False
         for call, record in zip(response.tool_calls, batch):
             records.append(record)
             # ④ OBSERVE — 結果を、次の①で読める形にして積む。
@@ -321,6 +346,14 @@ def run_agent(
             messages.append(_observe(call, record))
             logger.info("agent tool %s ok=%s fatal=%s",
                        record.name, record.ok, record.fatal)
+
+            if record.error == CANCELLED_TOOL_ERROR:
+                # キャンセルされた呼び出しは、実際に失敗したわけではない。
+                # 致命的判定にも繰り返し失敗判定にも数えない。
+                # A cancelled call did not actually fail — it should not
+                # count toward the fatal or repeated-failure checks below.
+                was_cancelled = True
+                continue
 
             if record.fatal and fatal_record is None:
                 fatal_record = record
@@ -341,6 +374,13 @@ def run_agent(
                     stopped_because="repeated_failure",
                     input_tokens=used_in, output_tokens=used_out,
                 )
+
+        if was_cancelled:
+            return AgentResult(
+                answer=_last_text(messages), iterations=iteration,
+                tool_calls=records, stopped_because="cancelled",
+                input_tokens=used_in, output_tokens=used_out,
+            )
 
         if fatal_record is not None:
             # ④ OBSERVE — 想定外の失敗（バグ・認証切れ・接続断）は、
@@ -404,13 +444,17 @@ def _recognize(
 
     プロバイダ呼び出しは一過性の理由（レート制限、瞬断）で落ちることがある。
     そのまま伝播させると、ここまでの道具呼び出しの積み重ねごと実行全体を
-    失うので、指数バックオフで数回まで再試行する。
+    失うので、指数バックオフで数回まで再試行する。ただし認証エラーや
+    不正なリクエストのような恒久的な失敗は、待っても直らないので
+    即座に諦める。
 
     Hands the conversation so far and the available tools to the model and
     returns its response. A provider call can fail for transient reasons
     (rate limits, a network blip); propagating that immediately would throw
     away every tool call made so far, so this retries a few times with
-    exponential backoff before giving up.
+    exponential backoff before giving up. A permanent failure — bad
+    credentials, a malformed request — will not fix itself by waiting, so
+    that is raised immediately instead of being retried.
     """
     last_error: Exception | None = None
     for attempt in range(1, RECOGNIZE_MAX_ATTEMPTS + 1):
@@ -421,6 +465,9 @@ def _recognize(
             )
         except Exception as exc:
             last_error = exc
+            if not _is_transient_error(exc):
+                logger.warning("agent recognize failed permanently: %s", exc)
+                break
             if attempt == RECOGNIZE_MAX_ATTEMPTS:
                 break
             delay = RECOGNIZE_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
@@ -431,10 +478,61 @@ def _recognize(
             time.sleep(delay)
 
     raise AgentError(
-        f"agent: モデルへの問い合わせが {RECOGNIZE_MAX_ATTEMPTS} 回とも失敗しました "
-        f"/ the provider call failed {RECOGNIZE_MAX_ATTEMPTS} times in a row: "
-        f"{type(last_error).__name__}: {last_error}"
+        f"agent: モデルへの問い合わせが失敗しました "
+        f"/ the provider call failed: {type(last_error).__name__}: {last_error}"
     ) from last_error
+
+
+# HTTP ステータスを持つ例外のうち、待っても直らないもの。
+# 4xx はおおむね「リクエストの側が悪い」— 鍵、権限、リクエスト内容。
+# 429（レート制限）だけは例外で、待てば直る。
+# HTTP-status-bearing exceptions that will not fix themselves by waiting.
+# 4xx generally means the request itself was wrong — credentials,
+# permissions, malformed content. 429 (rate limit) is the one exception,
+# since that does resolve by waiting.
+_PERMANENT_STATUS_CODES = frozenset({400, 401, 403, 404, 422})
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    """一過性の失敗（再試行する価値がある）かどうかを判定する。
+
+    Decides whether a failure is transient — worth retrying — or permanent.
+    """
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        return status not in _PERMANENT_STATUS_CODES
+
+    try:
+        import openai
+    except ImportError:
+        openai = None  # type: ignore[assignment]
+
+    if openai is not None:
+        permanent = (
+            openai.AuthenticationError, openai.PermissionDeniedError,
+            openai.BadRequestError, openai.NotFoundError,
+            openai.UnprocessableEntityError, openai.ConflictError,
+        )
+        if isinstance(exc, permanent):
+            return False
+        transient = (
+            openai.RateLimitError, openai.APIConnectionError,
+            openai.APITimeoutError, openai.InternalServerError,
+        )
+        if isinstance(exc, transient):
+            return True
+
+    if isinstance(exc, (TimeoutError, ConnectionError, OSError)):
+        return True
+
+    # 種類の分からない例外は、実運用でよく見るネットワーク系だとは
+    # 断定できない。再試行に価値があるとは限らないので、既定は
+    # 「恒久的」— 3回無駄に待たせるより、早く諦めて伝える方が良い。
+    # An exception of an unrecognized kind cannot be assumed to be one of
+    # the usual network hiccups. The default leans permanent — surfacing it
+    # promptly beats spending three rounds of backoff on something waiting
+    # will not fix.
+    return False
 
 
 def _decided_to_act(response: Any) -> bool:
@@ -456,23 +554,69 @@ def _act(toolbox: "ToolBox", call: ToolCall) -> ToolRecord:
     return toolbox.call(call)
 
 
-def _act_batch(toolbox: "ToolBox", calls: list[ToolCall]) -> list[ToolRecord]:
-    """③ ACT — この周の道具呼び出しを並行して実行する。
+CANCELLED_TOOL_ERROR = "cancelled before this tool call ran"
 
-    互いに独立した呼び出しを直列に待つ理由はない。結果は `calls` と
-    同じ順で返す — 会話履歴に積む順序を、完了した順ではなく呼ばれた順に
-    保つため。
 
-    Runs this round's tool calls concurrently — nothing requires waiting on
-    one independent call before starting the next. Results come back in the
-    same order as `calls`, not completion order, so the conversation history
-    stays in the order the calls were made.
+def _cancelled_record(call: ToolCall) -> ToolRecord:
+    return ToolRecord(name=call.name, arguments=call.arguments, ok=False,
+                      error=CANCELLED_TOOL_ERROR)
+
+
+def _act_batch(
+    toolbox: "ToolBox",
+    calls: list[ToolCall],
+    cancel_check: "Callable[[], bool] | None" = None,
+) -> list[ToolRecord]:
+    """③ ACT — この周の道具呼び出しを実行する。
+
+    読み取り系の道具どうしは互いに独立しているので並行に走らせる。
+    書き込み系は、アダプタ内部の状態やリモート側で競合しうるので、
+    書き込みどうしは順番に実行する（読み取りとは並行して進む）。
+    結果は `calls` と同じ順で返し、会話履歴の順序を呼ばれた順に保つ。
+
+    途中で `cancel_check` が True を返したら、まだ実行していない
+    書き込み呼び出しは実行せず、キャンセル済みの記録を返す。
+
+    Read-only tool calls are independent of one another, so they run
+    concurrently. Write actions can race — against adapter-internal state or
+    on the remote side — so writes run one at a time relative to each other
+    (while still overlapping with the concurrent reads). Results come back
+    in the same order as `calls`, keeping the conversation history in call
+    order.
+
+    If `cancel_check` starts returning True partway through, any write call
+    not yet started is skipped and recorded as cancelled instead of run.
     """
     if len(calls) <= 1:
+        if calls and cancel_check is not None and cancel_check():
+            return [_cancelled_record(calls[0])]
         return [_act(toolbox, call) for call in calls]
 
-    with ThreadPoolExecutor(max_workers=len(calls)) as pool:
-        return list(pool.map(lambda call: _act(toolbox, call), calls))
+    write_flags = [toolbox.writes_tool(call.name) for call in calls]
+    read_indices = [i for i, w in enumerate(write_flags) if not w]
+    write_indices = [i for i, w in enumerate(write_flags) if w]
+
+    results: list[ToolRecord | None] = [None] * len(calls)
+
+    def run_writes() -> None:
+        for i in write_indices:
+            if cancel_check is not None and cancel_check():
+                for j in write_indices[write_indices.index(i):]:
+                    results[j] = _cancelled_record(calls[j])
+                return
+            results[i] = _act(toolbox, calls[i])
+
+    if not read_indices:
+        run_writes()
+        return results  # type: ignore[return-value]
+
+    with ThreadPoolExecutor(max_workers=len(read_indices)) as pool:
+        futures = {pool.submit(_act, toolbox, calls[i]): i for i in read_indices}
+        run_writes()
+        for future, i in futures.items():
+            results[i] = future.result()
+
+    return results  # type: ignore[return-value]
 
 
 def _observe(call: ToolCall, record: ToolRecord) -> dict[str, Any]:
@@ -547,17 +691,27 @@ def _is_repeated_failure(records: list[ToolRecord]) -> bool:
 def _reflect(records: list[ToolRecord]) -> str | None:
     """④ OBSERVE の反省 — 生の結果を積むだけでなく、その周を短く評価する。
 
-    今のところ見るのは「同じ失敗があと1回続いたら打ち切られる」状態か
-    どうかだけ。道具の結果そのものは既に _observe で各メッセージに
-    入っているので、ここで繰り返す必要はない — 足りないのはモデルへの
-    メタな所見（このままでは輪が止まる、という気づき）であって、結果の
-    再掲ではない。
+    2つのことを見る:
+      - 同じ失敗があと1回続いたら打ち切られる状態か
+        （直らない失敗を上限まで繰り返させないための警告）
+      - 同じ呼び出しが成功し続けているのに、進捗が止まっていないか
+        （成功しているからといって、目的に近づいているとは限らない）
 
-    Beyond appending raw results, this gives the round a short assessment.
-    For now it only watches for being one identical failure away from the
-    repeated-failure cutoff. The tool result itself is already in each
-    message via _observe; what was missing was a meta-level note to the
-    model — that it is about to be cut off — not a restatement of the result.
+    道具の結果そのものは既に _observe で各メッセージに入っているので、
+    ここで繰り返す必要はない — 足りないのはモデルへのメタな所見であって、
+    結果の再掲ではない。
+
+    Beyond appending raw results, this gives the round a short assessment,
+    watching for two things:
+      - being one identical failure away from the repeated-failure cutoff
+        (so a call that cannot succeed does not get retried until the
+        ceiling), and
+      - the same call succeeding repeatedly without the work moving forward
+        (success is not proof of progress).
+
+    The tool result itself is already in each message via _observe; what
+    was missing was a meta-level note to the model, not a restatement of
+    the result.
     """
     threshold = REPEATED_FAILURE_THRESHOLD
     if threshold < 2 or len(records) < threshold - 1:
@@ -565,22 +719,35 @@ def _reflect(records: list[ToolRecord]) -> str | None:
 
     tail = records[-(threshold - 1):]
     latest = tail[-1]
-    if latest.ok:
-        return None
-    on_the_brink = all(
-        not r.ok and r.name == latest.name and r.arguments == latest.arguments
+    same_call = all(
+        r.name == latest.name and r.arguments == latest.arguments
         for r in tail
     )
-    if not on_the_brink:
+    if not same_call:
         return None
 
+    if not latest.ok:
+        if not all(not r.ok for r in tail):
+            return None
+        return (
+            f"[OBSERVE] '{latest.name}' はこの引数で {threshold - 1} 回連続して"
+            f"失敗しています。もう一度同じ引数で呼ぶと打ち切られます — 引数を"
+            f"変えるか、別の道具を検討してください。"
+            f" / '{latest.name}' has failed {threshold - 1} time(s) in a row "
+            f"with these exact arguments. Calling it again unchanged will end "
+            f"this run — change the arguments or try a different tool."
+        )
+
+    if not all(r.ok for r in tail):
+        return None
     return (
-        f"[OBSERVE] '{latest.name}' はこの引数で {threshold - 1} 回連続して"
-        f"失敗しています。もう一度同じ引数で呼ぶと打ち切られます — 引数を"
-        f"変えるか、別の道具を検討してください。"
-        f" / '{latest.name}' has failed {threshold - 1} time(s) in a row with "
-        f"these exact arguments. Calling it again unchanged will end this run "
-        f"— change the arguments or try a different tool."
+        f"[OBSERVE] '{latest.name}' をこの引数で {threshold - 1} 回連続して"
+        f"呼び、同じ結果を得ています。新しい情報は増えていない可能性が"
+        f"あります — 目的に対して次に何を確かめるべきか考え直してください。"
+        f" / '{latest.name}' has been called {threshold - 1} time(s) in a row "
+        f"with these exact arguments, returning the same kind of result each "
+        f"time. This may not be adding new information — reconsider what "
+        f"would actually move the goal forward before calling it again."
     )
 
 
