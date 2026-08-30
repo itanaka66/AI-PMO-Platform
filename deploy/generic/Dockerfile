@@ -1,7 +1,7 @@
 # どのクラウドの x86_64 / arm64 でも動く / works on x86_64 or arm64, any cloud.
 # python:3.12-slim はマルチアーキテクチャ対応なので、書き換え不要。
 # python:3.12-slim is a multi-arch image, so this needs no per-provider change.
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
