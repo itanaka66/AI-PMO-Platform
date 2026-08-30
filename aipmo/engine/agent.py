@@ -46,8 +46,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from ..adapters.base import AdapterError, AdapterRegistry
 from ..dsl.schema import AgentSpec
@@ -58,6 +60,23 @@ logger = logging.getLogger("aipmo.agent")
 # 道具の結果をそのままモデルに返すと、長い出力で文脈を食い潰す。
 # Returning a whole tool result can exhaust the context on one long output.
 RESULT_CHAR_LIMIT = 6000
+
+# ① RECOGNIZE がプロバイダ呼び出しで失敗したときの再試行回数と待ち時間。
+# ネットワーク瞬断やレート制限は一過性のことが多く、1回失敗しただけで
+# 実行全体を落とすのは惜しい。
+# Retries and backoff for a failed provider call during RECOGNIZE. A network
+# blip or rate limit is often transient; failing the whole run on one error
+# throws away work unnecessarily.
+RECOGNIZE_MAX_ATTEMPTS = 3
+RECOGNIZE_RETRY_BASE_SECONDS = 1.0
+
+# ④ OBSERVE が「同じ道具に同じ引数で連続して失敗している」と見なす回数。
+# 到達したら② DECIDE 側で輪を止める。モデルに任せると、直らない失敗を
+# 何度も繰り返して上限まで回し続けることがある。
+# How many consecutive identical-and-failing calls OBSERVE tolerates before
+# DECIDE cuts the loop short. Left to the model alone, a call that cannot
+# succeed gets retried verbatim until the iteration ceiling is hit.
+REPEATED_FAILURE_THRESHOLD = 2
 
 
 class AgentError(Exception):
@@ -73,6 +92,14 @@ class ToolRecord:
     ok: bool
     result: Any = None
     error: str | None = None
+    # AdapterError（引数が悪い等、モデルが直せる見込みがある）と区別するため。
+    # 想定外の例外は「引数を変えれば直る」種類ではないことが多く、
+    # そのまま繰り返させても意味がない。
+    # Distinguished from AdapterError (a bad-argument sort of failure the model
+    # can plausibly fix). An unexpected exception is usually not the kind that
+    # different arguments would fix, so letting the loop keep retrying it
+    # blindly does not help.
+    fatal: bool = False
 
 
 @dataclass
@@ -183,9 +210,23 @@ class ToolBox:
         except AdapterError as exc:
             return ToolRecord(name=call.name, arguments=call.arguments,
                               ok=False, error=str(exc))
-        except Exception as exc:
+        except TypeError as exc:
+            # 必須引数の不足・型違いなど、呼び出しの形が悪かっただけ。
+            # AdapterError と同様、引数を直せば通る見込みがある。
+            # A missing or mistyped argument — the call's shape was wrong.
+            # Like AdapterError, fixable by sending different arguments.
             return ToolRecord(name=call.name, arguments=call.arguments,
                               ok=False, error=f"{type(exc).__name__}: {exc}")
+        except Exception as exc:
+            # AdapterError でも TypeError でもないもの（接続断、認証切れ、
+            # バグ）は、引数を変えて呼び直しても直らない見込みが高いので
+            # 致命的として扱う。
+            # Anything else (a dropped connection, expired auth, a bug) is
+            # unlikely to be fixed by retrying with different arguments, so
+            # it is marked fatal.
+            return ToolRecord(name=call.name, arguments=call.arguments,
+                              ok=False, error=f"{type(exc).__name__}: {exc}",
+                              fatal=True)
 
         return ToolRecord(name=call.name, arguments=call.arguments,
                           ok=True, result=result)
@@ -199,19 +240,52 @@ def run_agent(
     system: str | None = None,
     temperature: float = 0.2,
     max_tokens: int = 4096,
+    cancel_check: "Callable[[], bool] | None" = None,
 ) -> AgentResult:
+    """`cancel_check` — 外から中断したいときに渡す。呼ぶたびに問い合わせ、
+    True が返ったらその時点で輪を抜ける。長時間の道具呼び出しの合間に
+    ユーザーが止められる経路が無いと、実行が終わるまで待つしかなくなる。
+
+    `cancel_check`, when given, is polled at points where stopping early is
+    safe; returning True ends the loop there. Without an external stop path,
+    a caller has no way to interrupt a run short of killing the process.
+    """
     toolbox = ToolBox(adapters, spec)
     messages = _recognize_request(system, prompt)
 
     records: list[ToolRecord] = []
     used_in, used_out = 0, 0
 
+    def cancelled() -> bool:
+        return cancel_check is not None and cancel_check()
+
     for iteration in range(1, spec.max_iterations + 1):
+        if cancelled():
+            return AgentResult(
+                answer=_last_text(messages), iterations=iteration,
+                tool_calls=records, stopped_because="cancelled",
+                input_tokens=used_in, output_tokens=used_out,
+            )
+
         # ① RECOGNIZE — ここまでの文脈をそのままモデルに渡す。
         # Hand everything gathered so far to the model as-is.
         response = _recognize(provider, messages, toolbox, temperature, max_tokens)
         used_in += response.input_tokens or 0
         used_out += response.output_tokens or 0
+
+        # トークン上限は、分かった直後（③ ACT で道具を呼んで無駄にする前）
+        # に見る。輪の終わりまで待つと、上限超過に気づく前に1周分の道具
+        # 呼び出しを使い切ってしまう。
+        # The token ceiling is checked as soon as it is known — before ACT
+        # spends a round of tool calls — rather than at the end of the loop,
+        # where a full round would already have run before the overage
+        # was noticed.
+        if used_in + used_out >= spec.max_tokens_total:
+            return AgentResult(
+                answer=response.text, iterations=iteration, tool_calls=records,
+                stopped_because="token_limit",
+                input_tokens=used_in, output_tokens=used_out,
+            )
 
         # ② DECIDE — 道具を呼ぶか、答えを返すかは応答そのものが示す。
         # The response itself says whether it wants a tool or has an answer.
@@ -226,24 +300,74 @@ def run_agent(
 
         messages.append(_assistant_turn(response))
 
-        for call in response.tool_calls:
-            # ③ ACT — 呼ぶと決まった道具を実際に実行する。
-            # Actually run whichever tool the model asked for.
-            record = _act(toolbox, call)
+        if cancelled():
+            return AgentResult(
+                answer=_last_text(messages), iterations=iteration,
+                tool_calls=records, stopped_because="cancelled",
+                input_tokens=used_in, output_tokens=used_out,
+            )
+
+        # ③ ACT — この周に呼ぶと決まった道具を並行して実行する。
+        # 互いに独立した道具呼び出しを1つずつ待つ理由はない。
+        # Run this round's tool calls concurrently — nothing requires waiting
+        # on one independent tool call before starting the next.
+        batch = _act_batch(toolbox, response.tool_calls)
+
+        fatal_record: ToolRecord | None = None
+        for call, record in zip(response.tool_calls, batch):
             records.append(record)
             # ④ OBSERVE — 結果を、次の①で読める形にして積む。
             # Feed the result back in a shape the next RECOGNIZE can read.
             messages.append(_observe(call, record))
-            logger.info("agent tool %s ok=%s", record.name, record.ok)
+            logger.info("agent tool %s ok=%s fatal=%s",
+                       record.name, record.ok, record.fatal)
 
-        if used_in + used_out >= spec.max_tokens_total:
-            # ④ OBSERVE — 続けるかどうかの判定も観測の一部。
-            # Whether to continue is also part of what OBSERVE decides.
+            if record.fatal and fatal_record is None:
+                fatal_record = record
+
+            # ② DECIDE の一部 — 同じ道具に同じ引数で連続して失敗している場合、
+            # モデルに任せず輪を止める。直らない失敗を上限まで繰り返させない。
+            # Part of DECIDE: a call that keeps failing identically is cut
+            # short rather than left to repeat until the iteration ceiling.
+            if _is_repeated_failure(records):
+                return AgentResult(
+                    answer=(
+                        f"道具 '{record.name}' が同じ引数で {REPEATED_FAILURE_THRESHOLD} "
+                        f"回連続して失敗したため中断しました / stopped after "
+                        f"'{record.name}' failed identically "
+                        f"{REPEATED_FAILURE_THRESHOLD} times in a row: {record.error}"
+                    ),
+                    iterations=iteration, tool_calls=records,
+                    stopped_because="repeated_failure",
+                    input_tokens=used_in, output_tokens=used_out,
+                )
+
+        if fatal_record is not None:
+            # ④ OBSERVE — 想定外の失敗（バグ・認証切れ・接続断）は、
+            # モデルに次を選ばせても直らない見込みが高いのでここで止める。
+            # An unexpected failure (a bug, expired auth, a dropped
+            # connection) is unlikely to be fixed by letting the model try
+            # again, so the loop ends here instead of continuing regardless.
             return AgentResult(
-                answer=response.text, iterations=iteration, tool_calls=records,
-                stopped_because="token_limit",
+                answer=(
+                    f"道具 '{fatal_record.name}' が回復不能なエラーで失敗した"
+                    f"ため中断しました / stopped after '{fatal_record.name}' "
+                    f"failed with an unrecoverable error: {fatal_record.error}"
+                ),
+                iterations=iteration, tool_calls=records,
+                stopped_because="fatal_tool_failure",
                 input_tokens=used_in, output_tokens=used_out,
             )
+
+        # ④ OBSERVE の反省 — この周の結果が目的の助けになっているかを見て、
+        # 次の① RECOGNIZE に短い所見を渡す。結果をただ積むだけでは、
+        # モデルは「あと一歩で打ち切られる」ことに気づけない。
+        # OBSERVE's reflection: a short note on whether this round helped,
+        # fed into the next RECOGNIZE. Without it, the model has no signal
+        # that it is one repeated failure away from being cut off.
+        note = _reflect(records)
+        if note:
+            messages.append({"role": "user", "content": note})
 
     # 上限に達した。途中で打ち切ったことを隠さない。
     # 「終わった」と「打ち切った」を同じ顔で返すと、読む側が判断を誤る。
@@ -278,13 +402,39 @@ def _recognize(
 ) -> Any:
     """① RECOGNIZE — 会話履歴と使える道具の一覧をモデルに渡し、応答を得る。
 
+    プロバイダ呼び出しは一過性の理由（レート制限、瞬断）で落ちることがある。
+    そのまま伝播させると、ここまでの道具呼び出しの積み重ねごと実行全体を
+    失うので、指数バックオフで数回まで再試行する。
+
     Hands the conversation so far and the available tools to the model and
-    returns its response.
+    returns its response. A provider call can fail for transient reasons
+    (rate limits, a network blip); propagating that immediately would throw
+    away every tool call made so far, so this retries a few times with
+    exponential backoff before giving up.
     """
-    return provider.converse(
-        messages, tools=toolbox.definitions(),
-        temperature=temperature, max_tokens=max_tokens,
-    )
+    last_error: Exception | None = None
+    for attempt in range(1, RECOGNIZE_MAX_ATTEMPTS + 1):
+        try:
+            return provider.converse(
+                messages, tools=toolbox.definitions(),
+                temperature=temperature, max_tokens=max_tokens,
+            )
+        except Exception as exc:
+            last_error = exc
+            if attempt == RECOGNIZE_MAX_ATTEMPTS:
+                break
+            delay = RECOGNIZE_RETRY_BASE_SECONDS * (2 ** (attempt - 1))
+            logger.warning(
+                "agent recognize failed (attempt %d/%d): %s — retrying in %.1fs",
+                attempt, RECOGNIZE_MAX_ATTEMPTS, exc, delay,
+            )
+            time.sleep(delay)
+
+    raise AgentError(
+        f"agent: モデルへの問い合わせが {RECOGNIZE_MAX_ATTEMPTS} 回とも失敗しました "
+        f"/ the provider call failed {RECOGNIZE_MAX_ATTEMPTS} times in a row: "
+        f"{type(last_error).__name__}: {last_error}"
+    ) from last_error
 
 
 def _decided_to_act(response: Any) -> bool:
@@ -304,6 +454,25 @@ def _act(toolbox: "ToolBox", call: ToolCall) -> ToolRecord:
     Actually runs whichever tool was decided on.
     """
     return toolbox.call(call)
+
+
+def _act_batch(toolbox: "ToolBox", calls: list[ToolCall]) -> list[ToolRecord]:
+    """③ ACT — この周の道具呼び出しを並行して実行する。
+
+    互いに独立した呼び出しを直列に待つ理由はない。結果は `calls` と
+    同じ順で返す — 会話履歴に積む順序を、完了した順ではなく呼ばれた順に
+    保つため。
+
+    Runs this round's tool calls concurrently — nothing requires waiting on
+    one independent call before starting the next. Results come back in the
+    same order as `calls`, not completion order, so the conversation history
+    stays in the order the calls were made.
+    """
+    if len(calls) <= 1:
+        return [_act(toolbox, call) for call in calls]
+
+    with ThreadPoolExecutor(max_workers=len(calls)) as pool:
+        return list(pool.map(lambda call: _act(toolbox, call), calls))
 
 
 def _observe(call: ToolCall, record: ToolRecord) -> dict[str, Any]:
@@ -354,6 +523,65 @@ def _render(record: ToolRecord) -> str:
         text = (text[:RESULT_CHAR_LIMIT]
                 + f'… [truncated at {RESULT_CHAR_LIMIT} characters]')
     return text
+
+
+def _is_repeated_failure(records: list[ToolRecord]) -> bool:
+    """④ OBSERVE — 末尾が同じ道具・同じ引数の失敗で連続しているかを見る。
+
+    Looks at whether the trailing records are the same tool, same arguments,
+    all failing — the signature of a call that will not succeed by retrying.
+    """
+    if len(records) < REPEATED_FAILURE_THRESHOLD:
+        return False
+
+    tail = records[-REPEATED_FAILURE_THRESHOLD:]
+    latest = tail[-1]
+    if latest.ok:
+        return False
+    return all(
+        not r.ok and r.name == latest.name and r.arguments == latest.arguments
+        for r in tail
+    )
+
+
+def _reflect(records: list[ToolRecord]) -> str | None:
+    """④ OBSERVE の反省 — 生の結果を積むだけでなく、その周を短く評価する。
+
+    今のところ見るのは「同じ失敗があと1回続いたら打ち切られる」状態か
+    どうかだけ。道具の結果そのものは既に _observe で各メッセージに
+    入っているので、ここで繰り返す必要はない — 足りないのはモデルへの
+    メタな所見（このままでは輪が止まる、という気づき）であって、結果の
+    再掲ではない。
+
+    Beyond appending raw results, this gives the round a short assessment.
+    For now it only watches for being one identical failure away from the
+    repeated-failure cutoff. The tool result itself is already in each
+    message via _observe; what was missing was a meta-level note to the
+    model — that it is about to be cut off — not a restatement of the result.
+    """
+    threshold = REPEATED_FAILURE_THRESHOLD
+    if threshold < 2 or len(records) < threshold - 1:
+        return None
+
+    tail = records[-(threshold - 1):]
+    latest = tail[-1]
+    if latest.ok:
+        return None
+    on_the_brink = all(
+        not r.ok and r.name == latest.name and r.arguments == latest.arguments
+        for r in tail
+    )
+    if not on_the_brink:
+        return None
+
+    return (
+        f"[OBSERVE] '{latest.name}' はこの引数で {threshold - 1} 回連続して"
+        f"失敗しています。もう一度同じ引数で呼ぶと打ち切られます — 引数を"
+        f"変えるか、別の道具を検討してください。"
+        f" / '{latest.name}' has failed {threshold - 1} time(s) in a row with "
+        f"these exact arguments. Calling it again unchanged will end this run "
+        f"— change the arguments or try a different tool."
+    )
 
 
 def _last_text(messages: list[dict[str, Any]]) -> str:
