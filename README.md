@@ -66,7 +66,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 669 件
+pytest                               # 677 件
 ```
 
 ---
@@ -406,9 +406,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-669 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+677 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-669 tests, aimed at the guarantees and at the failure shapes that look like
+677 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template

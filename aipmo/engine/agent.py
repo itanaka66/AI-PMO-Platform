@@ -7,6 +7,27 @@ Instead of running a fixed sequence, the model chooses which tools to call.
 This suits work whose shape is not known in advance: investigating a cause,
 assembling a picture of where something stands.
 
+1周の構成 / One cycle of the loop
+----------------------------------
+`run_agent` は次の4段階を、道具を呼ばなくなるまで繰り返す。
+
+    ① RECOGNIZE 認識 — ここまでの会話履歴を踏まえてモデルに問い合わせる
+    ② DECIDE    判断 — 道具を呼ぶか、答えを返すかを応答から読み取る
+    ③ ACT       行動 — 呼ぶと決まった道具を実際に実行する
+    ④ OBSERVE   観測 — 結果を会話履歴に積み、続けるか終えるかを決める
+                        (② で「答えが出た」と判断していればここには来ない)
+
+呼ぶ道具が無くなった（②で答えが出たと判断した）ときだけ、この輪を抜けて
+利用者に結果を返す。それ以外は④の結果を持って①に戻る。
+
+`run_agent` repeats four phases until the model stops calling tools:
+RECOGNIZE (ask the model given everything so far), DECIDE (read from its
+response whether it wants a tool or is done), ACT (actually run whichever
+tool it asked for), and OBSERVE (feed the result back in, then decide whether
+to continue). The loop is left only when DECIDE finds no tool call — that is
+the model's answer; otherwise OBSERVE's outcome carries back into the next
+RECOGNIZE.
+
 止め方について / On stopping
 -----------------------------
 エージェントは自分では止まらない。上限が無ければ、利用者自身の API 残高で
@@ -14,11 +35,12 @@ assembling a picture of where something stands.
 
   - 往復回数の上限
   - 累計トークンの上限
-  - 道具を呼ばなくなったら終了（=答えが出た）
+  - 道具を呼ばなくなったら終了（=答えが出た、② DECIDE の結果）
 
 An agent does not stop on its own; with no ceiling it keeps going on the user's
 own API balance. Three stopping conditions are enforced: a turn limit, a
-cumulative token limit, and the model ceasing to call tools.
+cumulative token limit, and the model ceasing to call tools (② DECIDE finding
+no tool call — the answer has arrived).
 """
 from __future__ import annotations
 
@@ -179,24 +201,21 @@ def run_agent(
     max_tokens: int = 4096,
 ) -> AgentResult:
     toolbox = ToolBox(adapters, spec)
-
-    messages: list[dict[str, Any]] = []
-    if system:
-        messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": prompt})
+    messages = _recognize_request(system, prompt)
 
     records: list[ToolRecord] = []
     used_in, used_out = 0, 0
 
     for iteration in range(1, spec.max_iterations + 1):
-        response = provider.converse(
-            messages, tools=toolbox.definitions(),
-            temperature=temperature, max_tokens=max_tokens,
-        )
+        # ① RECOGNIZE — ここまでの文脈をそのままモデルに渡す。
+        # Hand everything gathered so far to the model as-is.
+        response = _recognize(provider, messages, toolbox, temperature, max_tokens)
         used_in += response.input_tokens or 0
         used_out += response.output_tokens or 0
 
-        if not response.tool_calls:
+        # ② DECIDE — 道具を呼ぶか、答えを返すかは応答そのものが示す。
+        # The response itself says whether it wants a tool or has an answer.
+        if not _decided_to_act(response):
             # 道具を呼ばなくなった = 答えが出た
             # No more tool calls means the agent has its answer.
             return AgentResult(
@@ -208,16 +227,18 @@ def run_agent(
         messages.append(_assistant_turn(response))
 
         for call in response.tool_calls:
-            record = toolbox.call(call)
+            # ③ ACT — 呼ぶと決まった道具を実際に実行する。
+            # Actually run whichever tool the model asked for.
+            record = _act(toolbox, call)
             records.append(record)
-            messages.append({
-                "role": "tool",
-                "tool_call_id": call.id,
-                "content": _render(record),
-            })
+            # ④ OBSERVE — 結果を、次の①で読める形にして積む。
+            # Feed the result back in a shape the next RECOGNIZE can read.
+            messages.append(_observe(call, record))
             logger.info("agent tool %s ok=%s", record.name, record.ok)
 
         if used_in + used_out >= spec.max_tokens_total:
+            # ④ OBSERVE — 続けるかどうかの判定も観測の一部。
+            # Whether to continue is also part of what OBSERVE decides.
             return AgentResult(
                 answer=response.text, iterations=iteration, tool_calls=records,
                 stopped_because="token_limit",
@@ -233,6 +254,69 @@ def run_agent(
         tool_calls=records, stopped_because="iteration_limit",
         input_tokens=used_in, output_tokens=used_out,
     )
+
+
+def _recognize_request(system: str | None, prompt: str) -> list[dict[str, Any]]:
+    """① RECOGNIZE の起点 — 依頼そのものを会話履歴の最初の形にする。
+
+    The starting point of RECOGNIZE: turns the request itself into the first
+    shape of the conversation history.
+    """
+    messages: list[dict[str, Any]] = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
+    return messages
+
+
+def _recognize(
+    provider: LLMProvider,
+    messages: list[dict[str, Any]],
+    toolbox: "ToolBox",
+    temperature: float,
+    max_tokens: int,
+) -> Any:
+    """① RECOGNIZE — 会話履歴と使える道具の一覧をモデルに渡し、応答を得る。
+
+    Hands the conversation so far and the available tools to the model and
+    returns its response.
+    """
+    return provider.converse(
+        messages, tools=toolbox.definitions(),
+        temperature=temperature, max_tokens=max_tokens,
+    )
+
+
+def _decided_to_act(response: Any) -> bool:
+    """② DECIDE — 応答が道具呼び出しを含むかどうかを読み取る。
+
+    道具呼び出しが無い = モデルは答えを返すと決めた、という合図。
+
+    Reads whether the response carries a tool call. No tool call means the
+    model decided to answer instead.
+    """
+    return bool(response.tool_calls)
+
+
+def _act(toolbox: "ToolBox", call: ToolCall) -> ToolRecord:
+    """③ ACT — 呼ぶと決まった道具を実際に実行する。
+
+    Actually runs whichever tool was decided on.
+    """
+    return toolbox.call(call)
+
+
+def _observe(call: ToolCall, record: ToolRecord) -> dict[str, Any]:
+    """④ OBSERVE — 実行結果を、次の① RECOGNIZE で読める会話履歴の形にする。
+
+    Turns the outcome of ACT into the conversation-history shape the next
+    RECOGNIZE will read.
+    """
+    return {
+        "role": "tool",
+        "tool_call_id": call.id,
+        "content": _render(record),
+    }
 
 
 def _assistant_turn(response: Any) -> dict[str, Any]:
