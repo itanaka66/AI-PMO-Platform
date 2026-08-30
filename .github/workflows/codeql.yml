@@ -1,0 +1,27 @@
+name: CodeQL
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    # 週次で、変更が無い期間もライブラリ側の新しい既知パターンを拾えるように。
+    # Weekly, so newly published query patterns are caught even without a change.
+    - cron: "23 4 * * 1"
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      - uses: github/codeql-action/analyze@v3
