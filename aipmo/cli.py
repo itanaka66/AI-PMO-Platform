@@ -27,6 +27,7 @@ from .adapters.postgres import PostgresAdapter
 from .adapters.qdrant import QdrantAdapter
 from .adapters.weaviate import WeaviateAdapter
 from .dsl import loader
+from .engine.agent import ApprovalCallback
 from .engine.runner import Engine, PromptLibrary, StepFailure
 from .llm.embeddings import build_embedder
 from .setup_wizard import load_env, run_interactive
@@ -93,15 +94,26 @@ def load_config(path: Path) -> dict[str, Any]:
     return expand_env(raw)
 
 
-def build_engine(config: dict[str, Any], base_dir: Path | None = None) -> Engine:
+def build_engine(
+    config: dict[str, Any],
+    base_dir: Path | None = None,
+    approve: ApprovalCallback | None = None,
+) -> Engine:
     """設定からエンジンを組み立てる。
 
     相対パスは config.yaml のある場所を基準に解決する。ショートカットから
     起動すると作業ディレクトリが不定になるため、そこに依存させない。
 
+    `approve` は既定で無し — 対話端末の無いスケジューラや Web サーバーからは
+    渡さない。承認が要る書き込みは、そこでは常に断られる。
+
     Relative paths resolve against the directory holding config.yaml. Launching
     from a desktop shortcut leaves the working directory unpredictable, so it
     must not be the anchor.
+
+    `approve` defaults to none — the scheduler and web server, which have no
+    interactive terminal, do not pass one. Writes that require approval are
+    always refused there.
     """
     base = base_dir or Path.cwd()
     adapters = AdapterRegistry()
@@ -184,7 +196,7 @@ def build_engine(config: dict[str, Any], base_dir: Path | None = None) -> Engine
 
     llms = LLMRegistry.from_config(config.get("llm") or {"default": {"provider": "echo"}})
     prompts = PromptLibrary(resolve(config.get("prompts_dir", "prompts")))
-    return Engine(adapters, llms, prompts)
+    return Engine(adapters, llms, prompts, approve=approve)
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -348,10 +360,42 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _confirm_agent_write(tool: str, arguments: dict[str, Any]) -> bool:
+    """対話端末で承認を求める / ask for approval at an interactive terminal.
+
+    `aipmo run` の既定の承認方法。標準入力が対話端末でないとき
+    （スクリプト・CI・パイプ）はそもそも呼ばれない — `cmd_run` 側で
+    先に判定している。ここでの EOFError は、それでも対話できなかった
+    場合の保険で、承認できないのだから断る。
+
+    The default approval path for `aipmo run`. Not called at all when stdin
+    is not an interactive terminal (a script, CI, a pipe) — `cmd_run` checks
+    that first. Catching EOFError here is a fallback for the rare case where
+    it turns out not to be interactive after all: with no way to ask, the
+    write is refused.
+    """
+    print(f"\n[承認が必要 / approval needed] {tool}")
+    print(json.dumps(arguments, ensure_ascii=False, indent=2, default=str))
+    try:
+        answer = input("実行してよいですか？ / proceed? [y/N]: ").strip().lower()
+    except EOFError:
+        return False
+    return answer in ("y", "yes")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     config_path = Path(args.config)
+    # 対話端末があるときだけ、その場で承認を求める。スケジューラや CI
+    # からの呼び出しには対話端末が無く、input() が固まるかすぐ落ちる
+    # ので渡さない — その場合、承認が要る書き込みは常に断られる。
+    #
+    # Only offer an interactive approval prompt when stdin is actually a
+    # terminal. A scheduler or CI invocation has none, and input() there
+    # would either hang or fail immediately, so none is passed — writes that
+    # require approval are simply refused in that case.
+    approve = _confirm_agent_write if sys.stdin.isatty() else None
     try:
-        engine = build_engine(load_config(config_path), config_path.parent)
+        engine = build_engine(load_config(config_path), config_path.parent, approve=approve)
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1

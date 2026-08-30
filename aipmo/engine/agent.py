@@ -61,6 +61,19 @@ logger = logging.getLogger("aipmo.agent")
 # Returning a whole tool result can exhaust the context on one long output.
 RESULT_CHAR_LIMIT = 6000
 
+# ③ ACT の前に人の承認を求める仕組み。呼び出し先アダプタ.アクション名
+# （"jira.create_issues" のような形）と、モデルが渡そうとしている引数を
+# 受け取り、実行してよければ True を返す。渡さなければ（None のままなら）
+# require_approval を立てた書き込みはすべて断られる — 承認できる相手が
+# いないのに黙って通すことはしない。
+#
+# Approval sought before ACT. Receives the qualified adapter.action name
+# (e.g. "jira.create_issues") and the arguments the model wants to call it
+# with, and returns True to let it proceed. Left as None, every write with
+# require_approval set is refused — there is no one to approve it, so it is
+# not silently let through.
+ApprovalCallback = Callable[[str, dict[str, Any]], bool]
+
 # ① RECOGNIZE がプロバイダ呼び出しで失敗したときの再試行回数と待ち時間。
 # ネットワーク瞬断やレート制限は一過性のことが多く、1回失敗しただけで
 # 実行全体を落とすのは惜しい。
@@ -210,7 +223,7 @@ class ToolBox:
         adapter_name, action_name = entry
         return self.adapters.get(adapter_name).writes(action_name)
 
-    def call(self, call: ToolCall) -> ToolRecord:
+    def call(self, call: ToolCall, approve: "ApprovalCallback | None" = None) -> ToolRecord:
         if call.name not in self._allowed:
             # 許可外を呼ぼうとしたら、断ってエージェントに続けさせる。
             # 実行を落とすより、モデルに別の手を選ばせた方が結果が良い。
@@ -228,6 +241,23 @@ class ToolBox:
             )
 
         adapter_name, action_name = self._allowed[call.name]
+
+        if self.spec.require_approval and self.adapters.get(adapter_name).writes(action_name):
+            # ③ ACT の手前で止める — 実行してから取り消す方法は無い書き込みが
+            # ほとんどなので、承認は実行の前でなければ意味がない。
+            # Stopped short of ACT: most writes cannot be undone once made, so
+            # approval only means something if it happens before execution.
+            qualified = f"{adapter_name}.{action_name}"
+            approved = bool(approve(qualified, dict(call.arguments))) if approve else False
+            if not approved:
+                return ToolRecord(
+                    name=call.name, arguments=call.arguments, ok=False,
+                    error=(
+                        f"'{qualified}' requires human approval, which was not given "
+                        f"/ 承認が必要ですが得られませんでした: '{qualified}'"
+                    ),
+                )
+
         try:
             result = self.adapters.get(adapter_name).invoke(
                 action_name, dict(call.arguments))
@@ -265,14 +295,23 @@ def run_agent(
     temperature: float = 0.2,
     max_tokens: int = 4096,
     cancel_check: "Callable[[], bool] | None" = None,
+    approve: "ApprovalCallback | None" = None,
 ) -> AgentResult:
     """`cancel_check` — 外から中断したいときに渡す。呼ぶたびに問い合わせ、
     True が返ったらその時点で輪を抜ける。長時間の道具呼び出しの合間に
     ユーザーが止められる経路が無いと、実行が終わるまで待つしかなくなる。
 
+    `approve` — `spec.require_approval` が立っている工程で、書き込み系の
+    道具を実行する直前に呼ばれる。渡さなければ、そうした書き込みはすべて
+    断られる（黙って許可されることはない）。
+
     `cancel_check`, when given, is polled at points where stopping early is
     safe; returning True ends the loop there. Without an external stop path,
     a caller has no way to interrupt a run short of killing the process.
+
+    `approve`, when the step has `spec.require_approval` set, is called right
+    before a write-tool call actually runs. Left unset, every such write is
+    refused rather than silently allowed through.
     """
     toolbox = ToolBox(adapters, spec)
     messages = _recognize_request(system, prompt)
@@ -335,7 +374,7 @@ def run_agent(
         # 書き込み系は互いに順番に（cancel_check も見ながら）実行する。
         # Run this round's tool calls: reads concurrently, writes one at a
         # time relative to each other, watching cancel_check as it goes.
-        batch = _act_batch(toolbox, response.tool_calls, cancel_check)
+        batch = _act_batch(toolbox, response.tool_calls, cancel_check, approve)
 
         fatal_record: ToolRecord | None = None
         was_cancelled = False
@@ -546,12 +585,13 @@ def _decided_to_act(response: Any) -> bool:
     return bool(response.tool_calls)
 
 
-def _act(toolbox: "ToolBox", call: ToolCall) -> ToolRecord:
+def _act(toolbox: "ToolBox", call: ToolCall,
+         approve: "ApprovalCallback | None" = None) -> ToolRecord:
     """③ ACT — 呼ぶと決まった道具を実際に実行する。
 
     Actually runs whichever tool was decided on.
     """
-    return toolbox.call(call)
+    return toolbox.call(call, approve)
 
 
 CANCELLED_TOOL_ERROR = "cancelled before this tool call ran"
@@ -566,6 +606,7 @@ def _act_batch(
     toolbox: "ToolBox",
     calls: list[ToolCall],
     cancel_check: "Callable[[], bool] | None" = None,
+    approve: "ApprovalCallback | None" = None,
 ) -> list[ToolRecord]:
     """③ ACT — この周の道具呼び出しを実行する。
 
@@ -577,6 +618,10 @@ def _act_batch(
     途中で `cancel_check` が True を返したら、まだ実行していない
     書き込み呼び出しは実行せず、キャンセル済みの記録を返す。
 
+    `approve` は承認が要る書き込みにだけ効く（`ToolBox.call` 側で判定する）。
+    読み取り系の呼び出しに渡しても素通りするだけなので、ここでは
+    呼び出しの種類を区別せず、すべての `_act` に同じものを渡している。
+
     Read-only tool calls are independent of one another, so they run
     concurrently. Write actions can race — against adapter-internal state or
     on the remote side — so writes run one at a time relative to each other
@@ -586,11 +631,15 @@ def _act_batch(
 
     If `cancel_check` starts returning True partway through, any write call
     not yet started is skipped and recorded as cancelled instead of run.
+
+    `approve` only matters for writes that require it (decided inside
+    `ToolBox.call`); passing it to a read call is a harmless no-op, so every
+    `_act` call here gets the same one rather than sorting calls by kind.
     """
     if len(calls) <= 1:
         if calls and cancel_check is not None and cancel_check():
             return [_cancelled_record(calls[0])]
-        return [_act(toolbox, call) for call in calls]
+        return [_act(toolbox, call, approve) for call in calls]
 
     write_flags = [toolbox.writes_tool(call.name) for call in calls]
     read_indices = [i for i, w in enumerate(write_flags) if not w]
@@ -604,14 +653,14 @@ def _act_batch(
                 for j in write_indices[write_indices.index(i):]:
                     results[j] = _cancelled_record(calls[j])
                 return
-            results[i] = _act(toolbox, calls[i])
+            results[i] = _act(toolbox, calls[i], approve)
 
     if not read_indices:
         run_writes()
         return results  # type: ignore[return-value]
 
     with ThreadPoolExecutor(max_workers=len(read_indices)) as pool:
-        futures = {pool.submit(_act, toolbox, calls[i]): i for i in read_indices}
+        futures = {pool.submit(_act, toolbox, calls[i], approve): i for i in read_indices}
         run_writes()
         for future, i in futures.items():
             results[i] = future.result()
