@@ -492,6 +492,7 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 | [docs/DEPLOY-AZURE.md](docs/DEPLOY-AZURE.md) | 無料クラウド構成（Azure）/ free-tier deployment |
 | [docs/DEPLOY-AWS.md](docs/DEPLOY-AWS.md) | 無料クラウド構成（AWS EC2）/ free-tier deployment |
 | [docs/DEPLOY-VPS.md](docs/DEPLOY-VPS.md) | 有料 VPS 構成（さくらの VPS 等）/ paid VPS deployment |
+| [SECURITY.md](SECURITY.md) | 脆弱性の報告 / reporting a vulnerability |
 | [docs/DEPLOY-HETZNER.md](docs/DEPLOY-HETZNER.md) | 有料 VPS 構成（Hetzner）/ paid VPS deployment |
 | [NOTICE.md](NOTICE.md) | ライセンスと依存ライブラリ / licensing and dependencies |
 
