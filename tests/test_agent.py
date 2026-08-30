@@ -126,6 +126,135 @@ def test_adapter_error_is_returned_to_the_agent():
     assert result.stopped_because == "finished"
 
 
+def test_repeated_identical_failure_stops_the_loop():
+    """同じ道具に同じ引数で失敗し続けたら、上限まで待たず打ち切る。"""
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__find_overdue", {}),
+        calls("jira__find_overdue", {}),
+        calls("jira__find_overdue", {}),  # ここまで来ない
+    ])
+
+    result = run_agent(provider, adapters, AgentSpec(tools=["jira"]),
+                       prompt="調べて")
+
+    assert result.stopped_because == "repeated_failure"
+    assert len(result.tool_calls) == 2
+    assert len(provider.conversations) == 2
+
+
+def test_failures_with_different_arguments_do_not_count_as_repeated():
+    """引数が違えば「同じ失敗の繰り返し」ではないので止めない。"""
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__find_overdue", {}),
+        calls("jira__find_overdue", {"project": "does-not-exist"}),
+        says("あきらめます"),
+    ])
+
+    result = run_agent(provider, adapters, AgentSpec(tools=["jira"]),
+                       prompt="調べて")
+
+    assert result.stopped_because == "finished"
+
+
+def test_unexpected_adapter_exception_stops_the_loop_as_fatal():
+    """AdapterError でも引数エラーでもない例外は、繰り返させず即座に止める。"""
+    import aipmo.adapters.mock as mock_module
+
+    adapters = registry()
+
+    def _boom(self, project: str, as_of: str | None = None):
+        raise RuntimeError("jira api is down")
+
+    original = mock_module.MockJiraAdapter.find_overdue
+    _boom._aipmo_action = original._aipmo_action
+    _boom._aipmo_writes = original._aipmo_writes
+    mock_module.MockJiraAdapter.find_overdue = _boom
+    try:
+        provider = EchoProvider(script=[
+            calls("jira__find_overdue", {"project": "PROJ"}),
+            says("ここには来ない"),
+        ])
+        result = run_agent(provider, adapters, AgentSpec(tools=["jira"]),
+                           prompt="調べて")
+    finally:
+        mock_module.MockJiraAdapter.find_overdue = original
+
+    assert result.stopped_because == "fatal_tool_failure"
+    assert result.tool_calls[0].fatal is True
+    assert len(provider.conversations) == 1  # 次の RECOGNIZE に進んでいない
+
+
+def test_tool_calls_in_one_round_run_concurrently():
+    """1周内の複数の道具呼び出しは直列に待たず並行して実行される。"""
+    import time as time_module
+
+    from aipmo.adapters.base import Adapter, action
+
+    class SlowAdapter(Adapter):
+        name = "slow"
+
+        @action()
+        def wait(self, seconds: float) -> dict:
+            time_module.sleep(seconds)
+            return {"waited": seconds}
+
+    adapters = AdapterRegistry()
+    adapters.register(SlowAdapter())
+
+    response = LLMResponse(
+        text="", model="s",
+        tool_calls=[
+            ToolCall(id="a", name="slow__wait", arguments={"seconds": 0.2}),
+            ToolCall(id="b", name="slow__wait", arguments={"seconds": 0.2}),
+        ],
+    )
+    provider = EchoProvider(script=[response, says("完了")])
+
+    start = time_module.monotonic()
+    result = run_agent(provider, adapters, AgentSpec(tools=["slow"]),
+                       prompt="待って")
+    elapsed = time_module.monotonic() - start
+
+    assert result.stopped_because == "finished"
+    assert elapsed < 0.35  # 直列なら 0.4 秒以上かかる
+
+
+def test_cancel_check_stops_the_loop_before_the_next_recognize():
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__find_overdue", {"project": "PROJ"}, f"c{i}")
+        for i in range(5)
+    ])
+
+    result = run_agent(provider, adapters, AgentSpec(tools=["jira"]),
+                       prompt="調べて", cancel_check=lambda: True)
+
+    assert result.stopped_because == "cancelled"
+    assert result.iterations == 1
+    assert len(provider.conversations) == 0
+
+
+def test_reflection_warns_before_the_repeated_failure_cutoff():
+    from aipmo.engine.agent import REPEATED_FAILURE_THRESHOLD
+
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__find_overdue", {}),
+        says("直します"),
+    ])
+
+    run_agent(provider, adapters, AgentSpec(tools=["jira"]), prompt="調べて")
+
+    if REPEATED_FAILURE_THRESHOLD - 1 >= 1:
+        last_conversation = provider.conversations[-1]
+        assert any(
+            m.get("role") == "user" and "OBSERVE" in str(m.get("content"))
+            for m in last_conversation
+        )
+
+
 def test_malformed_arguments_are_handed_back():
     adapters = registry()
     provider = EchoProvider(script=[
@@ -165,6 +294,52 @@ def test_recognize_request_omits_the_system_message_when_none_is_given():
     messages = _recognize_request(None, "調べて")
 
     assert messages == [{"role": "user", "content": "調べて"}]
+
+
+class _FlakyProvider(EchoProvider):
+    """converse が最初の数回だけ例外を投げるスタブ。"""
+
+    def __init__(self, fail_times: int, then: LLMResponse) -> None:
+        super().__init__()
+        self.fail_times = fail_times
+        self.then = then
+        self.attempts = 0
+
+    def converse(self, messages, tools=None, temperature=0.2, max_tokens=4096):
+        self.attempts += 1
+        if self.attempts <= self.fail_times:
+            raise ConnectionError("temporary network failure")
+        return self.then
+
+
+def test_recognize_retries_a_transient_provider_failure(monkeypatch):
+    from aipmo.engine import agent as agent_module
+
+    monkeypatch.setattr(agent_module.time, "sleep", lambda seconds: None)
+
+    provider = _FlakyProvider(fail_times=2, then=says("復旧しました"))
+    adapters = registry()
+
+    result = run_agent(provider, adapters, AgentSpec(tools=["jira"]),
+                       prompt="調べて")
+
+    assert result.answer == "復旧しました"
+    assert result.stopped_because == "finished"
+    assert provider.attempts == 3
+
+
+def test_recognize_gives_up_after_max_attempts(monkeypatch):
+    from aipmo.engine import agent as agent_module
+
+    monkeypatch.setattr(agent_module.time, "sleep", lambda seconds: None)
+
+    provider = _FlakyProvider(fail_times=99, then=says("到達しない"))
+    adapters = registry()
+
+    with pytest.raises(AgentError):
+        run_agent(provider, adapters, AgentSpec(tools=["jira"]), prompt="調べて")
+
+    assert provider.attempts == agent_module.RECOGNIZE_MAX_ATTEMPTS
 
 
 def test_decide_reads_a_tool_call_as_wanting_to_act():
