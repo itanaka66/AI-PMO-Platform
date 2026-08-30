@@ -194,6 +194,42 @@ def build_engine(
         if len(configured_vector_stores) == 1:
             adapters.register(instance, name="vector_store")
 
+    # config.yaml の approval.slack は、渡された approve より優先する。
+    # 明示的な運用設定の方が、呼び出し元既定の対話端末承認より意図が強い。
+    # これにより aipmo run / aipmo schedule / aipmo serve のどこから実行
+    # しても、Slack 上で承認できるようになる — 対話端末が無い実行環境でも
+    # 承認ゲートが機能する。
+    #
+    # config.yaml's approval.slack takes priority over any `approve` passed
+    # in: an explicit operator setting carries more intent than the caller's
+    # own default (an interactive terminal prompt). This is what lets
+    # `aipmo run` / `aipmo schedule` / `aipmo serve` all approve over Slack —
+    # the approval gate works even where no terminal is attached.
+    approval_config = config.get("approval") or {}
+    if "slack" in approval_config:
+        if not adapters.has("slack"):
+            raise ConfigError(
+                "config.yaml の approval.slack を使うには adapters.slack の設定も"
+                "必要です / approval.slack requires adapters.slack to also be "
+                "configured"
+            )
+        slack_cfg = dict(approval_config["slack"])
+        channel = slack_cfg.get("channel")
+        if not channel:
+            raise ConfigError(
+                "config.yaml の approval.slack.channel が必要です "
+                "/ approval.slack.channel is required"
+            )
+        from .approval import SlackApprover
+
+        approve = SlackApprover(
+            slack=adapters.get("slack"),
+            channel=channel,
+            poll_seconds=float(slack_cfg.get("poll_seconds", 5.0)),
+            timeout_seconds=float(slack_cfg.get("timeout_seconds", 300.0)),
+            approver_ids=frozenset(slack_cfg.get("approver_ids") or []),
+        )
+
     llms = LLMRegistry.from_config(config.get("llm") or {"default": {"provider": "echo"}})
     prompts = PromptLibrary(resolve(config.get("prompts_dir", "prompts")))
     return Engine(adapters, llms, prompts, approve=approve)

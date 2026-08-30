@@ -341,6 +341,29 @@ def test_reading_actions_are_not_writes():
     assert adapter.writes("post_message") is True
     assert adapter.writes("find_user") is False
     assert adapter.writes("list_channels") is False
+    assert adapter.writes("get_reactions") is False
+
+
+def test_get_reactions_lists_names_and_users():
+    adapter, _ = slack({"reactions.get": ok({
+        "ok": True,
+        "message": {"reactions": [
+            {"name": "white_check_mark", "users": ["U1", "U2"], "count": 2},
+        ]},
+    })})
+    result = adapter.invoke("get_reactions", {"channel": "C1", "ts": "1.0"})
+
+    assert result["reactions"] == [{"name": "white_check_mark", "users": ["U1", "U2"]}]
+
+
+def test_get_reactions_is_empty_when_none_are_present():
+    """反応が無いメッセージでは Slack が reactions キー自体を返さない。"""
+    adapter, _ = slack({"reactions.get": ok({
+        "ok": True, "message": {"text": "hi"},
+    })})
+    result = adapter.invoke("get_reactions", {"channel": "C1", "ts": "1.0"})
+
+    assert result["reactions"] == []
 
 
 def test_jira_write_actions_are_marked():

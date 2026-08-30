@@ -156,6 +156,52 @@ always refused.** It is never silently let through.
 Read-only tools are unaffected: `require_approval` only ever gates writes, so
 setting it on a step with `allow_writes: false` has no effect.
 
+**Slack で承認する / Approving over Slack**
+
+対話端末を使わずに承認したい場合（スケジューラや Web サーバーからの
+実行がこれに当たる）は、`config.yaml` に `approval.slack` を設定します。
+
+```yaml
+adapters:
+  slack:
+    token: ${SLACK_BOT_TOKEN}
+
+approval:
+  slack:
+    channel: "#approvals"     # 必須。承認を求めるチャンネル
+    timeout_seconds: 300      # 既定 300 秒。反応が無ければ断る
+    poll_seconds: 5           # 既定 5 秒おきに反応を確認する
+    approver_ids: []          # 空なら誰の反応でもよい。絞るなら Slack ユーザー ID を列挙する
+```
+
+書き込みが提案されるたびに、その内容（道具名と引数）が `channel` へ
+投稿されます。:white_check_mark: の反応で承認、:x: の反応で却下、
+`timeout_seconds` 以内にどちらも付かなければ、対話端末の場合と同じく
+断ります。
+
+`approval.slack` を設定すると、`aipmo run` の対話端末での確認より
+優先されます。`adapters.slack` の設定も別途必要です — 承認の投稿・
+反応の確認は、そのアダプタをそのまま使って行われます。
+
+Slack の Events API（Webhook）は使いません。ボットトークンだけで
+動くように、一定間隔で反応を確認する方式にしています。反応が届くまで
+`poll_seconds` 分の遅れが出ますが、公開エンドポイントや Slack App の
+Event Subscriptions の用意は要りません。
+
+To approve without an interactive terminal — the case for a scheduler or a
+web-triggered run — set `approval.slack` in `config.yaml` (see the example
+above). Every proposed write posts its tool name and arguments to `channel`;
+a `:white_check_mark:` reaction approves it, a `:x:` reaction declines it, and
+no reaction within `timeout_seconds` refuses it, the same as the terminal
+path. `approval.slack`, once configured, takes priority over `aipmo run`'s
+own terminal prompt. `adapters.slack` needs its own configuration too — the
+same adapter is used to post the proposal and read the reaction.
+
+This deliberately polls rather than using Slack's Events API/webhooks: it
+trades up to `poll_seconds` of latency for needing nothing beyond the bot
+token already in use elsewhere — no public endpoint or Slack App event
+configuration to stand up.
+
 ---
 
 ## 止め方 / Stopping
