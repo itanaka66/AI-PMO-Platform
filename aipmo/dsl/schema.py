@@ -92,6 +92,21 @@ class AgentSpec:
     # issues and sending messages should not rest on the model's judgement alone.
     allow_writes: bool = False
 
+    # 書き込み系の道具を呼ぶ前に、人の承認を求めるか。既定は不要。
+    # allow_writes は「この工程は書き込みをしてよい」というテンプレート
+    # 作成時の一括判断でしかない。1回ごとに人が見て判断させたい場合は
+    # こちらを立てる。承認する側（呼び出し元が run_agent に渡す関数）を
+    # 用意しないまま立てても、黙って許可されることはない — 承認が得られない
+    # ので、その書き込みは常に断られる。
+    #
+    # Whether write-tool calls need a human's approval before they run.
+    # allow_writes alone is a one-time, template-authoring-time blanket
+    # decision; this asks for a per-call human judgement on top of it.
+    # Setting it without wiring up an approver (a function the caller passes
+    # to run_agent) does not silently let writes through — with no approval
+    # available, every write is refused instead.
+    require_approval: bool = False
+
     # 往復の上限。エージェントは自分では止まらない。
     # 止め方を書いておかないと、利用者の API 残高で回り続ける。
     # Turn limit. An agent does not stop on its own, and without a ceiling it

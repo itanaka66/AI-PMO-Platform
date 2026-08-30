@@ -19,7 +19,7 @@ from ..dsl.expr import ResolutionError, evaluate_condition, render
 from ..dsl.schema import LLMSpec, OutputFormat, Step, StepKind, Template
 from ..llm.base import LLMRequest, LLMResponse
 from ..llm.registry import LLMRegistry
-from .agent import run_agent
+from .agent import ApprovalCallback, run_agent
 from .context import RunContext, StepResult
 
 logger = logging.getLogger("aipmo.engine")
@@ -138,6 +138,7 @@ class Engine:
         llms: LLMRegistry,
         prompts: PromptLibrary | None = None,
         transforms: dict[str, Callable[..., Any]] | None = None,
+        approve: ApprovalCallback | None = None,
     ) -> None:
         self.adapters = adapters
         self.llms = llms
@@ -145,6 +146,17 @@ class Engine:
         # 利用者定義のものを優先する。名前がぶつかったら上書きできる。
         # User-supplied transforms win, so a name can be overridden.
         self.transforms = {**BUILTIN_TRANSFORMS, **(transforms or {})}
+        # agent: require_approval を立てた工程の書き込みを、実行前に人へ
+        # 尋ねる関数。渡さなければ、そうした書き込みは常に断られる。
+        # 承認の取り方（対話端末・Slack・Web など）はここでは決めない —
+        # エンジンは呼び出し元から渡された判断をそのまま使うだけにする。
+        #
+        # A function asked, before it runs, about a write from an agent step
+        # with require_approval set. Left unset, such writes are always
+        # refused. How approval is actually obtained (a terminal prompt,
+        # Slack, a web UI) is not this engine's decision — it only uses
+        # whatever judgement the caller hands it.
+        self.approve = approve
         # 並列グループの中のステップは同時に履歴を書こうとする。
         # 1本の DB 接続を複数スレッドから同時に使うのは安全でないため、
         # 履歴への書き込みだけはここで直列化する。
@@ -612,6 +624,7 @@ class Engine:
             system=step.config.get("system"),
             temperature=step.llm.temperature,
             max_tokens=step.llm.max_tokens,
+            approve=self.approve,
         )
 
         output: Any = {

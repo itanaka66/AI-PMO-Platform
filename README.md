@@ -66,7 +66,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 677 件
+pytest                               # 703 件
 ```
 
 ---
@@ -355,6 +355,28 @@ Naming an adapter does not grant its write actions. A mistaken read can be
 retried; a mistaken write cannot. And updating is worse than creating: a
 mistaken create adds noise, a mistaken update destroys a value that was right.
 
+### 承認する側が居なければ、書き込みは通らない
+
+`allow_writes: true` は工程全体としての一括許可でしかない。1回ごとに
+人へ判断させたい書き込みには `require_approval: true` を重ねる。
+承認する関数（`run_agent` の `approve` 引数）を渡すかどうかは実行環境が
+決め、テンプレートには一切見えない。
+
+**渡さなければ、その書き込みは常に断られる。** 対話端末の無いスケジューラや
+Web サーバーからの実行がこれに当たる。黙って許可される経路は無い —
+承認を求める仕組みを立てておきながら、承認する相手が居ないときに
+素通りさせては、立てた意味が無い。
+
+`allow_writes: true` is only ever a one-time, blanket permission for a whole
+step. `require_approval: true` layers a per-call human judgement on top of
+it. Whether an approver function (`run_agent`'s `approve` argument) is
+supplied is a runtime decision, invisible to the template.
+
+**With none supplied, the write is always refused** — which is exactly what
+happens when a scheduler or web server, having no interactive terminal, runs
+the step. There is no path where it passes through unattended: a gate with no
+one to approve through it would defeat the point of having one.
+
 ### 冪等キーはトリガー由来
 
 `run_id` ではなく `meeting_id` を起点にする。同じ会議を再処理しても Jira の
@@ -406,9 +428,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-677 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+703 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-677 tests, aimed at the guarantees and at the failure shapes that look like
+703 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template

@@ -555,6 +555,133 @@ def test_observe_shapes_a_failed_record_as_an_error_payload():
     assert "project が足りません" in message["content"]
 
 
+# --- 人の承認 / human approval -----------------------------------------------
+#
+# allow_writes は工程全体としての一括許可。require_approval はその上に、
+# 1回ごとの人の判断を求める。承認する側（呼び出し元が渡す関数）が
+# 無ければ、断られる側にしか倒れない — 黙って通ることは無い。
+#
+# allow_writes is a one-time, blanket permission for the whole step.
+# require_approval asks for a human's judgement on top of that, per call.
+# With no approver supplied, it can only fall on the side of refusal — never
+# silently through.
+
+def test_a_write_requiring_approval_runs_once_approved():
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__create_issues", {"issues": [{"summary": "x"}], "project": "PROJ"}),
+        says("起票しました"),
+    ])
+
+    result = run_agent(
+        provider, adapters,
+        AgentSpec(tools=["jira"], allow_writes=True, require_approval=True),
+        prompt="起票して", approve=lambda tool, args: True,
+    )
+
+    assert result.tool_calls[0].ok is True
+    assert adapters.get("jira").created
+
+
+def test_a_write_requiring_approval_is_refused_with_no_approver():
+    """承認する相手を渡さなければ、常に断られる。黙って通さない。"""
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__create_issues", {"issues": [{"summary": "x"}], "project": "PROJ"}),
+        says("別の方法を考えます"),
+    ])
+
+    result = run_agent(
+        provider, adapters,
+        AgentSpec(tools=["jira"], allow_writes=True, require_approval=True),
+        prompt="起票して",
+    )
+
+    assert result.tool_calls[0].ok is False
+    assert "approval" in result.tool_calls[0].error
+    assert adapters.get("jira").created == []
+
+
+def test_a_write_requiring_approval_is_refused_when_declined():
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__create_issues", {"issues": [{"summary": "x"}], "project": "PROJ"}),
+        says("承認されませんでした"),
+    ])
+
+    result = run_agent(
+        provider, adapters,
+        AgentSpec(tools=["jira"], allow_writes=True, require_approval=True),
+        prompt="起票して", approve=lambda tool, args: False,
+    )
+
+    assert result.tool_calls[0].ok is False
+    assert adapters.get("jira").created == []
+
+
+def test_require_approval_does_not_gate_read_only_tools():
+    """読み取りは書き込みより緩く扱う。承認する側は一度も呼ばれない。"""
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__find_overdue", {"project": "PROJ"}),
+        says("遅延はありません"),
+    ])
+    asked: list[str] = []
+
+    def approve(tool: str, arguments: dict) -> bool:
+        asked.append(tool)
+        return False
+
+    result = run_agent(
+        provider, adapters,
+        AgentSpec(tools=["jira"], require_approval=True),
+        prompt="調べて", approve=approve,
+    )
+
+    assert result.tool_calls[0].ok is True
+    assert asked == []
+
+
+def test_require_approval_defaults_to_off():
+    """既定では立っていない。allow_writes だけで、これまでどおり動く。"""
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__create_issues", {"issues": [{"summary": "x"}], "project": "PROJ"}),
+        says("起票しました"),
+    ])
+
+    result = run_agent(
+        provider, adapters, AgentSpec(tools=["jira"], allow_writes=True),
+        prompt="起票して",
+    )
+
+    assert result.tool_calls[0].ok is True
+    assert adapters.get("jira").created
+
+
+def test_the_approver_receives_the_qualified_name_and_arguments():
+    adapters = registry()
+    provider = EchoProvider(script=[
+        calls("jira__create_issues", {"issues": [{"summary": "x"}], "project": "PROJ"}),
+        says("完了"),
+    ])
+    received = {}
+
+    def approve(tool: str, arguments: dict) -> bool:
+        received["tool"] = tool
+        received["arguments"] = arguments
+        return True
+
+    run_agent(
+        provider, adapters,
+        AgentSpec(tools=["jira"], allow_writes=True, require_approval=True),
+        prompt="起票して", approve=approve,
+    )
+
+    assert received["tool"] == "jira.create_issues"
+    assert received["arguments"]["project"] == "PROJ"
+
+
 # --- 止まること / stopping --------------------------------------------------
 
 def test_iteration_limit_stops_the_loop():
@@ -636,6 +763,44 @@ def test_agent_step_parses_and_runs():
     assert output["answer"] == "遅延なし"
     assert output["stopped_because"] == "finished"
     assert output["tool_calls"][0]["name"] == "jira__find_overdue"
+
+
+def test_agent_step_parses_require_approval():
+    template = loader.load_dict({
+        "name": "agent_demo",
+        "steps": [{
+            "id": "file_issue",
+            "agent": {"tools": ["jira"], "allow_writes": True,
+                     "require_approval": True},
+            "prompt_inline": "起票してください",
+        }],
+    })
+    assert template.steps[0].agent.require_approval is True
+
+
+def test_engines_approve_callback_reaches_agent_steps():
+    """Engine(..., approve=...) がテンプレートの agent 工程まで届くこと。"""
+    adapters = registry()
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider(script=[
+        calls("jira__create_issues", {"issues": [{"summary": "x"}], "project": "PROJ"}),
+        says("起票しました"),
+    ]))
+
+    template = loader.load_dict({
+        "name": "agent_demo",
+        "steps": [{
+            "id": "file_issue",
+            "agent": {"tools": ["jira"], "allow_writes": True,
+                     "require_approval": True},
+            "prompt_inline": "起票してください",
+        }],
+    })
+
+    ctx = Engine(adapters, llms, approve=lambda tool, args: True).run(template)
+
+    assert ctx.results["file_issue"].output["tool_calls"][0]["ok"] is True
+    assert adapters.get("jira").created
 
 
 def test_agent_step_requires_tools():

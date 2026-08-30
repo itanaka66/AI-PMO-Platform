@@ -61,6 +61,14 @@ The loop is left only when ② finds no tool call; otherwise ④'s outcome
 carries back into the next ①. This is not new behaviour — it names four
 phases that were already happening, without changing what they do.
 
+③ ACT には、それを行ってよいかという判断も含まれます。書き込み系の道具で
+`require_approval: true` が立っている工程では、実行の直前に人の承認を
+求めます（後述「書き込みごとに人の承認を求める」）。
+
+③ ACT also includes the question of whether it is allowed to happen at all:
+a write-tool call on a step with `require_approval: true` asks a human right
+before it runs (see "Requiring approval per write" below).
+
 ```
 ユーザー要求
      │
@@ -116,6 +124,37 @@ model decides what to say; the template decides whether it goes out.
     inputs:
       text: "{{ steps.investigate.output.answer }}"
 ```
+
+### 書き込みごとに人の承認を求める
+
+`allow_writes: true` は「この工程は書き込みをしてよい」という、
+テンプレート作成時の一括判断です。1回ごとに人が見て判断したい場合は
+`require_approval: true` を重ねます。
+
+```yaml
+- id: file_issue
+  agent:
+    tools: [jira]
+    allow_writes: true
+    require_approval: true   # 書き込みの直前に承認を求める
+  prompt_inline: 内容を確認し、必要なら課題を起票してください
+```
+
+承認する側（人に尋ねる方法）は、テンプレートではなく実行環境が決めます。
+`aipmo run` は対話端末があれば、その場でその都度尋ねます。**承認する相手を
+用意していない場合（スケジューラ・Web サーバーからの実行など）、
+その書き込みは常に断られます。** 黙って通ることはありません。
+
+Who does the approving is decided by the runtime, not the template. `aipmo
+run` asks at the terminal, each time, when one is attached. **With no
+approver configured — a scheduled or web-triggered run, say — the write is
+always refused.** It is never silently let through.
+
+読み取り系の道具はこの対象外です。`require_approval` は書き込みだけを
+対象にするので、`allow_writes: false` の工程で立てても何も起きません。
+
+Read-only tools are unaffected: `require_approval` only ever gates writes, so
+setting it on a step with `allow_writes: false` has no effect.
 
 ---
 

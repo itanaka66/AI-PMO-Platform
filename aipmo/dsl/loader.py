@@ -136,6 +136,7 @@ def _parse_step(raw: Any, where: str) -> Step:
             allow_writes=bool(agent_raw.get("allow_writes", False)),
             max_iterations=int(agent_raw.get("max_iterations", 5)),
             max_tokens_total=int(agent_raw.get("max_tokens_total", 60000)),
+            require_approval=bool(agent_raw.get("require_approval", False)),
         )
         if step.agent.max_iterations < 1 or step.agent.max_iterations > 25:
             raise TemplateError(
