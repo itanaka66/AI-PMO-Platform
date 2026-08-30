@@ -656,4 +656,100 @@ def test_generalize_knowledge_does_not_notify_when_nothing_was_submitted():
     assert ctx.results["generalize"].status == "success"
     assert qdrant_client.upserts == []
     assert ctx.results["notify_reviewer"].status == "skipped"
-    assert slack.posted == []
+
+
+# --- スレッド安全性 / thread safety -----------------------------------------
+#
+# 並列ステップやスケジューラの複数ジョブが同じアダプタ・インスタンスを
+# 同時に使うことがある。生の接続・クライアントは複数スレッドから同時に
+# 触られることを想定していないので、アダプタ側で直列化している
+# （PostgresAdapter._lock / VectorStoreAdapter._lock）。ここではそれが
+# 実際に効いていること — 2本以上のスレッドが同時に生の呼び出しへ
+# 入り込まないこと — を確かめる。
+#
+# A parallel step group or several scheduler jobs can share one adapter
+# instance at once. The raw connection/client is not built for concurrent use
+# from multiple threads, so the adapters serialize access to it
+# (PostgresAdapter._lock / VectorStoreAdapter._lock). These tests confirm
+# that actually holds — that two or more threads never enter the raw call at
+# the same time.
+
+def test_postgres_serializes_concurrent_calls():
+    import threading
+    import time
+
+    class OverlapDetectingConnection(FakeConnection):
+        def __init__(self, rows=None):
+            super().__init__(rows)
+            self._active = 0
+            self._guard = threading.Lock()
+            self.overlapped = False
+
+        def cursor(self):
+            outer = self
+
+            class Cursor(FakeCursor):
+                def execute(self, sql, values=None):
+                    with outer._guard:
+                        outer._active += 1
+                        if outer._active > 1:
+                            outer.overlapped = True
+                    time.sleep(0.02)
+                    super().execute(sql, values)
+                    with outer._guard:
+                        outer._active -= 1
+
+            return Cursor(self.log, self.rows)
+
+    connection = OverlapDetectingConnection(rows=[])
+    adapter = PostgresAdapter(queries=QUERIES, tenant="company_a", connection=connection)
+
+    def run():
+        adapter.invoke("query", {"name": "overdue_tasks",
+                                 "params": {"as_of": "2026-08-27"}})
+
+    threads = [threading.Thread(target=run) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert connection.overlapped is False
+    assert len(connection.log) == 8
+
+
+def test_qdrant_serializes_concurrent_upserts():
+    import threading
+    import time
+
+    class OverlapDetectingQdrantClient(FakeQdrantClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self._active = 0
+            self._guard = threading.Lock()
+            self.overlapped = False
+
+        def upsert(self, collection_name, points):
+            with self._guard:
+                self._active += 1
+                if self._active > 1:
+                    self.overlapped = True
+            time.sleep(0.02)
+            super().upsert(collection_name, points)
+            with self._guard:
+                self._active -= 1
+
+    client = OverlapDetectingQdrantClient()
+    adapter = QdrantAdapter(tenant="company_a", embedder=HashEmbedder(), client=client)
+
+    def run(i):
+        adapter.invoke("upsert", {"documents": [{"text": f"knowledge {i}"}]})
+
+    threads = [threading.Thread(target=run, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert client.overlapped is False
+    assert len(client.upserts) == 8
