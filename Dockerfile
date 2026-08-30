@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # ビルド依存だけを一時的に入れ、同じレイヤで消す
 # Build dependencies are installed and removed in the same layer.
