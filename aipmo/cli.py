@@ -295,7 +295,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print()
     if host in ("127.0.0.1", "localhost", "::1"):
         print(f"  ! {t('serve_local_only')}")
-        print(f"    aipmo serve --host 0.0.0.0")
+        print("    aipmo serve --host 0.0.0.0")
     else:
         print(f"  ! {t('serve_exposed')}")
     print()

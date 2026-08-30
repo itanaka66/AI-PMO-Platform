@@ -75,7 +75,9 @@ def test_build_engine_slack_approval_overrides_the_passed_in_approve():
 
 
 def test_build_engine_without_approval_config_keeps_the_passed_in_approve():
-    passed_in = lambda tool, args: True
+    def passed_in(tool, args):
+        return True
+
     engine = build_engine({"adapters": {"mode": "mock"}}, approve=passed_in)
 
     assert engine.approve is passed_in

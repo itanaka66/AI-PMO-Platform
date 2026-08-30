@@ -222,7 +222,7 @@ class TeamsAdapter(Adapter):
         items = data.get("value") or []
         if not items:
             raise AdapterError(
-                f"teams: この参加 URL の会議が見つかりません / no meeting for that join URL"
+                "teams: この参加 URL の会議が見つかりません / no meeting for that join URL"
             )
         meeting = items[0]
         return {
