@@ -30,7 +30,7 @@ vector-pgvector = ["psycopg[binary]>=3.1", "pgvector>=0.3"]
 vector-chroma = ["chromadb>=0.5"]
 vector-milvus = ["pymilvus>=2.4"]
 vector-weaviate = ["weaviate-client>=4.6"]
-dev = ["pytest>=8.0", "qdrant-client>=1.9", "fastapi>=0.110", "httpx>=0.27"]
+dev = ["pytest>=8.0", "psycopg[binary]>=3.1", "qdrant-client>=1.9", "fastapi>=0.110", "httpx>=0.27"]
 
 [project.scripts]
 aipmo = "aipmo.cli:main"

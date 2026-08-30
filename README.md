@@ -1,5 +1,7 @@
 # AI-PMO Platform
 
+[![Tests](https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml/badge.svg)](https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml)
+
 はじめての方は [はじめてのガイド（8言語）](docs/guide/README.md) をどうぞ。
 New here? Start with the [getting-started guide (8 languages)](docs/guide/README.md) .
 
