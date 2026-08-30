@@ -40,6 +40,7 @@ import random
 import signal
 import threading
 import time as clock
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -180,6 +181,13 @@ class Scheduler:
         self.sleep = sleep
         self.jitter = jitter
         self._stopping = threading.Event()
+        # tick() が対象を並行に走らせるようになったので、複数ジョブが
+        # 同時に完了して state を書くことがある。Engine の _history_lock
+        # と同じ理由で、状態を触る区間を直列化する。
+        # tick() now runs its jobs concurrently, so several can finish and
+        # write state at once. Serialized here for the same reason as
+        # Engine's _history_lock.
+        self._state_lock = threading.Lock()
 
         start = self.now()
         for job in self.jobs:
@@ -209,7 +217,8 @@ class Scheduler:
             # The previous run has not finished; do not overlap.
             logger.warning("%s: 前回が実行中のため見送り / still running, skipped",
                            job.name)
-            self.state.missed[job.name] = self.state.missed.get(job.name, 0) + 1
+            with self._state_lock:
+                self.state.missed[job.name] = self.state.missed.get(job.name, 0) + 1
             job.next_run = self._next(job, moment)
             return {"job": job.name, "status": "skipped_overlap"}
 
@@ -239,7 +248,8 @@ class Scheduler:
         finally:
             job.running = False
             job.last_run = started
-            self.state.record(job.name, started)
+            with self._state_lock:
+                self.state.record(job.name, started)
             job.next_run = self._next(job, self.now())
 
         return outcome
@@ -247,14 +257,34 @@ class Scheduler:
     # -- 常駐 / the loop ----------------------------------------------------
 
     def tick(self) -> list[dict[str, Any]]:
-        """1回ぶんの判定と実行 / one pass of checking and running."""
+        """1回ぶんの判定と実行 / one pass of checking and running.
+
+        同時刻に複数本が予定されているとき、1本が人の承認待ちなどで
+        長く塞がっていても他を遅らせないよう、この回の対象はそれぞれ
+        別スレッドで並行に走らせる。次の回との重なり（`job.running`
+        による二重実行の防止）は保ったままにするため、この関数自体は
+        全部が終わるまで戻らない — 並行にするのは1回の tick の内側だけ。
+
+        When several jobs share this pass, one stuck behind a long human
+        approval must not delay the others, so this pass's jobs each run in
+        their own thread. This call still blocks until every one of them
+        finishes, so the overlap guard against the *next* pass (`job.running`)
+        keeps working unchanged — only jobs within a single tick run
+        concurrently with each other.
+        """
         moment = self.now()
-        results = []
-        for job in self.due(moment):
-            if self.jitter and len(self.due(moment)) > 1:
+        due = self.due(moment)
+        if not due:
+            return []
+
+        def run_with_jitter(job: Job) -> dict[str, Any]:
+            if self.jitter and len(due) > 1:
                 self.sleep(random.uniform(0, MAX_JITTER_SECONDS))
-            results.append(self.run_job(job, moment))
-        return results
+            return self.run_job(job, moment)
+
+        with ThreadPoolExecutor(max_workers=len(due)) as pool:
+            futures = [pool.submit(run_with_jitter, job) for job in due]
+            return [future.result() for future in futures]
 
     def run_forever(self, interval: float = 20.0) -> None:
         self._install_signals()

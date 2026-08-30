@@ -49,6 +49,7 @@ call; everything else lives here once instead of five times.
 """
 from __future__ import annotations
 
+import threading
 import uuid
 from abc import abstractmethod
 from typing import Any
@@ -79,6 +80,13 @@ class VectorStoreAdapter(Adapter):
         self.embedder = embedder
         self.api_key = api_key
         self._client = client
+        # 並列ステップ・スケジューラの複数ジョブが同じアダプタ・インスタンスを
+        # 同時に使うことがある。バックエンドのクライアントは1つの接続や
+        # セッションを使い回すことが多いので、それに触れる区間を直列化する。
+        # A parallel step group or several scheduler jobs can share one
+        # adapter instance at once. The backend client typically reuses a
+        # single connection or session, so access to it is serialized here.
+        self._lock = threading.Lock()
 
     # -- サブクラスが実装する部分 / what a subclass provides ---------------
 
@@ -145,7 +153,8 @@ class VectorStoreAdapter(Adapter):
 
     def health_check(self) -> bool:
         try:
-            self._health_backend(self._connect())
+            with self._lock:
+                self._health_backend(self._connect())
             return True
         except Exception:
             return False
@@ -164,9 +173,10 @@ class VectorStoreAdapter(Adapter):
     ) -> dict[str, Any]:
         collection = self._collection(scope)
         query_vector = self._vector(text, vector)
-        items = self._search_backend(
-            self._connect(), collection, query_vector, limit, filters, min_score
-        )
+        with self._lock:
+            items = self._search_backend(
+                self._connect(), collection, query_vector, limit, filters, min_score
+            )
         return {"items": items, "count": len(items), "collection": collection}
 
     @action(writes=True)
@@ -204,7 +214,8 @@ class VectorStoreAdapter(Adapter):
                 "payload": payload,
             })
 
-        self._upsert_backend(self._connect(), collection, points)
+        with self._lock:
+            self._upsert_backend(self._connect(), collection, points)
         return {"upserted": len(points), "collection": collection}
 
     @action(writes=True)
