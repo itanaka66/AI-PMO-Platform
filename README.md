@@ -474,6 +474,15 @@ updates are proposed weekly by Dependabot
 statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 ([.github/workflows/codeql.yml](.github/workflows/codeql.yml)).
 
+同じ ruff・mypy のチェックは commit の前にも走らせられる
+（[.pre-commit-config.yaml](.pre-commit-config.yaml)、`pip install -e ".[dev]"`
+のあと `pre-commit install` で有効化。push してから CI で気づくより早い）。
+
+The same ruff and mypy checks can also run before each commit
+([.pre-commit-config.yaml](.pre-commit-config.yaml) — after
+`pip install -e ".[dev]"`, run `pre-commit install` to enable it; catching a
+violation here is faster than finding out from CI after a push).
+
 ---
 
 ## ドキュメント / Documentation
