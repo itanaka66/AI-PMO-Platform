@@ -1,0 +1,30 @@
+# commit 前に CI と同じチェックをローカルで走らせる。
+# push してから CI で落ちるより、ここで気づいたほうが早い。
+#
+# Runs the same checks CI does, before the commit lands — catching a
+# violation here is faster than finding out from a failed push.
+#
+# 有効化 / enable once, per clone:
+#   pip install -e ".[dev]"
+#   pre-commit install
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.5
+    hooks:
+      - id: ruff
+        args: [aipmo/, tests/]
+        pass_filenames: false
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.1
+    hooks:
+      - id: mypy
+        args: [aipmo/]
+        pass_filenames: false
+        # aipmo/ 自体には型ヒントの無い任意依存が混ざるため、
+        # pyproject.toml の [tool.mypy] 設定をそのまま使う。
+        # aipmo/ pulls in untyped optional dependencies; reuse the
+        # [tool.mypy] settings in pyproject.toml rather than mirror's
+        # default isolated environment.
+        additional_dependencies: []
