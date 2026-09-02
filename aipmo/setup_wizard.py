@@ -109,17 +109,20 @@ def build_config(answers: SetupAnswers) -> dict[str, Any]:
                 f" set OPENAI_API_KEY as well."
             )
     else:
+        base_url = answers.ollama_host
+        if not base_url.endswith("/v1") and not base_url.endswith("/v1/"):
+            base_url = base_url.rstrip("/") + "/v1"
         llm = {
             "default": {"provider": "ollama", "model": LOCAL_CHAT_MODEL,
-                        "host": answers.ollama_host},
+                        "base_url": base_url},
             "fast": {"provider": "ollama", "model": LOCAL_CHAT_MODEL,
-                     "host": answers.ollama_host},
+                     "base_url": base_url},
         }
         embedding = {
             "provider": "ollama",
             "model": LOCAL_EMBED_MODEL,
             "dimension": LOCAL_EMBED_DIM,
-            "host": answers.ollama_host,
+            "base_url": base_url,
         }
 
     config: dict[str, Any] = {
