@@ -138,6 +138,23 @@ def create_app(
     runs = store or RunStore()
     ui_lang = normalize(lang) if lang else detect()
 
+    # Webhook 用のテンプレートキャッシュ
+    # Webhooks cache templates so they don't hit the disk on every event.
+    _template_cache: list[Any] = []
+    _template_cache_loaded = False
+
+    def _get_cached_templates() -> list[Any]:
+        nonlocal _template_cache_loaded
+        if not _template_cache_loaded:
+            root = template_root.resolve()
+            for path in sorted(root.rglob("*.yaml")) + sorted(root.rglob("*.yml")):
+                try:
+                    _template_cache.append(loader.load_file(path))
+                except loader.TemplateError:
+                    continue
+            _template_cache_loaded = True
+        return _template_cache
+
     if not token:
         raise ValueError("web: 実行用トークンが必要です / an operator token is required")
     if viewer_token and secrets.compare_digest(viewer_token, token):
@@ -347,14 +364,9 @@ def create_app(
             raise HTTPException(status_code=400, detail="event type not specified")
             
         matched = []
-        root = template_root.resolve()
-        for path in sorted(root.rglob("*.yaml")) + sorted(root.rglob("*.yml")):
-            try:
-                template = loader.load_file(path)
-                if template.trigger.type == "event" and template.trigger.event == event_type:
-                    matched.append(template)
-            except loader.TemplateError:
-                continue
+        for template in _get_cached_templates():
+            if template.trigger.type == "event" and template.trigger.event == event_type:
+                matched.append(template)
 
         if not matched:
             return JSONResponse(status_code=200, content={"detail": "no matching templates", "matched": 0})
