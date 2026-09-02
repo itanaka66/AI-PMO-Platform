@@ -268,7 +268,7 @@ class JiraAdapter(Adapter):
             safe_jql = f'project = "{key}" AND ({condition})'
         else:
             safe_jql = f'project = "{key}"'
-            
+
         if order_by:
             safe_jql += f" {order_by}"
 
