@@ -19,6 +19,7 @@ from ..dsl.expr import ResolutionError, evaluate_condition, render
 from ..dsl.schema import LLMSpec, OutputFormat, Step, StepKind, Template
 from ..llm.base import LLMRequest, LLMResponse
 from ..llm.registry import LLMRegistry
+from ..portfolio import portfolio_risk_forecast
 from .agent import ApprovalCallback, run_agent
 from .context import RunContext, StepResult
 
@@ -155,6 +156,7 @@ BUILTIN_TRANSFORMS: dict[str, Any] = {
     "count": _count,
     "hours_ago": _hours_ago,
     "to_forecast_tasks": _to_forecast_tasks,
+    "portfolio_risk_forecast": portfolio_risk_forecast,
 }
 
 

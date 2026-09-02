@@ -203,7 +203,8 @@ def build_engine(
             )
         from .adapters.wbs_replan import WbsReplanAdapter
 
-        adapters.register(WbsReplanAdapter(postgres=adapters.get("postgres")))
+        adapters.register(WbsReplanAdapter(
+            postgres=cast(PostgresAdapter, adapters.get("postgres"))))
 
     # ベクトルストアは5種類のうちどれを設定してもよい。ちょうど1つだけ
     # 設定されているときは、論理名 vector_store でも同じインスタンスを
