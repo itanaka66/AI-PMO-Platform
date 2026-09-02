@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from typing import Any
 from .base import EchoProvider, LLMProvider, OpenAICompatibleProvider
-from .base import AnthropicProvider
 from .presets import PRESETS, ProviderError
 
 class LLMRegistry:
