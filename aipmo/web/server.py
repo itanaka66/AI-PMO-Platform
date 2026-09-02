@@ -60,7 +60,7 @@ from typing import Any
 # `from __future__ import annotations` they are strings, so a function-local
 # import leaves Request unresolvable and it gets treated as a query parameter.
 # Hence these imports live at module level.
-from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -76,7 +76,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 # 実行履歴の保持件数。Postgres 連携が入るまではメモリ上のみ。
 # In-memory run history until the Postgres wiring lands.
 HISTORY_LIMIT = 50
-
 
 class RunStore:
     """実行履歴を新しい順に保持する / keeps run records, newest first."""
@@ -94,7 +93,6 @@ class RunStore:
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         return next((r for r in self._runs if r["id"] == run_id), None)
-
 
 def discover_templates(root: Path) -> list[dict[str, Any]]:
     """テンプレートを読み、壊れているものも一覧に残す。
@@ -125,7 +123,6 @@ def discover_templates(root: Path) -> list[dict[str, Any]]:
         })
     return found
 
-
 def create_app(
     engine: Engine,
     template_root: Path,
@@ -137,6 +134,23 @@ def create_app(
 ):
     runs = store or RunStore()
     ui_lang = normalize(lang) if lang else detect()
+
+    # Webhook 用のテンプレートキャッシュ
+    # Webhooks cache templates so they don't hit the disk on every event.
+    _template_cache: list[Any] = []
+    _template_cache_loaded = False
+
+    def _get_cached_templates() -> list[Any]:
+        nonlocal _template_cache_loaded
+        if not _template_cache_loaded:
+            root = template_root.resolve()
+            for path in sorted(root.rglob("*.yaml")) + sorted(root.rglob("*.yml")):
+                try:
+                    _template_cache.append(loader.load_file(path))
+                except loader.TemplateError:
+                    continue
+            _template_cache_loaded = True
+        return _template_cache
 
     if not token:
         raise ValueError("web: 実行用トークンが必要です / an operator token is required")
@@ -258,35 +272,10 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such run")
         return record
 
-    @app.post("/api/runs")
-    def start_run(payload: dict[str, Any], role: str = operator_guard) -> Any:
-        raw_path = str(payload.get("path", ""))
-        root = template_root.resolve()
-        supplied = Path(raw_path)
-        target = (supplied if supplied.is_absolute() else root / supplied).resolve()
-
-        # テンプレート置き場の外を実行させない。
-        # resolve() で正規化してから包含を確認するので、.. もシンボリックリンクも
-        # 抜けられない。サブディレクトリは通す（一覧に出る以上、実行できないと筋が通らない）。
-        # Never execute outside the template directory. Normalising with
-        # resolve() before the containment check closes both `..` traversal and
-        # symlinks. Subdirectories are allowed: listing a template the user
-        # cannot then run would be incoherent.
-        if not target.is_file() or not target.is_relative_to(root):
-            raise HTTPException(status_code=400, detail="template not found")
-
+    def _do_run(template: Any, params: dict[str, Any], trigger: dict[str, Any], role: str) -> dict[str, Any]:
+        ctx: RunContext | None = None
         try:
-            template = loader.load_file(target)
-        except loader.TemplateError as exc:
-            return JSONResponse(status_code=400, content={"detail": str(exc)})
-
-        ctx: RunContext | None
-        try:
-            ctx = engine.run(
-                template,
-                params=payload.get("params") or {},
-                trigger=payload.get("trigger") or {},
-            )
+            ctx = engine.run(template, params=params, trigger=trigger)
             status = "success"
             error = None
         except StepFailure as exc:
@@ -301,15 +290,11 @@ def create_app(
                     "started_at": None,
                 }
                 runs.add(record)
-                return JSONResponse(status_code=200, content=record)
+                return record
 
         record = {
             "id": ctx.run_id,
             "template": template.name,
-            # 誰が起こした実行かを残す。PMO では「いつ動いたか」より
-            # 「誰が動かしたか」が問われることがある。
-            # Records who started it: in a PMO context the question asked is
-            # often who ran this, not merely when it ran.
             "started_by": role,
             "status": status,
             "error": error,
@@ -327,6 +312,79 @@ def create_app(
         }
         runs.add(record)
         return record
+
+    @app.post("/api/runs")
+    def start_run(payload: dict[str, Any], role: str = operator_guard) -> Any:
+        raw_path = str(payload.get("path", ""))
+        root = template_root.resolve()
+        supplied = Path(raw_path)
+        target = (supplied if supplied.is_absolute() else root / supplied).resolve()
+
+        if not target.is_file() or not target.is_relative_to(root):
+            raise HTTPException(status_code=400, detail="template not found")
+
+        try:
+            template = loader.load_file(target)
+        except loader.TemplateError as exc:
+            return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+        record = _do_run(
+            template,
+            payload.get("params") or {},
+            payload.get("trigger") or {},
+            role
+        )
+        # 既存の API との互換性のため、failed 時に一部だけ 200 JSONResponse で返す挙動を維持する
+        # (MVP としては _do_run 側にまとめず、呼び出し側でラップするのが無難)
+        if record.get("status") == "failed" and not record.get("started_at"):
+            return JSONResponse(status_code=200, content=record)
+
+        return record
+
+    @app.post("/api/webhook")
+    def webhook(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        payload: dict[str, Any] | None = None,
+        role: str = operator_guard
+    ) -> Any:
+        payload = payload or {}
+        event_type = (
+            request.headers.get("x-github-event")
+            or request.headers.get("x-gitlab-event")
+            or request.headers.get("x-event-type")
+            or request.query_params.get("event")
+            or payload.get("event")
+            or payload.get("action")
+        )
+        if not event_type:
+            raise HTTPException(status_code=400, detail="event type not specified")
+
+        matched = []
+        for template in _get_cached_templates():
+            if template.trigger.type == "event" and template.trigger.event == event_type:
+                matched.append(template)
+
+        if not matched:
+            return JSONResponse(status_code=200, content={"detail": "no matching templates", "matched": 0})
+
+        for template in matched:
+            background_tasks.add_task(
+                _do_run,
+                template,
+                {"payload": payload},
+                {"type": "event", "event": event_type},
+                f"{role} (webhook)"
+            )
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "detail": "scheduled",
+                "matched": len(matched),
+                "templates": [t.name for t in matched]
+            }
+        )
 
     @app.get("/api/health", dependencies=[guard])
     def health() -> dict[str, Any]:
@@ -406,7 +464,6 @@ def create_app(
         return _decide_wbs_proposal(proposal_id, "rejected", role, note)
 
     return app
-
 
 def generate_token() -> str:
     return secrets.token_urlsafe(24)
