@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-
+import yaml
 import pytest
 
 from aipmo.adapters.base import AdapterRegistry
