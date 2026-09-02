@@ -20,6 +20,94 @@ commercial use, modification and redistribution are all permitted.
 
 ---
 
+## アーキテクチャ（構想） / Architecture (vision)
+
+PMO 業務全体を、経営者/PM の承認を挟みながら自律的に回すループとしての全体像。
+図の各要素と、実際に動いているコードとの対応は図の下の表を参照。
+
+The overall loop this project is working toward — an autonomous PMO cycle
+with the executive/PM's approval as its gate. See the table under the
+diagram for how each box maps to code that actually exists today.
+
+```mermaid
+flowchart TB
+    exec["👤 経営者 / PM<br/>戦略・目標の設定、承認・判断"]
+    core["🧠 PMO AI Core<br/><b>自律型PMOエンジン</b><br/>全体最適化・意思決定・ルール管理・学習・知識統合"]
+
+    subgraph planning[" "]
+        direction LR
+        wbs_gen["🏗️ WBS生成AI<br/>要求分析・タスク分解(WBS)<br/>工数/期間見積り・依存関係の特定"]
+        risk_ai["🛡️ リスクAI<br/>リスク識別・評価<br/>対応策の提案・監視"]
+        plan_ai["📅 計画AI<br/>スケジュール最適化・リソース計画<br/>コスト計画・シナリオ分析"]
+    end
+
+    task_engine["⚙️ Task Engine<br/>タスク生成・統合・優先順位付け<br/>タスク割当・調整・進捗ルール管理"]
+
+    subgraph execution["AI Agent / Human（実行層）"]
+        direction LR
+        dev["💻<br/>開発AI"]
+        test["✅<br/>テストAI"]
+        research["🔍<br/>調査AI"]
+        doc["📄<br/>文書AI"]
+        sales["📊<br/>営業AI"]
+        human["🧑<br/>人間担当者"]
+    end
+
+    progress["📈 Progress AI<br/>進捗収集(自動)・成果物/活動の解析<br/>進捗率の算出・逸脱の検知"]
+    forecast["⚠️ Risk / Forecast<br/>遅延予測・リスク再評価<br/>影響分析・将来シナリオ予測"]
+    replan["🔄 WBS再計画AI<br/>再計画(スケジュール/リソース再配置)<br/>WBS構造の最適化・代替案の生成・推奨案の提示"]
+    new_wbs["🌳 新WBS / 新スケジュール<br/>更新されたWBS・計画・リソース/予算の更新<br/>関係者への通知"]
+
+    exec -->|目標・要求| core
+    core --> planning
+    planning --> task_engine
+    task_engine --> execution
+    execution -->|作業・成果物<br/>成果物・データ・ログ等| progress
+    progress --> forecast
+    forecast --> replan
+    replan -->|<b>要承認</b>| new_wbs
+    new_wbs -.->|実行| execution
+
+    classDef exec fill:#dbeeff,stroke:#2f6db5;
+    classDef core fill:#d9f2e6,stroke:#2f9e6f;
+    classDef plan fill:#eef1fb,stroke:#6b6fd6;
+    classDef task fill:#e6f0fb,stroke:#3f7fc1;
+    classDef ex fill:#e3f5ea,stroke:#3fa26b;
+    classDef prog fill:#dbeeff,stroke:#2f6db5;
+    classDef risk fill:#eef1fb,stroke:#6b6fd6;
+    classDef plan2 fill:#fde8d8,stroke:#d4813a;
+    classDef wbs fill:#fbe1de,stroke:#c1554a;
+    class exec exec;
+    class core core;
+    class wbs_gen,risk_ai,plan_ai plan;
+    class task_engine task;
+    class dev,test,research,doc,sales,human ex;
+    class progress prog;
+    class forecast risk;
+    class replan plan2;
+    class new_wbs wbs;
+```
+
+| 図の要素 / Box | 対応する実装 / What actually exists |
+|---|---|
+| WBS生成AI | `wbs_from_meeting` テンプレート |
+| リスクAI・Risk / Forecast | `risk_forecast` アダプタ（`forecast` / `classify_drift`、閾値ヒステリシス付き） |
+| WBS再計画AI | `wbs_replan` / `wbs_replan_jira` テンプレート（`agent` ステップ、`wbs_replan.propose` のみ書き込み可） |
+| 承認（経営者/PM） | Web UI の Proposals 画面、`/api/wbs-proposals/{id}/approve`\|`reject`（operator ロールのみ） |
+| 新WBS / 新スケジュール | `wbs_replan_proposals` テーブル（承認されるまでは提案のまま。生WBSへの自動反映はしない） |
+| Progress AI | `sprint_health` / `agile.sprint_issues`（進捗率・完了ポイントはアダプタ側で計算、AIには集計させない） |
+| Task Engine・PMO AI Core | **未実装。** 現状は個別テンプレートの集合を `aipmo schedule` が定時実行する構成で、複数テンプレートを横断して優先順位付け・タスク統合を行う単一の常駐エンジンはまだ無い |
+| 開発AI・テストAI・調査AI・文書AI・営業AI | **未実装。** `agent` ステップに役割ごとの道具・プロンプトを与えれば同じ枠組みで作れるが、現状は役割特化のテンプレートは無い |
+
+図が示す「PMO AI 自身の開発を WBS で管理する」という自己参照的な運用は構想段階。まずはこの図の
+右半分（Progress AI → Risk/Forecast → WBS再計画AI → 承認）が実際に動く状態にした、というのが現在地。
+
+The self-referential idea in the diagram — the PMO AI managing its own development via a WBS — is
+still a concept. What exists today is the right half of the loop (Progress AI → Risk/Forecast →
+WBS-replanning AI → approval) actually running.
+
+---
+
 ## できること / What it does
 
 | テンプレート / Template | 内容 / Description |
@@ -30,6 +118,11 @@ commercial use, modification and redistribution are all permitted.
 | `overdue_triage` | 遅延状況をエージェントが調査して報告 / An agent investigates delays and reports back |
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） / Sprint health check — notifies only when something is wrong |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 / Drafts a WBS from meeting decisions |
+| `wbs_risk_forecast` | WBS の遅延予測とドリフト検出、承認待ち提案の記録 / Forecasts WBS drift and records an approval-pending replan proposal |
+| `wbs_replan` | WBS の遅延を踏まえ、AI が実際の再計画案（何をどう変えるか）を考え、承認待ちの提案として記録 / An agent drafts an actual replan diff from the forecast and records it as an approval-pending proposal |
+| `wbs_replan_jira` | wbs_replan と同じだが、タスク一覧を実際の Jira スプリントから取得する / Same as wbs_replan, but pulls the task list from a real Jira sprint |
+| `wbs_replan_options` | wbs_replan と同じだが、AI に依存関係・クリティカルパスを踏まえた性質の異なる2つの代替案（A/B）を考えさせ、それぞれ独立した提案として記録する / Same as wbs_replan, but has the agent draft two genuinely different alternatives informed by dependency/critical-path analysis, recording each as its own proposal |
+| `wbs_proposal_cleanup` | 承認待ちのまま放置された WBS 再計画提案を定期的に無効化する / Periodically invalidates WBS replan proposals left pending too long |
 | `model_comparison` | 同じプロンプトを複数の AI に同時投稿し、書きぶりを比較 / Sends the same prompt to several AI providers at once and compares the results |
 | `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める / Sends independent notifications concurrently to cut run time |
 | `generalize_knowledge` | 社内知見を匿名化・一般化し、レビュー待ちの候補として提出 / Anonymizes and generalizes internal knowledge, submitting it as a candidate awaiting review |
@@ -46,7 +139,7 @@ commercial use, modification and redistribution are all permitted.
 
 連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL ·
 ベクトルストア（Qdrant・pgvector・Chroma・Milvus・Weaviate から選択）
-AI: OpenAI · Gemini · Groq · OpenRouter · Ollama · vLLM · LM Studio
+AI: OpenAI · Gemini · Groq · OpenRouter · Claude · Ollama · vLLM · LM Studio
 
 ---
 
@@ -444,7 +537,7 @@ are each recorded individually.
 
 721 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-721 tests, aimed at the guarantees and at the failure shapes that look like
+823 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
