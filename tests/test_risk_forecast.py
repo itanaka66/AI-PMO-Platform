@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -356,6 +357,7 @@ class _RoutingConnection:
 
 
 def _build_engine(connection, **risk_forecast_kwargs):
+    import yaml as _yaml
 
     from aipmo.adapters.mock import MockSlackAdapter
     from aipmo.engine.runner import Engine
