@@ -69,7 +69,7 @@ Répondez aux questions ; en cas de doute, Entrée reprend la valeur par défaut
 5) Activer la couche base de données ? → N
 ```
 
-**Quatre fournisseurs sont proposés.** En cas d'hésitation, prenez OpenAI :
+**Cinq fournisseurs sont proposés.** En cas d'hésitation, prenez OpenAI :
 il gère aussi les embeddings, un seul réglage suffit donc.
 
 | Fournisseur | Caractère |
@@ -78,6 +78,7 @@ il gère aussi les embeddings, un seul réglage suffit donc.
 | Gemini | Traite les longues transcriptions à bas coût |
 | Groq | Rapide, mais demande deux clés |
 | OpenRouter | Une clé pour comparer de nombreux modèles |
+| Claude | Rédaction de haute qualité, mais demande deux clés (pas d'API d'embeddings) |
 
 **Obtenir une clé d'API**
 Créez un compte chez le fournisseur choisi et émettez une clé.

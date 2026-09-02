@@ -1,0 +1,129 @@
+name: wbs_replan
+version: "1"
+industry: software
+description: |
+  WBS の遅延予測（risk_forecast）を踏まえ、AI が実際の再計画案（どのタスクを
+  ずらす・分割する・担当を見直すか）を考え、承認待ちの提案として記録する。
+
+  境界: 提案を作る道具（wbs_replan.propose）は wbs_replan_proposals にしか
+  書けない。生WBSへの書き込み手段はテンプレート全体を通じて一切渡していない。
+  tier（重大度）も AI の自己申告ではなく、直前に保存した予測から機械的に
+  決まる。人が Web UI で承認するまで、何にも反映されない。
+
+trigger: "schedule:0 7 * * MON-FRI"
+
+params:
+  wbs_id: "wbs-main"
+  deadline: "2026-03-31"
+  velocity_per_day: 2.0
+  slack_channel: "#pmo"
+  tasks: []
+
+steps:
+  - id: previous
+    adapter: postgres
+    action: query
+    inputs:
+      name: latest_forecast_snapshot
+      params:
+        wbs_id: "{{ params.wbs_id }}"
+
+  - id: forecast
+    adapter: risk_forecast
+    action: forecast
+    inputs:
+      tasks: "{{ params.tasks }}"
+      velocity_per_day: "{{ params.velocity_per_day }}"
+      deadline: "{{ params.deadline }}"
+      as_of: "{{ run.date }}"
+
+  - id: pending
+    adapter: wbs_replan
+    action: pending_count
+    inputs:
+      wbs_id: "{{ params.wbs_id }}"
+
+  - id: classify
+    adapter: risk_forecast
+    action: classify_drift
+    inputs:
+      drift_days: "{{ steps.forecast.output.drift_days }}"
+      previous_drift_days: "{{ steps.previous.output.rows[0].drift_days }}"
+      pending_count: "{{ steps.pending.output.count }}"
+
+  # 予測は毎回記録する。replan（AI）より先に置く — propose は snapshot
+  # を読んで tier を引くため、この順序を逆にすると提案時にまだ何も無い。
+  - id: snapshot
+    adapter: postgres
+    action: execute
+    inputs:
+      name: save_forecast_snapshot
+      params:
+        wbs_id: "{{ params.wbs_id }}"
+        drift_days: "{{ steps.forecast.output.drift_days }}"
+        tier: "{{ steps.classify.output.tier }}"
+        forecast: "{{ steps.forecast.output }}"
+
+  # 実際の再計画は AI が考える。何をどう変えるかはデータを見ないと
+  # 決まらないため（overdue_triage と同じ考え方）。tier・confidence は
+  # 自己申告させない: tier は道具の引数にすら無く、confidence は
+  # 「AI自身のこの提案への自信度」としてのみ使う。
+  - id: replan
+    when: "{{ steps.classify.output.should_propose }} == true"
+    agent:
+      tools:
+        - wbs_replan.propose
+      allow_writes: true
+      max_iterations: 3
+    llm:
+      profile: default
+      temperature: 0.2
+    prompt_inline: |
+      あなたは PMO 担当です。WBS "{{ params.wbs_id }}" の進捗予測から、
+      締切までに間に合わせるための再計画案を考えてください。
+
+      現在の状況:
+      - 締切: {{ params.deadline }}
+      - 本日: {{ run.date }}
+      - 完了: {{ steps.forecast.output.done_tasks }} / {{ steps.forecast.output.total_tasks }}
+        （{{ steps.forecast.output.percent_done }}%）
+      - 残工数: {{ steps.forecast.output.remaining_effort }}
+      - 現在のベロシティ: {{ params.velocity_per_day }} / 日
+      - 予測完了日: {{ steps.forecast.output.projected_completion }}
+      - ドリフト: {{ steps.forecast.output.drift_days }} 日（正=遅延）
+      - 見積もりが無いタスク: {{ steps.forecast.output.unestimated }}
+      - 判定: {{ steps.classify.output.reason }}
+
+      タスク一覧:
+      {{ params.tasks }}
+
+      必ず守ること:
+      - 全体を書き直すのではなく、差分（何をどう変えるか）だけを考える。
+        変更しないタスクには一切触れないこと。
+      - 前提として置いたこと（assumptions）は必ず書くこと。データに無いことを
+        断定しないこと。
+      - ドリフトの重大度（tier）はあなたが判断するものではありません。
+        propose を呼ぶときに tier は渡さないでください（受け付けられません）。
+      - confidence は、あなた自身のこの再計画案そのものへの自信度です
+        （0.0〜1.0）。迷ったら低めにすること。
+      - 見積もりが無いタスクを動かす提案をする場合は、その旨を
+        assumptions に明記すること。
+      - 考えがまとまったら wbs_replan.propose を呼んで提案を記録してください。
+
+  # tier==3 は個別即時通知。replan の結果は参照しない — その回に replan
+  # が skipped（既に pending 中）でも解決できないと困るため。
+  - id: notify_critical
+    when: "{{ steps.classify.output.tier }} == 3"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        :rotating_light: WBS 遅延が危機的水域です（Tier 3）
+
+        ドリフト: {{ steps.forecast.output.drift_days }} 日
+        予測完了日: {{ steps.forecast.output.projected_completion }}
+        締切: {{ params.deadline }}
+
+        Web UI で再計画案を確認してください。まだ何にも反映されていません。

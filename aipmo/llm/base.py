@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
 
+
 @dataclass
 class LLMRequest:
     prompt: str
@@ -26,11 +27,13 @@ class LLMRequest:
     max_tokens: int = 4096
     json_mode: bool = False
 
+
 @dataclass
 class ToolCall:
     id: str
     name: str
     arguments: dict
+
 
 @dataclass
 class LLMResponse:
@@ -66,6 +69,7 @@ class LLMResponse:
                     continue
         raise ValueError("LLM 出力を JSON として解釈できませんでした")
 
+
 class LLMProvider(ABC):
     name: str = "base"
 
@@ -87,6 +91,7 @@ class LLMProvider(ABC):
             f"{self.name} は道具を使う対話に対応していません "
             f"/ {self.name} does not implement tool-using conversation"
         )
+
 
 class EchoProvider(LLMProvider):
     """テスト用。API キー無しでエンジン全体を通せるようにするためのもの。"""
@@ -114,6 +119,7 @@ class EchoProvider(LLMProvider):
         if self.script:
             return self.script.pop(0)
         return LLMResponse(text="", model="echo")
+
 
 class OpenAICompatibleProvider(LLMProvider):
     """OpenAI 互換エンドポイント全般 / any OpenAI-compatible endpoint.
@@ -197,6 +203,7 @@ class OpenAICompatibleProvider(LLMProvider):
             output_tokens=getattr(usage, "completion_tokens", None),
         )
 
+
     def converse(self, messages: list[dict], tools: list[dict] | None = None,
                  temperature: float = 0.2, max_tokens: int = 4096) -> LLMResponse:
         from openai import OpenAI
@@ -241,6 +248,7 @@ class OpenAICompatibleProvider(LLMProvider):
             raw_message=message,
         )
 
+
 class OpenAIProvider(OpenAICompatibleProvider):
     """OpenAI 本体。既存の設定との互換のため名前を残している。
 
@@ -253,6 +261,7 @@ class OpenAIProvider(OpenAICompatibleProvider):
                  base_url: str | None = None, **extra: Any) -> None:
         super().__init__(provider="openai", model=model, api_key=api_key,
                          base_url=base_url, **extra)
+
 
 class OllamaProvider(LLMProvider):
     """ローカル LLM。Docker 版で使う。"""
@@ -295,6 +304,7 @@ class OllamaProvider(LLMProvider):
             output_tokens=body.get("eval_count"),
         )
 
+
 def _claude_tool_schema(openai_tool: dict) -> dict:
     """OpenAI の function-calling 形式を Claude の道具定義形式に変換する。
 
@@ -314,11 +324,13 @@ def _claude_tool_schema(openai_tool: dict) -> dict:
         "input_schema": function.get("parameters") or {"type": "object", "properties": {}},
     }
 
+
 def _is_all_tool_results(content: Any) -> bool:
     return isinstance(content, list) and bool(content) and all(
         isinstance(block, dict) and block.get("type") == "tool_result"
         for block in content
     )
+
 
 def _to_claude_messages(messages: list[dict]) -> tuple[str | None, list[dict]]:
     """OpenAI 形式の会話履歴を Claude の Messages API 形式に変換する。
@@ -399,6 +411,7 @@ def _to_claude_messages(messages: list[dict]) -> tuple[str | None, list[dict]]:
         out.append({"role": "user", "content": message.get("content") or ""})
 
     return system, out
+
 
 class AnthropicProvider(LLMProvider):
     """Claude（Anthropic Messages API）。
@@ -530,4 +543,3 @@ class AnthropicProvider(LLMProvider):
             # tool_calls/text when raw_message is absent.
             raw_message=None,
         )
-

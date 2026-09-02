@@ -63,7 +63,7 @@ def test_local_config_uses_ollama_with_host():
     config = build_config(SetupAnswers(mode="local", tenant="acme",
                                        ollama_host="http://ollama:11434"))
     assert config["llm"]["default"]["provider"] == "ollama"
-    assert config["llm"]["default"]["base_url"] == "http://ollama:11434/v1"
+    assert config["llm"]["default"]["host"] == "http://ollama:11434"
 
 
 def test_data_layer_omitted_by_default():
