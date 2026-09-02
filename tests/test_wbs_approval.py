@@ -1,0 +1,315 @@
+"""WBS 再計画の承認ワークフローのテスト / WBS replan approval workflow tests.
+
+2つの層に分けて検証する:
+  1. postgres アダプタ層: 出荷される queries.yaml の named query が
+     正しく束縛されること（生成 SQL のドリフト検知）。
+  2. Web 層: 承認/却下エンドポイントの権限分離（operator のみ書き込める）
+     と、pending でない提案への操作が 409 になること。
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pytest
+import yaml
+
+from aipmo.adapters.base import AdapterRegistry
+from aipmo.adapters.postgres import PostgresAdapter
+
+ROOT = Path(__file__).resolve().parents[1]
+REAL_QUERIES = yaml.safe_load((ROOT / "queries.yaml").read_text(encoding="utf-8"))
+
+
+# --- fakes（postgres 層） ---------------------------------------------------
+
+class FakeCursor:
+    """description を呼び出しごとに指定できる版。RETURNING 句のある
+    書き込みクエリは呼び出しごとに列が違うため、固定の description を
+    持つ既存の FakeCursor (tests/test_data_adapters.py) は使い回せない。
+    """
+
+    def __init__(self, log: list[tuple[str, list[Any]]],
+                 rows: list[tuple], columns: list[str]) -> None:
+        self._log = log
+        self._rows = rows
+        self.description = [(c,) for c in columns] if columns else None
+        self.rowcount = len(rows)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql: str, values: list[Any] | None = None) -> None:
+        self._log.append((sql, list(values or [])))
+
+    def fetchall(self):
+        return self._rows
+
+    def fetchmany(self, n):
+        return self._rows[:n]
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+class FakeConnection:
+    def __init__(self, rows: list[tuple] | None = None,
+                 columns: list[str] | None = None) -> None:
+        self.log: list[tuple[str, list[Any]]] = []
+        self.rows = rows or []
+        self.columns = columns or []
+        self.commits = 0
+
+    def cursor(self):
+        return FakeCursor(self.log, self.rows, self.columns)
+
+    def commit(self):
+        self.commits += 1
+
+
+def test_pending_wbs_proposals_binds_tenant():
+    connection = FakeConnection(
+        rows=[("p1", "wbs-v3", {"add": []}, "reason", {}, 2, 0.8, "2026-01-01")],
+        columns=["id", "wbs_version_from", "diff", "rationale", "assumptions",
+                 "tier", "confidence", "created_at"],
+    )
+    adapter = PostgresAdapter(queries=REAL_QUERIES, tenant="acme",
+                               connection=connection)
+
+    result = adapter.invoke("query", {"name": "pending_wbs_proposals",
+                                       "params": {}})
+
+    sql, values = connection.log[0]
+    assert "%s" in sql and ":tenant" not in sql
+    assert values == ["acme"]
+    assert result["rows"][0]["tier"] == 2
+
+
+def test_pending_wbs_proposals_is_read_only():
+    from aipmo.adapters.base import AdapterError
+
+    connection = FakeConnection()
+    adapter = PostgresAdapter(queries=REAL_QUERIES, tenant="acme",
+                               connection=connection)
+
+    with pytest.raises(AdapterError, match="書き込みクエリ"):
+        adapter.invoke("query", {"name": "save_wbs_proposal", "params": {}})
+
+
+def test_save_wbs_proposal_uses_idempotency_key_as_source_key():
+    connection = FakeConnection(rows=[("p1",)], columns=["id"])
+    adapter = PostgresAdapter(queries=REAL_QUERIES, tenant="acme",
+                               connection=connection)
+
+    adapter.invoke("execute", {
+        "name": "save_wbs_proposal",
+        "params": {
+            "id": "p1", "wbs_version_from": "v3", "diff": {"add": []},
+            "rationale": "velocity dropped", "assumptions": {}, "tier": 2,
+            "confidence": 0.8, "option_label": None,
+        },
+        "idempotency_key": "wbs-1:drift-signature-abc",
+    })
+
+    sql, values = connection.log[0]
+    assert "ON CONFLICT (source_key) DO UPDATE" in sql
+    assert "wbs-1:drift-signature-abc" in values
+    assert connection.commits == 1
+
+
+def test_decide_wbs_proposal_binds_status_and_actor():
+    connection = FakeConnection(rows=[("p1", "approved")],
+                                 columns=["id", "status"])
+    adapter = PostgresAdapter(queries=REAL_QUERIES, tenant="acme",
+                               connection=connection)
+
+    result = adapter.invoke("execute", {
+        "name": "decide_wbs_proposal",
+        "params": {"id": "p1", "status": "approved", "decided_by": "operator",
+                   "decision_note": None},
+    })
+
+    sql, values = connection.log[0]
+    assert "WHERE tenant = %s AND id = %s AND status = 'pending'" in sql
+    assert "acme" in values and "p1" in values and "approved" in values
+    assert result["rows"][0]["status"] == "approved"
+
+
+def test_decide_wbs_proposal_only_touches_pending_rows_by_construction():
+    connection = FakeConnection(rows=[], columns=["id", "status"])
+    adapter = PostgresAdapter(queries=REAL_QUERIES, tenant="acme",
+                               connection=connection)
+
+    adapter.invoke("execute", {
+        "name": "decide_wbs_proposal",
+        "params": {"id": "p1", "status": "rejected", "decided_by": "operator",
+                   "decision_note": "budget already reallocated"},
+    })
+
+    sql, _ = connection.log[0]
+    assert "status = 'pending'" in sql
+
+
+# --- Web 層 -----------------------------------------------------------------
+
+pytest.importorskip("fastapi")
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from aipmo.adapters.mock import (  # noqa: E402
+    MockJiraAdapter,
+    MockSlackAdapter,
+    MockTeamsAdapter,
+)
+from aipmo.engine.runner import Engine  # noqa: E402
+from aipmo.llm.base import EchoProvider  # noqa: E402
+from aipmo.llm.registry import LLMRegistry  # noqa: E402
+from aipmo.web.server import RunStore, create_app  # noqa: E402
+
+OPERATOR = "operator-token-value"
+VIEWER = "viewer-token-value"
+
+
+class StubPostgres:
+    """Web 層のテスト用の postgres アダプタの代わり。SQL の中身ではなく、
+    エンドポイント側の分岐（200/404/409/503・権限）を検証したいので、
+    ここでは戻り値を直接制御できる単純な二重体にする。"""
+
+    name = "postgres"
+
+    def __init__(self) -> None:
+        self.pending: dict[str, dict[str, Any]] = {}
+        self.decisions: list[tuple[str, str, str, str | None]] = []
+
+    def health_check(self) -> bool:
+        return True
+
+    def query(self, name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        if name == "pending_wbs_proposals":
+            return {"rows": list(self.pending.values()), "count": len(self.pending)}
+        if name == "get_wbs_proposal":
+            row = self.pending.get((params or {})["id"])
+            return {"rows": [row] if row else [], "count": 1 if row else 0}
+        raise AssertionError(f"unexpected query: {name}")
+
+    def execute(self, name: str, params: dict[str, Any] | None = None,
+                idempotency_key: str | None = None) -> dict[str, Any]:
+        assert name == "decide_wbs_proposal"
+        params = params or {}
+        proposal_id = params["id"]
+        self.decisions.append((proposal_id, params["status"],
+                                params["decided_by"], params.get("decision_note")))
+        if proposal_id not in self.pending:
+            return {"affected": 0, "rows": []}
+        row = self.pending.pop(proposal_id)
+        row["status"] = params["status"]
+        return {"affected": 1, "rows": [{"id": proposal_id, "status": params["status"]}]}
+
+
+@pytest.fixture
+def postgres() -> StubPostgres:
+    return StubPostgres()
+
+
+@pytest.fixture
+def client(tmp_path: Path, postgres: StubPostgres) -> TestClient:
+    templates_root = tmp_path / "templates"
+    templates_root.mkdir()
+
+    adapters = AdapterRegistry()
+    adapters.register(MockTeamsAdapter())
+    adapters.register(MockJiraAdapter())
+    adapters.register(MockSlackAdapter())
+    adapters.register(postgres)
+
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    app = create_app(Engine(adapters, llms), templates_root, OPERATOR,
+                      viewer_token=VIEWER, tenant="acme", lang="en",
+                      store=RunStore())
+    return TestClient(app)
+
+
+def _auth(token: str) -> dict[str, str]:
+    return {"x-aipmo-token": token}
+
+
+def test_viewer_can_list_pending_proposals(client: TestClient, postgres: StubPostgres):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    response = client.get("/api/wbs-proposals", headers=_auth(VIEWER))
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["id"] == "p1"
+
+
+def test_anonymous_request_is_rejected(client: TestClient):
+    response = client.get("/api/wbs-proposals")
+    assert response.status_code == 401
+
+
+def test_viewer_cannot_approve(client: TestClient, postgres: StubPostgres):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    response = client.post("/api/wbs-proposals/p1/approve", headers=_auth(VIEWER))
+
+    assert response.status_code == 403
+    assert postgres.decisions == []
+
+
+def test_operator_can_approve(client: TestClient, postgres: StubPostgres):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    response = client.post("/api/wbs-proposals/p1/approve", headers=_auth(OPERATOR))
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "approved"
+    assert postgres.decisions == [("p1", "approved", "operator", None)]
+
+
+def test_operator_can_reject_with_note(client: TestClient, postgres: StubPostgres):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    response = client.post(
+        "/api/wbs-proposals/p1/reject", headers=_auth(OPERATOR),
+        json={"note": "budget already reallocated"},
+    )
+
+    assert response.status_code == 200
+    assert postgres.decisions == [
+        ("p1", "rejected", "operator", "budget already reallocated"),
+    ]
+
+
+def test_approving_nonexistent_proposal_is_409(client: TestClient):
+    response = client.post("/api/wbs-proposals/ghost/approve", headers=_auth(OPERATOR))
+    assert response.status_code == 409
+
+
+def test_approving_already_decided_proposal_is_409(client: TestClient, postgres: StubPostgres):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+    client.post("/api/wbs-proposals/p1/approve", headers=_auth(OPERATOR))
+
+    response = client.post("/api/wbs-proposals/p1/approve", headers=_auth(OPERATOR))
+
+    assert response.status_code == 409
+
+
+def test_wbs_proposals_503_when_postgres_not_configured(tmp_path: Path):
+    templates_root = tmp_path / "templates"
+    templates_root.mkdir()
+    adapters = AdapterRegistry()
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    app = create_app(Engine(adapters, llms), templates_root, OPERATOR,
+                      tenant="acme", lang="en", store=RunStore())
+    client = TestClient(app)
+
+    response = client.get("/api/wbs-proposals", headers=_auth(OPERATOR))
+
+    assert response.status_code == 503

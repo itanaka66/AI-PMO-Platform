@@ -69,7 +69,7 @@ Responde a las preguntas; si dudas, pulsa Enter y se toma el valor por defecto.
 5) ¿Activar la capa de base de datos?    → N
 ```
 
-**Hay cuatro proveedores.** Si dudas, elige OpenAI: también tiene embeddings,
+**Hay cinco proveedores.** Si dudas, elige OpenAI: también tiene embeddings,
 así que basta con una sola configuración.
 
 | Proveedor | Carácter |
@@ -78,6 +78,7 @@ así que basta con una sola configuración.
 | Gemini | Procesa transcripciones largas de forma barata |
 | Groq | Rápido, pero necesita dos claves |
 | OpenRouter | Una clave para probar muchos modelos |
+| Claude | Escritura de alta calidad, pero necesita dos claves (sin API de embeddings) |
 
 **Cómo conseguir una clave de API**
 Crea una cuenta en el proveedor que hayas elegido y emite una clave.

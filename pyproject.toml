@@ -21,7 +21,7 @@ classifiers = [
 dependencies = ["pyyaml>=6.0"]
 
 [project.optional-dependencies]
-cloud = ["openai>=1.30"]
+cloud = ["openai>=1.30", "anthropic>=0.40"]
 data = ["psycopg[binary]>=3.1", "qdrant-client>=1.9"]
 web = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
 # ベクトルストアはどれか1つを選ぶ想定。qdrant は data に含まれる。
