@@ -97,64 +97,10 @@ def _count(items: Any) -> int:
     return len(items) if isinstance(items, (list, dict, str)) else 0
 
 
-def _hours_ago(hours: float, from_time: str | None = None) -> str:
-    """N時間前の ISO タイムスタンプ。提案の陳腐化（stale）判定のように
-    「今からN時間より前」という締切をSQL側に渡す必要があるが、テンプレート
-    に日時計算の仕組みは無いため、ここで計算してから渡す。
-
-    `from_time` を省略すると現在時刻（UTC）を起点にする。run.started_at を
-    渡せば、実行開始時刻を起点にした決定的な値になる — 長時間走る実行の
-    途中で「今」が変わってしまうのを避けたい場合に使う。
-
-    An ISO timestamp N hours in the past. Templates have no date arithmetic
-    of their own, so a cutoff like "anything older than 72 hours" (used for
-    marking stale proposals) is computed here before being handed to SQL.
-    Omit `from_time` to anchor on the current moment; pass run.started_at to
-    anchor on when the run began instead, for a run that takes a while and
-    should not have "now" drift partway through it.
-    """
-    from datetime import datetime, timedelta, timezone
-
-    if from_time:
-        base = datetime.fromisoformat(str(from_time).replace("Z", "+00:00"))
-    else:
-        base = datetime.now(timezone.utc)
-    return (base - timedelta(hours=hours)).isoformat()
-
-
-def _to_forecast_tasks(items: Any, effort_field: str = "points") -> list[dict[str, Any]]:
-    """他アダプタのタスク一覧を risk_forecast.forecast が期待する形
-    （key・done・effort）に変換する。
-
-    たとえば jira_agile.sprint_issues は {key, done, points, ...} を返すが、
-    risk_forecast は points ではなく effort という名前を期待する
-    （WBS はスプリントに限らず、ポイント以外の単位もあり得るため、
-    risk_forecast 側の名前を汎用的な effort のままにしている）。
-    テンプレートには項目ごとのフィールド名の付け替えをする仕組みが無い
-    ため、ここで変換する。
-
-    Converts another adapter's task list into the shape
-    risk_forecast.forecast expects (key/done/effort). jira_agile.sprint_issues
-    returns {key, done, points, ...}, but risk_forecast expects `effort`
-    rather than `points` (a WBS is not always sprint-based, so risk_forecast
-    keeps the generic name). Templates have no per-item field renaming of
-    their own, so this does it.
-    """
-    if not isinstance(items, list):
-        return []
-    return [
-        {"key": item.get("key"), "done": bool(item.get("done")),
-         "effort": item.get(effort_field)}
-        for item in items if isinstance(item, dict)
-    ]
-
-
 # テンプレートから使える組み込み変換 / built-in transforms available to templates
 BUILTIN_TRANSFORMS: dict[str, Any] = {
     "days_between": _days_between,
     "count": _count,
-    "hours_ago": _hours_ago,
-    "to_forecast_tasks": _to_forecast_tasks,
 }
 
 

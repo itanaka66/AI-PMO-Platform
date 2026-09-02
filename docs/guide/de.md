@@ -69,7 +69,7 @@ Beantworten Sie die Fragen; im Zweifel übernimmt Enter den Standardwert.
 5) Datenbankanbindung aktivieren? → N
 ```
 
-**Es stehen fünf Anbieter zur Wahl.** Im Zweifel nehmen Sie OpenAI: dort sind
+**Es stehen vier Anbieter zur Wahl.** Im Zweifel nehmen Sie OpenAI: dort sind
 auch Embeddings vorhanden, eine Einstellung genügt.
 
 | Anbieter | Eigenart |
@@ -78,7 +78,6 @@ auch Embeddings vorhanden, eine Einstellung genügt.
 | Gemini | Verarbeitet lange Protokolle günstig |
 | Groq | Schnell, braucht aber zwei Schlüssel |
 | OpenRouter | Ein Schlüssel, viele Modelle zum Vergleich |
-| Claude | Hohe Textqualität, braucht aber zwei Schlüssel (keine Embeddings-API) |
 
 **So bekommen Sie einen API-Schlüssel**
 Legen Sie beim gewählten Anbieter ein Konto an und erzeugen Sie einen Schlüssel.
