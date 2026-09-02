@@ -8,10 +8,8 @@ The Docker build maps it to a local model, the laptop build to a cloud API.
 """
 from __future__ import annotations
 
-import json
 import os
 from abc import ABC, abstractmethod
-
 
 class Embedder(ABC):
     name: str = "base"
@@ -23,7 +21,6 @@ class Embedder(ABC):
 
     def embed_one(self, text: str) -> list[float]:
         return self.embed([text])[0]
-
 
 class HashEmbedder(Embedder):
     """テスト用の決定的な擬似埋め込み。外部依存なしで検索経路を通せる。
@@ -47,7 +44,6 @@ class HashEmbedder(Embedder):
             norm = sum(v * v for v in raw) ** 0.5 or 1.0
             vectors.append([v / norm for v in raw])
         return vectors
-
 
 class OpenAICompatibleEmbedder(Embedder):
     """OpenAI 互換の埋め込みエンドポイント / OpenAI-compatible embeddings.
@@ -91,7 +87,6 @@ class OpenAICompatibleEmbedder(Embedder):
         result = client.embeddings.create(model=self.model, input=texts)
         return [item.embedding for item in result.data]
 
-
 class OpenAIEmbedder(OpenAICompatibleEmbedder):
     """既存の設定との互換のため名前を残している / kept for existing configs."""
 
@@ -99,8 +94,6 @@ class OpenAIEmbedder(OpenAICompatibleEmbedder):
                  api_key: str | None = None, base_url: str | None = None) -> None:
         super().__init__(provider="openai", model=model, dimension=dimension,
                          api_key=api_key, base_url=base_url)
-
-
 
 def build_embedder(spec: dict | None) -> Embedder:
     """設定の embedding 節から埋め込み器を作る。
