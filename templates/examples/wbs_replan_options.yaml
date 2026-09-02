@@ -1,0 +1,156 @@
+name: wbs_replan_options
+version: "1"
+industry: software
+description: |
+  wbs_replan と同じ判定ロジックだが、AI に単一の再計画案ではなく、
+  トレードオフの異なる複数案（A/B）を考えさせ、それぞれを独立した
+  承認待ち提案として記録する。人が Web UI で比較して選べるようにする。
+
+  依存関係（dependency_impact）も判定に加える: どのタスクがブロック要因
+  になっているか、遅延がどこまで波及するか、クリティカルパスはどれかを
+  機械的に計算し、AI にはその事実を踏まえた案を考えさせる
+  （依存関係グラフの計算自体はAIにやらせない）。
+
+  境界: wbs_replan.yaml と同一。提案は wbs_replan_proposals にのみ記録
+  され、tier は自己申告できない。生WBSへの書き込み手段は無い。
+
+trigger: "schedule:0 7 * * MON-FRI"
+
+params:
+  wbs_id: "wbs-main"
+  deadline: "2026-03-31"
+  velocity_per_day: 2.0
+  slack_channel: "#pmo"
+  tasks: []
+
+steps:
+  - id: previous
+    adapter: postgres
+    action: query
+    inputs:
+      name: latest_forecast_snapshot
+      params:
+        wbs_id: "{{ params.wbs_id }}"
+
+  - id: forecast
+    adapter: risk_forecast
+    action: forecast
+    inputs:
+      tasks: "{{ params.tasks }}"
+      velocity_per_day: "{{ params.velocity_per_day }}"
+      deadline: "{{ params.deadline }}"
+      as_of: "{{ run.date }}"
+
+  # ブロック状況・波及範囲・クリティカルパスを機械的に計算する。
+  # AI にはこの結果を読ませるだけで、依存関係の追跡そのものはさせない。
+  - id: dependencies
+    adapter: risk_forecast
+    action: dependency_impact
+    inputs:
+      tasks: "{{ params.tasks }}"
+
+  - id: pending
+    adapter: wbs_replan
+    action: pending_count
+    inputs:
+      wbs_id: "{{ params.wbs_id }}"
+
+  - id: classify
+    adapter: risk_forecast
+    action: classify_drift
+    inputs:
+      drift_days: "{{ steps.forecast.output.drift_days }}"
+      previous_drift_days: "{{ steps.previous.output.rows[0].drift_days }}"
+      pending_count: "{{ steps.pending.output.count }}"
+
+  - id: snapshot
+    adapter: postgres
+    action: execute
+    inputs:
+      name: save_forecast_snapshot
+      params:
+        wbs_id: "{{ params.wbs_id }}"
+        drift_days: "{{ steps.forecast.output.drift_days }}"
+        tier: "{{ steps.classify.output.tier }}"
+        forecast: "{{ steps.forecast.output }}"
+
+  # AI に最低2つの、性質の異なる代替案を考えさせ、それぞれ独立した
+  # option_label で propose する。tier・confidence の扱いは wbs_replan.yaml
+  # と同一（tier は自己申告不可、confidence は各案自体への自信度）。
+  - id: replan
+    when: "{{ steps.classify.output.should_propose }} == true"
+    agent:
+      tools:
+        - wbs_replan.propose
+      allow_writes: true
+      max_iterations: 6
+    llm:
+      profile: default
+      temperature: 0.3
+    prompt_inline: |
+      あなたは PMO 担当です。WBS "{{ params.wbs_id }}" の進捗予測から、
+      締切までに間に合わせるための再計画案を、**性質の異なる2つの代替案**
+      として考えてください。1つに絞らないでください -- 人がトレードオフを
+      比較して選べるようにすることが目的です。
+
+      現在の状況:
+      - 締切: {{ params.deadline }}
+      - 本日: {{ run.date }}
+      - 完了: {{ steps.forecast.output.done_tasks }} / {{ steps.forecast.output.total_tasks }}
+        （{{ steps.forecast.output.percent_done }}%）
+      - 残工数: {{ steps.forecast.output.remaining_effort }}
+      - 現在のベロシティ: {{ params.velocity_per_day }} / 日
+      - 予測完了日: {{ steps.forecast.output.projected_completion }}
+      - ドリフト: {{ steps.forecast.output.drift_days }} 日（正=遅延）
+      - 見積もりが無いタスク: {{ steps.forecast.output.unestimated }}
+      - 判定: {{ steps.classify.output.reason }}
+
+      依存関係の分析結果（機械計算済み。これ自体は疑わず前提として使うこと）:
+      - ブロックされているタスク（依存先が未完了）: {{ steps.dependencies.output.blocked }}
+      - クリティカルパス（最も時間を左右する依存チェーン）: {{ steps.dependencies.output.critical_path }}
+      - クリティカルパスの残工数合計: {{ steps.dependencies.output.critical_path_effort }}
+      - 循環依存（データの不整合の可能性、あれば必ず assumptions で言及すること）:
+        {{ steps.dependencies.output.cycles }}
+      - 波及範囲（各タスクが遅れた場合に道連れになる他タスク）:
+        {{ steps.dependencies.output.downstream_impact }}
+
+      タスク一覧:
+      {{ params.tasks }}
+
+      必ず守ること:
+      - 2つの案は、**同じことの言い換えではなく、実際に異なる手段**にする
+        こと（例: 「クリティカルパス上のタスクの締切を延ばす」案と、
+        「クリティカルパス外の待機タスクに要員を追加してクリティカルパス
+        自体を短縮する」案、のように）。
+      - それぞれの案は、全体を書き直すのではなく差分（何をどう変えるか）
+        だけを考えること。変更しないタスクには触れないこと。
+      - クリティカルパス・波及範囲の分析結果を無視した案を出さないこと。
+        ブロックされているタスクを単独で早める提案は、依存先が終わって
+        いない限り意味が無い。
+      - 前提として置いたこと（assumptions）は必ず書くこと。データに無い
+        ことを断定しないこと。
+      - ドリフトの重大度（tier）はあなたが判断するものではありません。
+        propose を呼ぶときに tier は渡さないでください（受け付けられません）。
+      - confidence は、その案自体への自信度です（0.0〜1.0）。2つの案の
+        confidence が同じである必要はありません。
+      - 案ごとに wbs_replan.propose を呼び、option_label には案の内容が
+        分かる短い英数字の識別子を付けること（例: "extend_deadline" /
+        "add_resources"）。2つとも呼び終えたら終了してください。
+
+  - id: notify_critical
+    when: "{{ steps.classify.output.tier }} == 3"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        :rotating_light: WBS 遅延が危機的水域です（Tier 3）
+
+        ドリフト: {{ steps.forecast.output.drift_days }} 日
+        予測完了日: {{ steps.forecast.output.projected_completion }}
+        締切: {{ params.deadline }}
+        クリティカルパス: {{ steps.dependencies.output.critical_path }}
+
+        Web UI で複数の再計画案を比較して選んでください。まだ何にも
+        反映されていません。
