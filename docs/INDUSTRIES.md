@@ -8,6 +8,7 @@
 | 建設・施工管理 | `construction/site_meeting.yaml` | 工程会議と安全指摘 |
 | マーケティング | `marketing/campaign_check.yaml` | キャンペーン進行と承認待ち |
 | 製造 | `manufacturing/line_downtime_triage.yaml` | 生産ライン停止の仕分け |
+| 経営コンサルティング | `consulting/scope_change_triage.yaml` | 契約範囲外の疑いがある課題の分離 |
 | 法務・コンプライアンス | `legal/matter_deadline_triage.yaml` | 案件期限の確認と秘匿特権の扱い |
 | カスタマーサクセス | `customer_success/account_health_triage.yaml` | 顧客アカウントの状況確認 |
 | 財務監査 | `financial_audit/finding_remediation_triage.yaml` | 監査指摘の重要度別振り分け |
@@ -340,6 +341,53 @@ tiers and insurance's fraud flag.
 A contractual deliverable (CDRL) deadline gets the same alone-and-immediate
 treatment as "safety" elsewhere, since missing one can affect the
 contractor's performance rating (CPARS).
+
+---
+
+### 経営コンサルティング — 範囲外の疑いは、着手する前に止める
+
+他業界の「安全」「秘匿特権」「クリアランス」は、**気づいたときにはもう
+遅れている**問題でした。コンサルティングの契約範囲（SOW）は逆で、
+**着手する前に止められれば実害が無い**問題です。
+
+だからこそ、契約範囲と食い違って見える課題は、緊急度に関わらず通常の
+進捗報告から分け、変更契約（チェンジオーダー）の確認が要る候補として
+単独で出します。ここで見落として通常業務として進めてしまうと、
+未契約の作業を請求できない、あるいは無償労働になってしまいます。
+一方で、判定を誤って動かせる作業を止めてしまう害は、確認の手間だけです
+——**迷ったら範囲外候補に入れる**方に倒しています。
+
+**範囲内か範囲外かの最終判断は AI にさせません。** 契約書を読んで法的な
+拘束力を判断させるのは、財務監査の重要度分類・保険の不正疑いフラグと
+同じ理由で人の仕事です。AI がするのは「契約時の作業範囲の要約と
+食い違って見えるかどうか」の一次仕分けだけです。
+
+クライアントへの納品期限は、他業界の「安全」と同じ形で単独・即時に
+扱います。社内の期日と違い、遅れがクライアントとの信頼関係に直接
+影響するためです。
+
+Elsewhere in this guide, "safety," "privilege," and "clearance" are all
+problems you notice **only after** it's already too late. A consulting
+engagement's contracted scope (SOW) runs the other way: stopping **before**
+work starts costs nothing.
+
+That's why an issue that looks like it falls outside the agreed scope is
+separated from the ordinary progress report regardless of urgency, and sent
+alone as a candidate needing a change order. Missing this and letting it
+proceed as ordinary work means unbillable hours or an outright dispute over
+what was promised. Misjudging the other way — flagging work that was
+actually in scope — only costs a moment's check, so the prompt errs toward
+flagging.
+
+**Whether something is actually in or out of scope is never the model's
+final call** — reading a contract for its legal boundary is a human's job,
+the same reasoning as the audit template's severity tiers and insurance's
+fraud flag. The model only does the first pass: does this look like it
+matches the summarized scope or not.
+
+A client-facing deliverable deadline gets the same alone-and-immediate
+treatment as "safety" elsewhere: unlike an internal date, slipping it
+affects the client relationship directly.
 
 ---
 

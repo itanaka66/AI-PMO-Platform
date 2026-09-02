@@ -1,0 +1,123 @@
+name: consulting_scope_change_triage
+version: "1"
+industry: consulting
+description: |
+  経営コンサルティング案件の課題を確認し、対応が必要なものだけを報告する。
+  契約範囲（SOW）と食い違って見える課題は、通常の進捗として扱わず、
+  変更契約の確認が必要な候補として単独で報告する — 未契約の作業を
+  請求できない、あるいは無償労働になってしまうことを防ぐため。
+  クライアント納期が近い課題は単独・即時に、クライアント側の対応待ちの
+  課題は担当者ではなく案件責任者へ通知する。
+
+trigger: "schedule:0 8 * * MON-FRI"
+
+params:
+  jira_project: ENGAGE
+  team_channel: "#consulting-ops"
+  urgent_channel: "#consulting-deliverables"
+  scope_channel: "#consulting-scope-review"
+  urgent_within_days: 3
+  # 契約時に合意した作業範囲の要約。ここに書かれていない依頼が
+  # 課題として上がってきた場合、変更契約の対象候補として扱う。
+  #
+  # A summary of the scope agreed at contract signing. A request that shows
+  # up as an issue but is not covered here is treated as a candidate for a
+  # change order.
+  scope_summary: |
+    - 現状業務プロセスの分析と課題抽出（4週間）
+    - 改善案の策定と経営層への提案（2回のワークショップ）
+    - 提案の実行計画書の作成
+    実装作業・システム開発・研修の実施は範囲外。
+
+steps:
+  - id: issues
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY duedate ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.0
+    prompt: consulting_scope_triage_ja
+    inputs:
+      today: "{{ run.date }}"
+      urgent_within_days: "{{ params.urgent_within_days }}"
+      scope_summary: "{{ params.scope_summary }}"
+      issues: "{{ steps.issues.output.items }}"
+    output_format: json
+    output_schema:
+      required: [urgent, scope_change_candidates, client_blocked, internal]
+
+  # 範囲外の疑いがある課題は、他のどの通知にも混ぜず、専用チャンネルへ
+  # 単独で送る。通常の進捗報告に紛れると、変更契約を経ずにそのまま
+  # 着手されてしまう恐れがある。
+  #
+  # A candidate scope change goes to its own channel, never mixed into the
+  # regular progress report: buried among ordinary updates, it risks being
+  # started without the change order it needs first.
+  - id: notify_scope_change
+    when: "{{ steps.triage.output.scope_change_candidates }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.scope_channel }}"
+      text: |
+        契約範囲外の疑いがある課題 ({{ run.date }})
+
+        {{ steps.triage.output.scope_change_candidates }}
+
+        変更契約（チェンジオーダー）でクライアントの合意を得るまで、
+        通常の進捗として着手しないでください。
+
+  # 納品期限が近いものは単独・即時に。クライアントに約束した納期であり、
+  # 社内の期日と違って遅れが契約関係・信頼関係に直接影響する。
+  #
+  # A deliverable nearing its due date is sent alone, immediately: unlike an
+  # internal deadline, this one was promised to the client, and slipping it
+  # affects the relationship directly.
+  - id: notify_urgent
+    for_each: "{{ steps.triage.output.urgent }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.urgent_channel }}"
+      text: |
+        【納期】{{ item.summary }}（{{ item.issue_key }}）
+        期限: {{ item.due_date }}（残り {{ item.days_until_due }} 日）
+
+  # クライアント側の対応待ちは、担当者にではなく案件責任者へ。
+  # 担当者に確認してもクライアントは動かせない。
+  - id: notify_client_blocked
+    when: "{{ steps.triage.output.client_blocked }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        クライアント側の対応待ち ({{ run.date }})
+
+        {{ steps.triage.output.client_blocked }}
+
+        担当者の手を離れています。状況の把握のみで結構です。
+
+  - id: notify_internal
+    when: "{{ steps.triage.output.internal }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.team_channel }}"
+      text: |
+        対応が必要な課題 ({{ run.date }})
+
+        {{ steps.triage.output.internal }}
