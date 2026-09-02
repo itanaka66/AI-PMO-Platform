@@ -173,26 +173,48 @@ OPERATOR = "operator-token-value"
 VIEWER = "viewer-token-value"
 
 
+DEFAULT_TENANT = "acme"
+
+
 class StubPostgres:
     """Web 層のテスト用の postgres アダプタの代わり。SQL の中身ではなく、
     エンドポイント側の分岐（200/404/409/503・権限）を検証したいので、
-    ここでは戻り値を直接制御できる単純な二重体にする。"""
+    ここでは戻り値を直接制御できる単純な二重体にする。
+
+    tenant_of を明示的に設定しない限り、各行は DEFAULT_TENANT に属する
+    ものとして扱う——既存のテストはすべて単一テナント前提で書かれている
+    ので、その挙動をそのまま保つ。複数テナントを跨ぐ検証をしたいテストは
+    tenant_of[id] = "他のテナント名" を設定する。
+    """
 
     name = "postgres"
 
     def __init__(self) -> None:
         self.pending: dict[str, dict[str, Any]] = {}
+        self.tenant_of: dict[str, str] = {}
         self.decisions: list[tuple[str, str, str, str | None]] = []
 
     def health_check(self) -> bool:
         return True
 
+    def _tenant_of(self, proposal_id: str) -> str:
+        return self.tenant_of.get(proposal_id, DEFAULT_TENANT)
+
     def query(self, name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        params = params or {}
+        tenant = params.get("tenant")
         if name == "pending_wbs_proposals":
-            return {"rows": list(self.pending.values()), "count": len(self.pending)}
+            rows = [row for pid, row in self.pending.items()
+                    if self._tenant_of(pid) == tenant]
+            return {"rows": rows, "count": len(rows)}
         if name == "get_wbs_proposal":
-            row = self.pending.get((params or {})["id"])
-            return {"rows": [row] if row else [], "count": 1 if row else 0}
+            proposal_id = params["id"]
+            row = self.pending.get(proposal_id)
+            if row is None or self._tenant_of(proposal_id) != tenant:
+                # 他テナントの行は「存在しない」のと同じ返り方にする。
+                # 実クエリの WHERE tenant = :tenant AND id = :id も同じ形。
+                return {"rows": [], "count": 0}
+            return {"rows": [row], "count": 1}
         raise AssertionError(f"unexpected query: {name}")
 
     def execute(self, name: str, params: dict[str, Any] | None = None,
@@ -200,9 +222,12 @@ class StubPostgres:
         assert name == "decide_wbs_proposal"
         params = params or {}
         proposal_id = params["id"]
+        tenant = params.get("tenant")
         self.decisions.append((proposal_id, params["status"],
                                 params["decided_by"], params.get("decision_note")))
-        if proposal_id not in self.pending:
+        if proposal_id not in self.pending or self._tenant_of(proposal_id) != tenant:
+            # 実クエリの WHERE tenant = :tenant AND id = :id AND status = 'pending'
+            # と同じく、他テナントの行は対象 0 件として扱う（存在を漏らさない）。
             return {"affected": 0, "rows": []}
         row = self.pending.pop(proposal_id)
         row["status"] = params["status"]
@@ -214,10 +239,8 @@ def postgres() -> StubPostgres:
     return StubPostgres()
 
 
-@pytest.fixture
-def client(tmp_path: Path, postgres: StubPostgres) -> TestClient:
-    templates_root = tmp_path / "templates"
-    templates_root.mkdir()
+def _build_client(postgres: StubPostgres, templates_root: Path, tenant: str) -> TestClient:
+    templates_root.mkdir(exist_ok=True)
 
     adapters = AdapterRegistry()
     adapters.register(MockTeamsAdapter())
@@ -228,10 +251,30 @@ def client(tmp_path: Path, postgres: StubPostgres) -> TestClient:
     llms = LLMRegistry()
     llms.register("default", EchoProvider())
 
-    app = create_app(Engine(adapters, llms), templates_root, OPERATOR,
-                      viewer_token=VIEWER, tenant="acme", lang="en",
-                      store=RunStore())
-    return TestClient(app)
+    return TestClient(create_app(
+        Engine(adapters, llms), templates_root, OPERATOR,
+        viewer_token=VIEWER, tenant=tenant, lang="en", store=RunStore(),
+    ))
+
+
+@pytest.fixture
+def client(tmp_path: Path, postgres: StubPostgres) -> TestClient:
+    return _build_client(postgres, tmp_path / "templates", DEFAULT_TENANT)
+
+
+@pytest.fixture
+def other_tenant_client(tmp_path: Path, postgres: StubPostgres) -> TestClient:
+    """同じ postgres（＝実運用なら同じデータベース）を共有する、別テナント
+    向けのサーバー・インスタンス。テナント分離が `tenant` の値そのもの
+    から来ていて、トークンの違いから来ているのではないことを確かめる
+    ため、トークンは client と同じものを使う。
+
+    A server instance for a different tenant, sharing the same postgres
+    (the same database, in a real deployment). Uses the same tokens as
+    `client` on purpose — isolation should come from the `tenant` value
+    itself, not from using a different credential.
+    """
+    return _build_client(postgres, tmp_path / "templates_other", "other_corp")
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -388,6 +431,93 @@ def test_wbs_proposals_503_when_postgres_not_configured(tmp_path: Path):
     response = client.get("/api/wbs-proposals", headers=_auth(OPERATOR))
 
     assert response.status_code == 503
+
+
+# --- 実テナントでの検証 / verification against a real second tenant --------
+#
+# ここまでのテストはすべて単一テナント（"acme"）を前提にしていた。
+# 分離が本当に効いているかは、同じデータベースを共有する別テナントを
+# 実際に立てて確かめないと分からない——SQL 文に `tenant = %s` が
+# 含まれることは test_pending_wbs_proposals_binds_tenant で確認済みだが、
+# それだけでは「他テナントの行が実際に見えない」ことの証明にならない。
+#
+# Every test above assumed a single tenant ("acme"). Whether isolation
+# actually holds can only be shown by standing up a second tenant that
+# shares the same database — confirming the SQL text contains
+# `tenant = %s` (already done in test_pending_wbs_proposals_binds_tenant)
+# is not the same as proving another tenant's row is actually invisible.
+
+def test_a_tenant_cannot_list_another_tenants_proposals(
+    client: TestClient, other_tenant_client: TestClient, postgres: StubPostgres,
+):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+    postgres.tenant_of["p1"] = "other_corp"
+
+    acme_view = client.get("/api/wbs-proposals", headers=_auth(OPERATOR))
+    other_view = other_tenant_client.get("/api/wbs-proposals", headers=_auth(OPERATOR))
+
+    assert acme_view.json()["items"] == []
+    assert [item["id"] for item in other_view.json()["items"]] == ["p1"]
+
+
+def test_a_tenant_cannot_view_another_tenants_proposal_detail(
+    client: TestClient, other_tenant_client: TestClient, postgres: StubPostgres,
+):
+    """存在自体を漏らさない — 403 ではなく 404。"""
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+    postgres.tenant_of["p1"] = "other_corp"
+
+    cross_tenant = client.get("/api/wbs-proposals/p1", headers=_auth(OPERATOR))
+    own_tenant = other_tenant_client.get("/api/wbs-proposals/p1", headers=_auth(OPERATOR))
+
+    assert cross_tenant.status_code == 404
+    assert own_tenant.status_code == 200
+
+
+def test_a_tenant_cannot_approve_another_tenants_proposal(
+    client: TestClient, other_tenant_client: TestClient, postgres: StubPostgres,
+):
+    """自テナントの operator であっても、他テナントの提案は承認できない。
+
+    トークンは client と other_tenant_client で同じものを使っている
+    （両方とも OPERATOR）。それでも分離が効くのは、拒否がロールではなく
+    `tenant` の値そのものから来ているということ。
+    """
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+    postgres.tenant_of["p1"] = "other_corp"
+
+    response = client.post("/api/wbs-proposals/p1/approve", headers=_auth(OPERATOR))
+
+    assert response.status_code == 409
+    # decide_wbs_proposal 自体は呼ばれた（監査ログには残る）が、
+    # 対象0件で他テナントの行を書き換えてはいない。
+    assert postgres.decisions == [("p1", "approved", "operator", None)]
+    assert postgres.pending["p1"]["status"] == "pending"
+
+    # 本来のテナント側からは、これまでどおり承認できる。
+    own_tenant = other_tenant_client.post(
+        "/api/wbs-proposals/p1/approve", headers=_auth(OPERATOR))
+    assert own_tenant.status_code == 200
+    assert own_tenant.json()["status"] == "approved"
+
+
+def test_proposals_from_both_tenants_never_mix_in_one_listing(
+    client: TestClient, other_tenant_client: TestClient, postgres: StubPostgres,
+):
+    postgres.pending["p1"] = {"id": "p1", "tier": 1, "status": "pending"}
+    postgres.pending["p2"] = {"id": "p2", "tier": 2, "status": "pending"}
+    postgres.tenant_of["p2"] = "other_corp"
+    # p1 は tenant_of を設定しないので DEFAULT_TENANT ("acme") のまま。
+
+    acme_ids = {item["id"] for item in
+                client.get("/api/wbs-proposals", headers=_auth(OPERATOR)).json()["items"]}
+    other_ids = {item["id"] for item in
+                 other_tenant_client.get("/api/wbs-proposals",
+                                        headers=_auth(OPERATOR)).json()["items"]}
+
+    assert acme_ids == {"p1"}
+    assert other_ids == {"p2"}
+    assert acme_ids.isdisjoint(other_ids)
 
 
 # --- 監査ログ / audit logging ------------------------------------------------
