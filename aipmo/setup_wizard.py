@@ -34,7 +34,7 @@ class SetupAnswers:
     """ウィザードの回答 / the answers a user gives."""
 
     mode: str = "cloud"          # cloud | local
-    provider: str = "openai"     # cloud のとき: openai | gemini | groq | openrouter | claude
+    provider: str = "openai"     # cloud のとき: openai | gemini | groq | openrouter
     chat_model: str | None = None
     tenant: str = "my_company"
     use_data_layer: bool = False
@@ -258,7 +258,7 @@ def run_interactive(
 
         out("")
         out(t("q_provider"))
-        choices = ["openai", "gemini", "groq", "openrouter", "claude"]
+        choices = ["openai", "gemini", "groq", "openrouter"]
         for index, name in enumerate(choices, start=1):
             preset = PRESETS[name]
             suffix = "" if preset.supports_embeddings else t("no_embeddings")
