@@ -116,6 +116,7 @@ WBS-replanning AI → approval) actually running.
 | `meeting_task_update` | 会議の内容から既存課題を更新（確信度で選別） / Updates existing issues from meeting content, filtered by confidence |
 | `overdue_chase` | 期限超過の担当者へ個別に催促 / Individually chases overdue owners |
 | `overdue_triage` | 遅延状況をエージェントが調査して報告 / An agent investigates delays and reports back |
+| `portfolio_investigation` | 複数プロジェクトを独立したサブエージェントで並行調査 / Investigates several projects concurrently, one subagent per project |
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） / Sprint health check — notifies only when something is wrong |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 / Drafts a WBS from meeting decisions |
 | `wbs_risk_forecast` | WBS の遅延予測とドリフト検出、承認待ち提案の記録 / Forecasts WBS drift and records an approval-pending replan proposal |
@@ -539,7 +540,7 @@ are each recorded individually.
 
 721 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-823 tests, aimed at the guarantees and at the failure shapes that look like
+866 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template

@@ -1,0 +1,50 @@
+name: portfolio_investigation
+version: "1"
+industry: software
+description: |
+  複数の Jira プロジェクトを、それぞれ独立したサブエージェントに並行で
+  調査させ、まとめて報告する。1件ずつ順番に調べる overdue_triage と違い、
+  対象が多いほど並行実行の効果が大きい。
+
+trigger: "schedule:0 8 * * MON"
+
+params:
+  projects: [CORE, PORTAL, MOBILE]
+  report_channel: "#pmo-portfolio"
+
+steps:
+  # concurrent: true を付けた agent ステップは、要素（プロジェクト）ごとに
+  # 独立したサブエージェントを並行に走らせる。逐次だと3件で3倍の時間が
+  # かかるが、ここでは同時に進む。
+  #
+  # An agent step marked concurrent: true runs one independent subagent per
+  # element (project) in parallel. Sequentially, three projects would take
+  # three times as long; here they run at the same time.
+  - id: investigate_all
+    for_each: "{{ params.projects }}"
+    as: project
+    concurrent: true
+    agent:
+      tools: [jira.find_overdue]
+      allow_writes: false
+      max_iterations: 4
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt_inline: |
+      プロジェクト {{ project }} の遅延状況を調べてください。
+      道具を使って実際のデータを確認してから、1〜2文で要約してください。
+      推測で書かないこと。
+
+  - id: report
+    when: "{{ steps.investigate_all.output.count }} > 0"
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.report_channel }}"
+      text: |
+        *ポートフォリオ調査* — {{ run.date }}
+        （{{ steps.investigate_all.output.count }} プロジェクト、
+        {{ steps.investigate_all.output.failed }} 件が失敗）
+
+        {{ steps.investigate_all.output.results }}

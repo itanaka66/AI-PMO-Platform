@@ -453,6 +453,7 @@ class Engine:
         failures: list[dict[str, Any]] = []
 
         skipped = 0
+        runnable: list[tuple[int, dict[str, Any]]] = []
         for index, item in enumerate(items):
             item_scope = {**scope, step.as_name: item, "loop": {
                 # index は 0 始まり（計算用）、number は 1 始まり（表示用）。
@@ -478,7 +479,26 @@ class Engine:
                     skipped += 1
                     continue
 
-            outcome = self._attempt(step, ctx, item_scope)
+            runnable.append((index, item_scope))
+
+        # concurrent: true の agent ステップだけ、各要素を独立したサブ
+        # エージェントとして並行に走らせる。それ以外は逐次のまま
+        # （ロード時に concurrent は agent 以外で拒否されている）。
+        #
+        # Only an agent step with concurrent: true runs its elements as
+        # independent, concurrent subagents; everything else stays
+        # sequential (concurrent is rejected on non-agent steps at load
+        # time).
+        if step.concurrent and len(runnable) > 1:
+            with ThreadPoolExecutor(max_workers=len(runnable)) as pool:
+                pending = [(index, pool.submit(self._attempt, step, ctx, item_scope))
+                          for index, item_scope in runnable]
+                outcomes = [(index, future.result()) for index, future in pending]
+        else:
+            outcomes = [(index, self._attempt(step, ctx, item_scope))
+                       for index, item_scope in runnable]
+
+        for index, outcome in outcomes:
             if outcome[0]:
                 results.append(outcome[1])
             else:

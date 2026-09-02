@@ -5,6 +5,8 @@ Focus: that it stops, and that it stays inside what was permitted.
 """
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from aipmo.adapters.base import AdapterRegistry
@@ -970,3 +972,162 @@ def test_claude_stops_at_max_iterations_like_any_other_provider(monkeypatch):
 
     assert result.stopped_because == "iteration_limit"
     assert result.iterations == 2
+
+
+# --- 並行なサブエージェント調査 / concurrent subagent investigation ---------
+#
+# for_each + concurrent: true な agent ステップは、要素ごとに独立した
+# サブエージェントを並行に走らせる。
+
+class _BarrierProvider(EchoProvider):
+    """converse() のたびに、全員が揃うまで待つ。
+    本当に並行に走っていることの証明に使う。"""
+
+    def __init__(self, n: int) -> None:
+        super().__init__()
+        self.barrier = threading.Barrier(n, timeout=2)
+
+    def converse(self, messages, tools=None, temperature=0.2, max_tokens=4096):
+        self.conversations.append(list(messages))
+        self.barrier.wait()
+        return LLMResponse(text="", model="echo")
+
+
+def test_concurrent_for_each_is_rejected_on_non_agent_steps():
+    with pytest.raises(loader.TemplateError, match="concurrent"):
+        loader.load_dict({
+            "name": "bad_demo",
+            "steps": [{
+                "id": "notify_all",
+                "for_each": ["#a", "#b"],
+                "as": "channel",
+                "concurrent": True,
+                "adapter": "slack",
+                "action": "post_message",
+                "inputs": {"channel": "{{ channel }}", "text": "hi"},
+            }],
+        })
+
+
+def test_for_each_agent_steps_stay_sequential_by_default():
+    template = loader.load_dict({
+        "name": "spawner_demo",
+        "steps": [{
+            "id": "investigate_all",
+            "for_each": ["A", "B"],
+            "as": "project",
+            "agent": {"tools": ["jira.find_overdue"]},
+            "prompt_inline": "{{ project }} の状況を調べてください",
+        }],
+    })
+    assert template.steps[0].concurrent is False
+
+
+def test_concurrent_for_each_actually_overlaps_subagents():
+    """3件を並行に走らせたら、3件とも同時に「揃うのを待つ」地点へ来ること。
+
+    バリアが解けるのは全員がそこに着いてから — 逐次実行なら2件目が
+    バリアに着く前にタイムアウトする。
+
+    The barrier only releases once everyone has arrived — run sequentially,
+    the second element would still be waiting for the first to finish and
+    the barrier would time out.
+    """
+    adapters = registry()
+    provider = _BarrierProvider(3)
+    llms = LLMRegistry()
+    llms.register("default", provider)
+
+    template = loader.load_dict({
+        "name": "spawner_demo",
+        "steps": [{
+            "id": "investigate_all",
+            "for_each": ["A", "B", "C"],
+            "as": "project",
+            "concurrent": True,
+            "agent": {"tools": ["jira.find_overdue"]},
+            "prompt_inline": "{{ project }} の状況を調べてください",
+        }],
+    })
+
+    ctx = Engine(adapters, llms).run(template)
+    output = ctx.results["investigate_all"].output
+
+    assert output["count"] == 3
+    assert output["failed"] == 0
+    seen = {
+        conversation[-1]["content"]
+        for conversation in provider.conversations
+    }
+    assert seen == {"A の状況を調べてください", "B の状況を調べてください",
+                    "C の状況を調べてください"}
+
+
+def test_one_subagents_failure_does_not_sink_the_others():
+    """会話の履歴はサブエージェントごとに独立しているので、応答は
+    直前のメッセージから対象の project を読み取って決める
+    ——並行実行での呼び出し順に依存させないため。
+
+    Each subagent keeps its own conversation history, so the response is
+    derived from the project named in the latest message rather than call
+    order, which is not deterministic once the elements run concurrently.
+    """
+
+    class FlakyJira(MockJiraAdapter):
+        def find_overdue(self, project, as_of=None):
+            if project == "B":
+                raise RuntimeError("boom")
+            return super().find_overdue(project, as_of)
+
+    class PerProjectProvider(EchoProvider):
+        def converse(self, messages, tools=None, temperature=0.2, max_tokens=4096):
+            self.conversations.append(list(messages))
+            project = next(p for p in ("A", "B", "C")
+                          if p in messages[0]["content"])
+            if not any(m.get("role") == "tool" for m in messages):
+                return LLMResponse(text="", model="echo", tool_calls=[
+                    ToolCall(id="c1", name="jira__find_overdue",
+                             arguments={"project": project})])
+            return LLMResponse(text=f"{project}: done", model="echo")
+
+    adapters = AdapterRegistry()
+    adapters.register(FlakyJira())
+    llms = LLMRegistry()
+    llms.register("default", PerProjectProvider())
+
+    template = loader.load_dict({
+        "name": "spawner_demo",
+        "steps": [{
+            "id": "investigate_all",
+            "for_each": ["A", "B", "C"],
+            "as": "project",
+            "concurrent": True,
+            "agent": {"tools": ["jira.find_overdue"], "max_iterations": 2},
+            "prompt_inline": "{{ project }} を調べる",
+        }],
+    })
+
+    ctx = Engine(adapters, llms).run(template)
+    output = ctx.results["investigate_all"].output
+
+    # B の道具呼び出しは AdapterError でも TypeError でもない例外なので
+    # fatal 扱いになり、そのサブエージェントは輪を抜けて打ち切られる
+    # ——だが、それは for_each の1要素の中で完結した「打ち切り」であって、
+    # 例外を上に投げるわけではない（要素としては成功のまま）。
+    # 他の要素（A・C）は影響を受けず、それぞれ最後まで走る。
+    #
+    # B's tool call fails with an exception that is neither AdapterError nor
+    # TypeError, so it's classified fatal and that subagent's own loop ends
+    # early — but that's a controlled stop contained within one for_each
+    # element, not a raised exception (the element itself still counts as
+    # having succeeded). The other elements (A, C) are unaffected and run to
+    # completion.
+    assert output["count"] == 3
+    assert output["failed"] == 0
+    by_project = {
+        r["tool_calls"][0]["arguments"]["project"]: r for r in output["results"]
+    }
+    assert by_project["A"]["answer"] == "A: done"
+    assert by_project["C"]["answer"] == "C: done"
+    assert by_project["B"]["stopped_because"] != "finished"
+    assert by_project["B"]["tool_calls"][0]["ok"] is False
