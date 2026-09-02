@@ -386,12 +386,12 @@ steps:
     inputs: { channel: "C123", text: "Hello" }
 """
     (templates / "webhook.yaml").write_text(content.strip(), encoding="utf-8")
-    
+
     payload = {"event": "pull_request", "action": "opened"}
     response = client.post("/api/webhook", json=payload, headers={"x-aipmo-token": TOKEN})
     assert response.status_code == 200
     assert response.json()["matched"] == 1
-    
+
     runs_res = client.get("/api/runs", headers={"x-aipmo-token": TOKEN})
     assert runs_res.status_code == 200
     runs = runs_res.json()["items"]
