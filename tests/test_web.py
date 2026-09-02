@@ -5,6 +5,7 @@ Opening a listener makes auth and path handling the things worth testing.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -143,6 +144,27 @@ def test_static_app_js_wires_up_proposal_review():
     assert "/api/wbs-proposals" in app_js
     assert '"approve"' in app_js
     assert '"reject"' in app_js
+
+def test_approve_and_reject_buttons_are_gated_by_can_run():
+    """承認・却下ボタンは canRun (operator) のときだけ描画される。
+
+    サーバー側は viewer のトークンをどのみち拒否するが（docs/MOBILE.md の
+    「ボタンを隠すのは案内であって、権限管理ではない」のとおり）、それでも
+    見せない方の分岐が壊れていないかは別に確かめる価値がある。ブラウザ
+    テストは無いので、`if (canRun)` が実際に proposalActions の呼び出しを
+    包んでいることをソース上で機械的に確認する。
+
+    The server refuses a viewer token regardless (per docs/MOBILE.md: hiding
+    a button is a courtesy, not access control), but whether the hiding
+    branch itself is still intact is worth checking on its own. With no
+    browser test available, this checks — mechanically, on the source —
+    that `if (canRun)` actually wraps the call to proposalActions.
+    """
+    app_js = (Path(__file__).resolve().parents[1]
+              / "aipmo" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+
+    match = re.search(r"if\s*\(canRun\)\s*\{[^}]*proposalActions\(", app_js)
+    assert match, "canRun によるガードが proposalActions の呼び出しから外れている"
 
 # --- テンプレート一覧 / template listing -----------------------------------
 

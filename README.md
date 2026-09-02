@@ -540,7 +540,7 @@ are each recorded individually.
 
 721 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-866 tests, aimed at the guarantees and at the failure shapes that look like
+878 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
