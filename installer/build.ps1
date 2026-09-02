@@ -2,7 +2,7 @@
 #
 #   installer\build.ps1
 #
-# 出力 / Output: dist\AI-PMO-Setup-0.1.0.exe
+# 出力 / Output: dist\AI-PMO-Setup-0.1.4.exe
 #
 # 必要なもの / Requires:
 #   - Windows (PyInstaller はクロスコンパイルできない / it cannot cross-compile)
