@@ -359,7 +359,7 @@ def create_app(
         )
         if not event_type:
             raise HTTPException(status_code=400, detail="event type not specified")
-            
+
         matched = []
         for template in _get_cached_templates():
             if template.trigger.type == "event" and template.trigger.event == event_type:
