@@ -88,11 +88,15 @@ still nobody would use it. Use cloud AI, or an inference server you provide.
 
 **Qdrant を Oracle 側に同居させる理由** — Aiven の 1GB に会議の記録や埋め込みは
 入りません。ブロックストレージは 200GB 無料なので、量が出るものはそちらに置きます。
-PostgreSQL には実行履歴とナレッジ候補という「小さくて構造化されたもの」だけを置きます。
+PostgreSQL には実行履歴とナレッジ候補という「小さくて構造化されたもの」を置く前提です。
+スキーマと `queries.yaml` はありますが、エンジンからの自動書き込みは未接続です。
+画面の履歴はメモリ上の直近 50 件です。
 
 Qdrant lives on the Oracle box because transcripts and embeddings will not fit
-in Aiven's 1GB, while Oracle's block storage is 200GB free. PostgreSQL holds
-only the small structured things: run history and knowledge candidates.
+in Aiven's 1GB, while Oracle's block storage is 200GB free. PostgreSQL is meant
+to hold the small structured things: run history and knowledge candidates.
+The schema and named queries exist; the engine does not write them yet. The
+web UI keeps the last 50 runs in memory.
 
 ---
 
@@ -194,13 +198,13 @@ The key moves into a cookie on first open. Add it to the home screen.
 
 Aiven の 1GB は、実行履歴だけを入れる分には長く保ちますが、
 **ステップ出力を丸ごと保存すると数週間で埋まります**。
-議事録の全文を `step_results.output` に入れないでください。
-長い出力は Qdrant 側に置き、PostgreSQL には参照だけを残します。
+エンジンが書き込むようになったら、議事録の全文を `step_results.output` に
+入れないでください。長い出力は Qdrant 側に置き、PostgreSQL には参照だけを残します。
 
 Aiven's 1GB lasts a long time for run metadata, but **storing whole step
-outputs will fill it within weeks**. Keep full transcripts and minutes out of
-`step_results.output`; put the bulk in Qdrant and keep a reference in
-PostgreSQL.
+outputs will fill it within weeks**. Once the engine writes history, keep
+full transcripts and minutes out of `step_results.output`; put the bulk in
+Qdrant and keep a reference in PostgreSQL.
 
 使用量の確認 / Check usage:
 

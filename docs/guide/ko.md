@@ -109,7 +109,7 @@ OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件
 
 ```yaml
 name: meeting_minutes          # 이름
-trigger: "event:teams:meeting_ended"   # 언제 동작할지 (회의가 끝났을 때)
+trigger: "event:teams:meeting_ended"   # 기동 계기 (자동으로는 돌지 않음)
 
 steps:                         # 무엇을 할지
   - id: fetch_transcript       # ① 회의 기록을 가져온다
@@ -121,6 +121,10 @@ steps:                         # 무엇을 할지
   - id: register_jira          # ③ 작업을 등록한다
     adapter: jira
 ```
+
+`event:` 는 “무엇이 계기인지”를 적는 칸입니다. 회의가 끝나도 자동으로는 돌지 않습니다.
+`aipmo run` 이나 휴대폰 화면에서 회의 정보를 넘겨 실행합니다.
+정해진 시각에 돌리려면 `trigger: "schedule:..."` 와 `aipmo schedule` 입니다.
 
 하고 싶은 일이 바뀌면 템플릿을 바꾸기만 하면 됩니다.
 **AI를 쓰는 방식 자체가 템플릿에 따라 달라집니다.**
@@ -150,8 +154,8 @@ aipmo schedule    # 정해진 시각의 자동 실행 시작
 **사내 데이터는 밖으로 나가지 않습니다.** 회사마다 데이터 보관 위치가 나뉘어 있고,
 다른 회사의 데이터에는 기술적으로 닿을 수 없게 되어 있습니다.
 
-**공개는 자동으로 이루어지지 않습니다.** 노하우를 일반에 공개하는 구조가 있지만,
-반드시 사람의 승인이 필요합니다. 프로그램이 마음대로 공개할 수는 없습니다.
+**공개는 자동으로 이루어지지 않습니다.** 템플릿에서 공개 저장소에 쓸 수는 없습니다.
+후보를 내는 것까지는 가능하지만, 사람이 승인해 공개하는 절차는 아직 없습니다.
 
 ---
 

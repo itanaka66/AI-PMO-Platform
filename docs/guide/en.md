@@ -110,7 +110,7 @@ piece of PMO work.
 
 ```yaml
 name: meeting_minutes          # its name
-trigger: "event:teams:meeting_ended"   # when it runs (a meeting ended)
+trigger: "event:teams:meeting_ended"   # what started it (does not fire by itself)
 
 steps:                         # what it does
   - id: fetch_transcript       # 1. fetch the meeting record
@@ -122,6 +122,10 @@ steps:                         # what it does
   - id: register_jira          # 3. file the tasks
     adapter: jira
 ```
+
+`event:` records what started the run. It does not fire when a meeting ends.
+Pass the meeting details with `aipmo run` or from the phone screen.
+For a clock, use `trigger: "schedule:..."` and `aipmo schedule`.
 
 When the work changes, you swap the template.
 **How the AI is used changes with the template too.**
@@ -150,9 +154,9 @@ shared with colleagues and committed to Git, so the key is kept separate.
 **Your data does not leave.** Each organisation's data is stored separately,
 and reaching another organisation's data is not technically possible.
 
-**Nothing is published automatically.** There is a mechanism for sharing
-know-how publicly, but it always requires a person's approval. No program can
-publish on its own.
+**Nothing is published automatically.** A template cannot write to the public
+store. It can submit a candidate, but there is no approval step that
+publishes it yet.
 
 ---
 

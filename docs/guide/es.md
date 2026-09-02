@@ -111,7 +111,7 @@ Cada plantilla corresponde a una tarea de PMO.
 
 ```yaml
 name: meeting_minutes          # nombre
-trigger: "event:teams:meeting_ended"   # cuándo se ejecuta (al acabar una reunión)
+trigger: "event:teams:meeting_ended"   # qué lo arranca (no se dispara solo)
 
 steps:                         # qué hace
   - id: fetch_transcript       # 1. traer la grabación
@@ -123,6 +123,10 @@ steps:                         # qué hace
   - id: register_jira          # 3. registrar las tareas
     adapter: jira
 ```
+
+`event:` anota qué arrancó la ejecución. No se dispara al acabar una reunión.
+Pasa los datos de la reunión con `aipmo run` o desde la pantalla del móvil.
+Para un horario, usa `trigger: "schedule:..."` y `aipmo schedule`.
 
 Si cambia lo que quieres hacer, cambias de plantilla.
 **La forma misma de usar la IA cambia con la plantilla.**
@@ -152,9 +156,9 @@ mantiene aparte.
 **Los datos internos no salen.** Los datos de cada organización se guardan por
 separado y llegar a los de otra no es técnicamente posible.
 
-**Nada se publica automáticamente.** Existe un mecanismo para compartir
-conocimiento públicamente, pero siempre requiere la aprobación de una persona.
-Ningún programa puede publicar por su cuenta.
+**Nada se publica automáticamente.** Una plantilla no puede escribir en el
+almacén público. Puede presentar un candidato, pero aún no hay un paso de
+aprobación que lo publique.
 
 ---
 

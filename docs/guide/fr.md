@@ -111,7 +111,7 @@ Un modèle correspond à une tâche de PMO.
 
 ```yaml
 name: meeting_minutes          # son nom
-trigger: "event:teams:meeting_ended"   # quand il s'exécute (fin de réunion)
+trigger: "event:teams:meeting_ended"   # ce qui le déclenche (ne part pas tout seul)
 
 steps:                         # ce qu'il fait
   - id: fetch_transcript       # 1. récupérer l'enregistrement
@@ -123,6 +123,10 @@ steps:                         # ce qu'il fait
   - id: register_jira          # 3. enregistrer les tâches
     adapter: jira
 ```
+
+`event:` indique ce qui a lancé l'exécution. Il ne part pas à la fin d'une réunion.
+Passez les informations de la réunion avec `aipmo run` ou depuis l'écran du téléphone.
+Pour une heure fixe, utilisez `trigger: "schedule:..."` et `aipmo schedule`.
 
 Si le travail change, on change de modèle.
 **La manière même dont l'IA est utilisée change avec le modèle.**
@@ -153,9 +157,9 @@ Git ; la clé est donc tenue à l'écart.
 sont stockées séparément, et atteindre celles d'une autre n'est techniquement
 pas possible.
 
-**Rien n'est publié automatiquement.** Un mécanisme permet de partager
-publiquement le savoir-faire, mais il exige toujours l'accord d'une personne.
-Aucun programme ne peut publier de lui-même.
+**Rien n'est publié automatiquement.** Un modèle ne peut pas écrire dans le
+dépôt public. Il peut déposer un candidat, mais l'étape d'approbation qui
+publie n'existe pas encore.
 
 ---
 

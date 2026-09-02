@@ -212,13 +212,21 @@ Timestamps are dropped by default: minutes need the order, not the seconds.
 
 ```bash
 aipmo validate templates/examples/meeting_to_tasks.yaml
+aipmo run templates/examples/meeting_to_tasks.yaml \
+  --trigger '{"join_url":"https://teams.microsoft.com/l/meetup-join/..."}'
 ```
 
 会議 → 議事録 → TODO → Jira 登録 → Slack 通知 の一本道です。
 文字起こしが無効だった会議では、途中で止まります。
 
+テンプレートの `trigger: "event:teams:meeting_ended"` は、渡すペイロードの形を
+示すものです。会議終了で自動起動する経路（Graph の通知や webhook）は未実装です。
+`aipmo run --trigger` か Web 画面から、参加 URL を渡して実行します。
+
 Meeting to minutes to tasks to Jira to Slack, stopping partway when there was
-no transcription.
+no transcription. `event:teams:meeting_ended` records the payload shape; there
+is no Graph subscription or webhook that fires it. Pass the join URL with
+`aipmo run --trigger` or from the web UI.
 
 ---
 

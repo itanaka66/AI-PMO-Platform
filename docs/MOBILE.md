@@ -77,9 +77,12 @@ export AIPMO_VIEWER_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsa
 
 **誰が実行したかは履歴に残ります。** PMO では「いつ動いたか」より
 「誰が動かしたか」が問われることがあるためです。
+履歴はプロセス内のメモリに最大 50 件です。再起動で消えます。
+PostgreSQL に残す配線は未接続です。
 
 Runs record who started them: the question asked is often who ran this, not
-merely when.
+merely when. History is in-process, last 50, and gone on restart. The
+PostgreSQL write path is not wired yet.
 
 ---
 

@@ -138,16 +138,23 @@ before concluding is what makes the result usable in a PMO context.
 | 提供元 | ツール呼び出し |
 |---|---|
 | `openai` / `gemini` / `groq` / `openrouter` | 対応 |
-| `ollama` / `vllm` / `lmstudio` | モデル次第 |
+| `vllm` / `lmstudio` | モデル次第（OpenAI 互換の chat API） |
+| `ollama` | **非対応**。`/api/generate` のみ。エージェント工程は実行時に失敗する |
 | `llamacpp` | 既定では当てにしない |
 
-ローカルの小さいモデルは、道具を呼べても**引数を間違えます**。
-間違いは差し戻して直させますが、往復が増えて遅くなります。
+Ollama の経路は `/api/generate` だけで、道具を渡す対話がありません。
+エージェント工程を Ollama に向けると実行時に失敗します。議事録のような
+1往復の工程はそのまま使えます。vLLM / LM Studio は OpenAI 互換なら道具を
+渡せますが、ローカルの小さいモデルは呼べても**引数を間違えます**。
+間違いは差し戻して直させますが、往復が増えます。
 エージェントにはクラウドの大きめのモデルを割り当てる方が現実的です。
 
-Small local models can call tools but get the arguments wrong. Mistakes are
-handed back for correction, which costs turns and time. Assigning a larger
-hosted model to the agent profile is the realistic choice.
+The Ollama path is `/api/generate` only — it has no tool-using conversation.
+An agent step pointed at Ollama fails at run time. Single-turn work such as
+minutes still runs. vLLM and LM Studio can pass tools if they speak the
+OpenAI chat API, but small local models get the arguments wrong. Mistakes are
+handed back for correction, which costs turns. Assigning a larger hosted
+model to the agent profile is the realistic choice.
 
 ```yaml
 llm:

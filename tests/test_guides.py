@@ -258,6 +258,50 @@ def test_nothing_in_the_repository_is_advertised_as_paid():
             assert claim not in text, f"{name} に紛らわしい表現: {claim}"
 
 
+def test_guides_do_not_claim_event_triggers_fire_by_themselves():
+    """event: を『会議が終わると動く』と案内すると、待っても何も起きない。
+
+    The field records payload shape. There is no webhook. A guide that says
+    the run starts when a meeting ends leaves the reader waiting.
+    """
+    claims = (
+        "いつ動くか（会議が終わったとき）",
+        "when it runs (a meeting ended)",
+        "何时运行（会议结束时）",
+        "언제 동작할지 (회의가 끝났을 때)",
+        "cuándo se ejecuta (al acabar una reunión)",
+        "quand il s'exécute (fin de réunion)",
+        "wann sie läuft (Besprechung beendet)",
+        "quando roda (ao fim de uma reunião)",
+    )
+    for lang in CATALOG:
+        text = guide(lang).read_text(encoding="utf-8")
+        for claim in claims:
+            assert claim not in text, f"{lang}.md がイベント起動を自動だと案内している"
+
+
+def test_guides_say_event_triggers_do_not_fire_alone():
+    """8言語すべてで、event: は自動起動しないと分かること。"""
+    markers = {
+        "ja": "自動では動きません",
+        "en": "does not fire when a meeting ends",
+        "zh": "并不会自动运行",
+        "ko": "자동으로는 돌지 않습니다",
+        "es": "No se dispara al acabar una reunión",
+        "fr": "Il ne part pas à la fin d'une réunion",
+        "de": "Er startet nicht, wenn",
+        "pt": "Não dispara ao fim de uma reunião",
+    }
+    for lang, marker in markers.items():
+        assert marker in guide(lang).read_text(encoding="utf-8"), lang
+
+
+def test_readme_lists_event_ingress_as_not_yet_built():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "イベント駆動の起動" in readme
+    assert "no subscription or webhook" in readme
+
+
 def test_the_free_terms_are_stated_in_every_guide():
     """8言語すべてで、無料であることが分かること。"""
     markers = {"ja": "すべて無料", "en": "All of it is free", "zh": "全部免费",

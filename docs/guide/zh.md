@@ -108,7 +108,7 @@ OK  templates/examples/meeting_minutes.yaml  [software] ステップ 5 件
 
 ```yaml
 name: meeting_minutes          # 名称
-trigger: "event:teams:meeting_ended"   # 何时运行（会议结束时）
+trigger: "event:teams:meeting_ended"   # 启动原因（不会自动运行）
 
 steps:                         # 做什么
   - id: fetch_transcript       # ① 获取会议记录
@@ -120,6 +120,10 @@ steps:                         # 做什么
   - id: register_jira          # ③ 登记任务
     adapter: jira
 ```
+
+`event:` 只是记录“因何启动”。会议结束时并不会自动运行。
+用 `aipmo run` 或手机界面传入会议信息后再执行。
+定时运行请用 `trigger: "schedule:..."` 和 `aipmo schedule`。
 
 想做的事变了，换个模板就行。
 **AI 的使用方式本身也会随模板改变。**
@@ -148,8 +152,8 @@ aipmo schedule    # 开始按设定时间自动运行
 **内部数据不会外流。** 各公司的数据存放位置相互隔离，
 从技术上无法访问其他公司的数据。
 
-**不会自动公开。** 虽然有把经验公开分享的机制，
-但一定需要人工审批。程序无法擅自公开。
+**不会自动公开。** 模板无法写入公开存储。可以提交候选，
+但还没有人工审批后公开的步骤。
 
 ---
 

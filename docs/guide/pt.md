@@ -111,7 +111,7 @@ Cada modelo corresponde a uma tarefa de PMO.
 
 ```yaml
 name: meeting_minutes          # nome
-trigger: "event:teams:meeting_ended"   # quando roda (ao fim de uma reunião)
+trigger: "event:teams:meeting_ended"   # o que dispara (não dispara sozinho)
 
 steps:                         # o que faz
   - id: fetch_transcript       # 1. buscar a gravação
@@ -123,6 +123,10 @@ steps:                         # o que faz
   - id: register_jira          # 3. registrar as tarefas
     adapter: jira
 ```
+
+`event:` registra o que iniciou a execução. Não dispara ao fim de uma reunião.
+Passe os dados da reunião com `aipmo run` ou pela tela do celular.
+Para um horário, use `trigger: "schedule:..."` e `aipmo schedule`.
 
 Se o trabalho muda, troca-se o modelo.
 **O próprio modo de usar a IA muda junto com o modelo.**
@@ -152,9 +156,9 @@ fica separada.
 **Os dados internos não saem.** Os dados de cada organização ficam em locais
 separados, e alcançar os de outra não é tecnicamente possível.
 
-**Nada é publicado automaticamente.** Existe um mecanismo para compartilhar
-conhecimento publicamente, mas ele sempre exige a aprovação de uma pessoa.
-Nenhum programa publica por conta própria.
+**Nada é publicado automaticamente.** Um modelo não consegue gravar no
+repositório público. Pode enviar um candidato, mas ainda não há a etapa de
+aprovação que publica.
 
 ---
 

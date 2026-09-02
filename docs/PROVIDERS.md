@@ -17,7 +17,7 @@ resolves to is configuration, so **switching providers changes no template**.
 | `gemini` | クラウド | あり | `GEMINI_API_KEY` |
 | `groq` | クラウド | **なし** | `GROQ_API_KEY` |
 | `openrouter` | クラウド | **なし** | `OPENROUTER_API_KEY` |
-| `ollama` | ローカル | あり | 不要 |
+| `ollama` | ローカル | あり | 不要（エージェント工程は不可） |
 | `vllm` | ローカル | あり | 不要 |
 | `lmstudio` | ローカル | あり | 不要 |
 | `llamacpp` | ローカル | — | 不要 |
@@ -129,6 +129,26 @@ adapters:
 セットアップウィザードで Groq を選ぶと、この点を警告します。
 
 This needs two keys. The setup wizard warns about it when you pick Groq.
+
+### Ollama ではエージェント工程は動きません
+
+Ollama の経路は `/api/generate` だけで、道具を渡す対話 (`converse`) がありません。
+エージェント工程を Ollama プロファイルに向けると、実行時に失敗します。
+議事録のような1往復の工程はそのまま使えます。
+
+The Ollama path is `/api/generate` only — there is no tool-using conversation.
+Pointing an agent step at an Ollama profile fails at run time. Single-turn
+work such as minutes still runs.
+
+```yaml
+llm:
+  default:                      # 議事録など決め打ちの工程
+    provider: ollama
+    model: qwen2.5:14b
+  agent:                        # 判断が要る工程
+    provider: openai
+    model: gpt-4o-mini
+```
 
 ### JSON モードの扱いが違います
 

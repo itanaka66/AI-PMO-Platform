@@ -20,10 +20,19 @@ aipmo schedule            # 常駐する / stay resident
 overdue_triage               2026-08-31 09:00 JST   0 9 * * MON-FRI
 ```
 
-Docker では専用のコンテナが常駐します。
-In Docker it runs as its own container:
+ルートの `docker-compose.yml` では、サービス名は `aipmo` で、中で `schedule`
+が常駐します。Oracle 構成だけが画面 (`aipmo`) と定時実行 (`scheduler`) を分けています。
+
+The root `docker-compose.yml` runs `schedule` inside the `aipmo` service.
+Only the Oracle layout splits the interface (`aipmo`) from the scheduler
+(`scheduler`).
 
 ```bash
+# ローカル / local (root compose)
+docker compose up -d aipmo
+docker compose logs -f aipmo
+
+# Oracle (deploy/oracle)
 docker compose up -d scheduler
 docker compose logs -f scheduler
 ```
@@ -126,7 +135,7 @@ other template down with it. Failures are logged and retried at the next
 occurrence.
 
 連続失敗の回数は記録されるので、ログで気づけます。
-`docker compose logs scheduler | grep 失敗`
+ローカルは `docker compose logs aipmo`、Oracle は `docker compose logs scheduler`。
 
 ---
 

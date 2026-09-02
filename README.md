@@ -63,7 +63,7 @@ pytest                               # 543 件
 ```yaml
 name: meeting_minutes
 industry: software
-trigger: "event:teams:meeting_ended"
+trigger: "event:teams:meeting_ended"   # 記録用。自動起動は未実装 / records intent; does not fire
 
 params:
   jira_project: PROJ
@@ -99,6 +99,14 @@ steps:
 
 The step kind is inferred from which of `adapter` / `llm` / `agent` /
 `expression` is present.
+
+`trigger: "event:..."` はペイロードの形を宣言するだけです。会議終了で自動起動する
+経路（Graph の通知や webhook）は未実装です。実行は `aipmo run --trigger '{...}'`、
+Web 画面、または `schedule:` の定時起動です。
+
+`event:` records the payload shape. There is no Graph subscription or webhook
+that fires it. Runs start from `aipmo run --trigger '{...}'`, the web UI, or a
+`schedule:` cron.
 
 参照できる名前空間 / Available namespaces:
 
@@ -203,12 +211,15 @@ connection config and cannot be overridden.
 
 ### 公開コレクションへの書き込みをアダプタが拒否する
 
-ナレッジの公開は、人間承認を経た昇格フローだけが行える。テンプレートができるのは
-`submit_candidate` で候補として提出するところまで。**自動公開の経路を、
-そもそもテンプレートから作れない。**
+テンプレートができるのは `submit_candidate` で候補として提出するところまで。
+公開コレクションへの書き込みはアダプタが拒否する。**自動公開の経路は、
+そもそもテンプレートから作れない。** 人が承認して公開する手順は未実装
+（[未着手](#未着手--not-yet-built)）。
 
-Publication happens only through the reviewed promotion workflow. The automatic
-path does not exist at the adapter level, so no template can construct it.
+A template can only submit a candidate. Public writes are refused at the
+adapter, so no template can construct an automatic publication path. The
+human approval step that would promote a candidate is not built yet
+(see [Not yet built](#未着手--not-yet-built)).
 
 ### 書き込みは読み取りより厳しく扱う
 
@@ -292,6 +303,8 @@ success:
 - **公開可能性スコアの算出** — 保存はできるが計算は未実装 / the field is stored,
   the computation is not
 - **実行履歴の永続化配線** — スキーマとクエリはあるが、エンジンからの自動書き込みは未接続
+- **イベント駆動の起動** — `trigger: "event:..."` はペイロードの形を宣言するだけ。
+  Graph の通知や webhook は未実装 / records payload shape; no subscription or webhook
 - **並列ステップ実行** — 現状は逐次のみ / sequential only
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
 - **上記3業界以外のテンプレート**

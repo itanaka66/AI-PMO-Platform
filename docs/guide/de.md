@@ -111,7 +111,7 @@ Eine Vorlage entspricht einer PMO-Aufgabe.
 
 ```yaml
 name: meeting_minutes          # Name
-trigger: "event:teams:meeting_ended"   # wann sie läuft (Besprechung beendet)
+trigger: "event:teams:meeting_ended"   # woran sie hängt (startet nicht von selbst)
 
 steps:                         # was sie tut
   - id: fetch_transcript       # 1. die Aufzeichnung holen
@@ -123,6 +123,11 @@ steps:                         # was sie tut
   - id: register_jira          # 3. die Aufgaben anlegen
     adapter: jira
 ```
+
+`event:` hält fest, wodurch der Lauf ausgelöst wurde. Er startet nicht, wenn
+eine Besprechung endet. Übergeben Sie die Besprechungsdaten mit `aipmo run`
+oder über die Telefonoberfläche. Für eine Uhrzeit nutzen Sie
+`trigger: "schedule:..."` und `aipmo schedule`.
 
 Ändert sich die Arbeit, tauschen Sie die Vorlage.
 **Auch die Art, wie die KI eingesetzt wird, ändert sich mit der Vorlage.**
@@ -153,9 +158,9 @@ Schlüssel wird deshalb getrennt gehalten.
 werden getrennt abgelegt; an die einer anderen zu gelangen ist technisch nicht
 möglich.
 
-**Nichts wird automatisch veröffentlicht.** Es gibt einen Weg, Erkenntnisse
-öffentlich zu teilen, doch er verlangt immer die Zustimmung eines Menschen.
-Kein Programm kann von sich aus veröffentlichen.
+**Nichts wird automatisch veröffentlicht.** Eine Vorlage kann nicht in den
+öffentlichen Speicher schreiben. Sie kann einen Kandidaten einreichen, doch
+den Freigabeschritt, der veröffentlicht, gibt es noch nicht.
 
 ---
 
