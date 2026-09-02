@@ -21,9 +21,9 @@ steps:
     adapter: jira
     action: search
     inputs:
+      project: "{{ params.jira_project }}"
       jql: >-
-        project = "{{ params.jira_project }}"
-        AND statusCategory != Done
+        statusCategory != Done
         ORDER BY duedate ASC
       limit: 50
 
