@@ -77,7 +77,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 # In-memory run history until the Postgres wiring lands.
 HISTORY_LIMIT = 50
 
-
 class RunStore:
     """実行履歴を新しい順に保持する / keeps run records, newest first."""
 
@@ -94,7 +93,6 @@ class RunStore:
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         return next((r for r in self._runs if r["id"] == run_id), None)
-
 
 def discover_templates(root: Path) -> list[dict[str, Any]]:
     """テンプレートを読み、壊れているものも一覧に残す。
@@ -124,7 +122,6 @@ def discover_templates(root: Path) -> list[dict[str, Any]]:
             "steps": template.step_ids(),
         })
     return found
-
 
 def create_app(
     engine: Engine,
@@ -399,7 +396,6 @@ def create_app(
         }
 
     return app
-
 
 def generate_token() -> str:
     return secrets.token_urlsafe(24)
