@@ -33,7 +33,6 @@ Create one with the provider you chose; OpenAI is a fine default.
 - Gemini — https://aistudio.google.com
 - Groq — https://console.groq.com/keys
 - OpenRouter — https://openrouter.ai/keys
-- Claude - https://platform.claude.com/settings/keys
 
 提供元ごとの違いは [docs/PROVIDERS.md](docs/PROVIDERS.md) にあります。
 Groq と OpenRouter には埋め込み API が無いため、ベクトル検索を使う場合は
