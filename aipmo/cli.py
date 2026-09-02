@@ -170,8 +170,7 @@ def build_engine(
                     f"/ check adapters.postgres.queries_file in config.yaml"
                 )
             queries.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
-#        adapters.register(PostgresAdapter(queries=queries, tenant=tenant, **spec))
-        adapters.register(WbsReplanAdapter(postgres=cast(PostgresAdapter, adapters.get("postgres"))))
+        adapters.register(PostgresAdapter(queries=queries, tenant=tenant, **spec))
 
     # risk_forecast は外部認証情報を持たない純粋な計算アダプタだが、
     # 他のすべての実アダプタと同じく明示的な opt-in にする — 有効かどうかが
