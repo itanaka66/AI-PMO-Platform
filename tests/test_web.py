@@ -411,3 +411,34 @@ def test_a_single_token_deployment_still_works(templates):
 
     assert client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
                        json={"path": "simple.yaml"}).status_code == 200
+
+def test_webhook_triggers_event_templates(client, templates):
+    # Prepare a template with event trigger
+    content = """
+name: Webhook Test
+trigger: event:pull_request
+steps:
+  - id: t
+    adapter: slack
+    action: post_message
+    inputs: { channel: "C123", text: "Hello" }
+"""
+    (templates / "webhook.yaml").write_text(content.strip(), encoding="utf-8")
+    
+    payload = {"event": "pull_request", "action": "opened"}
+    response = client.post("/api/webhook", json=payload, headers={"x-aipmo-token": TOKEN})
+    assert response.status_code == 200
+    assert response.json()["matched"] == 1
+    
+    runs_res = client.get("/api/runs", headers={"x-aipmo-token": TOKEN})
+    assert runs_res.status_code == 200
+    runs = runs_res.json()["items"]
+    assert len(runs) > 0
+    assert runs[0]["template"] == "Webhook Test"
+    assert runs[0]["status"] == "success"
+
+def test_webhook_no_match(client):
+    payload = {"event": "unknown_event"}
+    response = client.post("/api/webhook", json=payload, headers={"x-aipmo-token": TOKEN})
+    assert response.status_code == 200
+    assert response.json()["matched"] == 0
