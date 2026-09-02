@@ -283,3 +283,274 @@ def test_wizard_rejects_an_unknown_provider():
     with pytest.raises(SetupError):
         validate(SetupAnswers(mode="cloud", provider="gemeni",
                               tenant="acme", api_key="x"))
+
+
+# --- Claude (Anthropic) --------------------------------------------------
+
+def test_claude_preset_resolves_with_its_own_key_variable():
+    from aipmo.llm.presets import PRESETS, resolve
+
+    preset = resolve("claude")
+    assert preset.name == "claude"
+    assert preset.api_key_env == "ANTHROPIC_API_KEY"
+    assert preset.supports_embeddings is False
+    assert preset.supports_json_mode is False
+    assert "claude" in PRESETS
+
+
+def test_build_provider_routes_claude_to_the_dedicated_class(monkeypatch):
+    """claude は PRESETS に載っているが、OpenAICompatibleProvider には
+    絶対に行かない -- Messages API は互換ではないため。"""
+    from aipmo.llm.base import AnthropicProvider
+    from aipmo.llm.registry import build_provider
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    provider = build_provider({"provider": "claude"})
+
+    assert isinstance(provider, AnthropicProvider)
+    assert provider.name == "claude"
+    assert provider.model == "claude-sonnet-5"
+
+
+def test_claude_provider_requires_an_api_key(monkeypatch):
+    from aipmo.llm.base import AnthropicProvider
+    from aipmo.llm.presets import ProviderError
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(ProviderError, match="ANTHROPIC_API_KEY"):
+        AnthropicProvider()
+
+
+def test_claude_provider_accepts_an_explicit_key(monkeypatch):
+    from aipmo.llm.base import AnthropicProvider
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    provider = AnthropicProvider(api_key="sk-ant-explicit")
+    assert provider._api_key == "sk-ant-explicit"
+
+
+def test_claude_model_override(monkeypatch):
+    from aipmo.llm.base import AnthropicProvider
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    provider = AnthropicProvider(model="claude-opus-5")
+    assert provider.model == "claude-opus-5"
+
+
+class _FakeTextBlock:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class _FakeToolUseBlock:
+    type = "tool_use"
+
+    def __init__(self, id, name, input):
+        self.id = id
+        self.name = name
+        self.input = input
+
+
+class _FakeUsage:
+    def __init__(self, input_tokens=10, output_tokens=5):
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+
+
+class _FakeMessage:
+    def __init__(self, content, usage=None):
+        self.content = content
+        self.usage = usage or _FakeUsage()
+
+
+def _install_anthropic(monkeypatch, create_fn):
+    """anthropic.Anthropic を差し替える / swap out anthropic.Anthropic."""
+    import sys
+    import types
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            return create_fn(kwargs)
+
+    class FakeAnthropic:
+        def __init__(self, **kwargs):
+            self.init_kwargs = kwargs
+            self.messages = FakeMessages()
+
+    module = types.ModuleType("anthropic")
+    module.Anthropic = FakeAnthropic
+    monkeypatch.setitem(sys.modules, "anthropic", module)
+
+
+def test_claude_complete_sends_a_single_user_message(monkeypatch):
+    from aipmo.llm.base import AnthropicProvider, LLMRequest
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    sent = {}
+
+    def create_fn(kwargs):
+        sent.update(kwargs)
+        return _FakeMessage([_FakeTextBlock("hello back")])
+
+    _install_anthropic(monkeypatch, create_fn)
+    provider = AnthropicProvider()
+    response = provider.complete(LLMRequest(prompt="hi", system="be nice"))
+
+    assert sent["system"] == "be nice"
+    assert sent["messages"] == [{"role": "user", "content": "hi"}]
+    assert response.text == "hello back"
+    assert response.input_tokens == 10
+    assert response.output_tokens == 5
+
+
+def test_claude_json_mode_is_requested_in_the_prompt(monkeypatch):
+    """Claude に response_format は無い。プロンプト側で要求する。"""
+    from aipmo.llm.base import AnthropicProvider, LLMRequest
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    sent = {}
+
+    def create_fn(kwargs):
+        sent.update(kwargs)
+        return _FakeMessage([_FakeTextBlock("{}")])
+
+    _install_anthropic(monkeypatch, create_fn)
+    provider = AnthropicProvider()
+    provider.complete(LLMRequest(prompt="hi", json_mode=True))
+
+    assert "response_format" not in sent
+    assert "JSON" in sent["system"]
+
+
+def test_claude_converse_sends_translated_tools_and_history(monkeypatch):
+    from aipmo.llm.base import AnthropicProvider
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    sent = {}
+
+    def create_fn(kwargs):
+        sent.update(kwargs)
+        return _FakeMessage([
+            _FakeTextBlock("let me check"),
+            _FakeToolUseBlock("call_1", "search", {"q": "status"}),
+        ])
+
+    _install_anthropic(monkeypatch, create_fn)
+    provider = AnthropicProvider()
+
+    messages = [
+        {"role": "system", "content": "You investigate delays."},
+        {"role": "user", "content": "what is blocking us?"},
+    ]
+    tools = [{"type": "function", "function": {
+        "name": "search", "description": "search things",
+        "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
+    }}]
+
+    response = provider.converse(messages, tools=tools)
+
+    assert sent["system"] == "You investigate delays."
+    assert sent["messages"] == [{"role": "user", "content": "what is blocking us?"}]
+    assert sent["tools"] == [{
+        "name": "search", "description": "search things",
+        "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}},
+    }]
+    assert response.text == "let me check"
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].name == "search"
+    assert response.tool_calls[0].arguments == {"q": "status"}
+    assert response.raw_message is None
+
+
+def test_claude_converse_translates_a_tool_result_back_into_history(monkeypatch):
+    """道具の実行結果（role=tool）が Claude 形式の user/tool_result に
+    正しく変換されて送られること。"""
+    from aipmo.llm.base import AnthropicProvider
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    sent = {}
+
+    def create_fn(kwargs):
+        sent.update(kwargs)
+        return _FakeMessage([_FakeTextBlock("done")])
+
+    _install_anthropic(monkeypatch, create_fn)
+    provider = AnthropicProvider()
+
+    messages = [
+        {"role": "user", "content": "search for x"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "call_1", "type": "function",
+             "function": {"name": "search", "arguments": "{\"q\": \"x\"}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "found nothing"},
+    ]
+
+    provider.converse(messages)
+
+    claude_messages = sent["messages"]
+    assert claude_messages[0] == {"role": "user", "content": "search for x"}
+    assert claude_messages[1]["role"] == "assistant"
+    assert claude_messages[1]["content"][0]["type"] == "tool_use"
+    assert claude_messages[1]["content"][0]["input"] == {"q": "x"}
+    assert claude_messages[2] == {
+        "role": "user",
+        "content": [{"type": "tool_result", "tool_use_id": "call_1",
+                     "content": "found nothing"}],
+    }
+
+
+def test_claude_base_url_override_is_passed_through(monkeypatch):
+    """独自エンドポイント（社内ゲートウェイ等）を指せること。"""
+    from aipmo.llm.base import AnthropicProvider
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    captured = {}
+
+    class FakeAnthropic:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.messages = type("M", (), {"create": staticmethod(
+                lambda **kw: _FakeMessage([_FakeTextBlock("ok")]))})()
+
+    import sys
+    import types
+    module = types.ModuleType("anthropic")
+    module.Anthropic = FakeAnthropic
+    monkeypatch.setitem(sys.modules, "anthropic", module)
+
+    provider = AnthropicProvider(base_url="https://internal-gateway.example/v1")
+    provider._client()
+
+    assert captured["base_url"] == "https://internal-gateway.example/v1"
+
+
+# --- Claude とセットアップウィザード / Claude via the setup wizard ---------
+
+def test_wizard_offers_claude_and_writes_the_right_key_variable(tmp_path):
+    from aipmo.setup_wizard import SetupAnswers, build_config, validate, write_files
+
+    answers = SetupAnswers(mode="cloud", provider="claude", tenant="acme_corp",
+                           api_key="sk-ant-test")
+    validate(answers)
+    config = build_config(answers)
+
+    assert config["llm"]["default"]["provider"] == "claude"
+    assert config["llm"]["default"]["model"] == "claude-sonnet-5"
+
+    written = write_files(answers, tmp_path)
+    assert "ANTHROPIC_API_KEY=sk-ant-test" in written["env"].read_text()
+
+
+def test_wizard_routes_embeddings_away_from_claude_and_warns():
+    """Claude には埋め込み API が無い。Groq/OpenRouter と同じ扱いになること。"""
+    from aipmo.setup_wizard import SetupAnswers, build_config
+
+    answers = SetupAnswers(mode="cloud", provider="claude", tenant="acme",
+                           api_key="x", use_data_layer=True)
+    config = build_config(answers)
+
+    assert config["adapters"]["qdrant"]["embedding"]["provider"] == "openai"
+    assert any("OPENAI_API_KEY" in w for w in answers.warnings)
