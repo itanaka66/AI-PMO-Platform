@@ -162,6 +162,19 @@ class Step:
     # filtering on each element's own values needs its own field.
     where: str | None = None
     max_items: int = 50
+    # for_each の各要素を並行に実行するか。既定は逐次（順番に1件ずつ）。
+    # agent ステップに限って許可する — 複数の独立したサブエージェントに
+    # 別々の対象を並行調査させる用途（「担当者ごとに1通」のような
+    # 書き込み連打とは違い、読み取り中心の調査を速く終わらせたい場合）。
+    # adapter / llm ステップでは、意図しない同時書き込みを避けるため
+    # 逐次のままにしている（ロード時に検証）。
+    #
+    # Whether for_each's elements run concurrently. Sequential (one at a
+    # time) by default. Permitted only for agent steps — spawning several
+    # independent subagents to investigate different targets at once, unlike
+    # "one message per assignee," which stays sequential to avoid unintended
+    # concurrent writes on adapter/llm steps (checked at load time).
+    concurrent: bool = False
 
     # --- 共通 ---
     inputs: dict[str, Any] = field(default_factory=dict)

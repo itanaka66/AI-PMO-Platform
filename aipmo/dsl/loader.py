@@ -184,6 +184,19 @@ def _parse_step(raw: Any, where: str) -> Step:
                 f"{where}: as に '{step.as_name}' は使えません "
                 f"/ '{step.as_name}' is reserved"
             )
+        step.concurrent = bool(raw.get("concurrent", False))
+        if step.concurrent and kind is not StepKind.AGENT:
+            # adapter / llm ステップでの並行 for_each は、意図しない同時
+            # 書き込みを招きかねないので許可しない。agent ステップだけが
+            # 独立したサブエージェントとして安全に並行実行できる。
+            #
+            # Concurrent for_each on an adapter/llm step risks unintended
+            # simultaneous writes; only an agent step can safely run its
+            # elements as independent, concurrent subagents.
+            raise TemplateError(
+                f"{where}: concurrent は agent ステップでのみ使えます "
+                f"/ concurrent is only allowed on an agent step"
+            )
 
     if step.where is not None and step.for_each is None:
         raise TemplateError(

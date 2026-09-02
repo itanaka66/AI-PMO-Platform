@@ -204,6 +204,67 @@ configuration to stand up.
 
 ---
 
+## 並行なサブエージェント調査 / Concurrent subagent investigation
+
+`for_each` と `concurrent: true` を組み合わせると、要素ごとに独立した
+サブエージェントを並行に走らせます。複数の対象（プロジェクト・案件など）
+を1件ずつ順番に調べると時間がかかる、という場合に使います。
+
+```yaml
+- id: investigate_all
+  for_each: "{{ params.projects }}"
+  as: project
+  concurrent: true          # 各要素を並行に実行する
+  max_items: 10
+  agent:
+    tools: [jira.find_overdue]
+    allow_writes: false
+  prompt_inline: |
+    プロジェクト {{ project }} の遅延状況を調べ、要約してください。
+```
+
+出力の形は、逐次の `for_each` と同じです — `results` に各サブエージェントの
+出力（`answer` / `stopped_because` / `tool_calls` / `tokens`）が並びます。
+
+```yaml
+{{ steps.investigate_all.output.results }}   # 各サブエージェントの出力の並び
+{{ steps.investigate_all.output.count }}     # 成功した件数
+{{ steps.investigate_all.output.failed }}    # 失敗した件数
+```
+
+**`concurrent: true` は agent ステップにしか使えません。** `adapter` や
+`llm` の工程で許すと、意図しない同時書き込みを招きかねないためで、
+ロード時に拒否されます — 「担当者ごとに1通」のような書き込みは、
+これまでどおり逐次のままです。
+
+1件のサブエージェントが失敗しても、他のサブエージェントの実行は
+妨げません（通常の `for_each` と同じ考え方）。並行に走る複数の道具
+呼び出しがアダプタの状態を壊さないことは、アダプタ側の直列化に
+支えられています —
+[Postgres・ベクトルストア各アダプタの `_lock`](../aipmo/adapters/postgres.py)
+がまさにこの用途のために入っています。
+
+**Combining `for_each` with `concurrent: true` runs each element as an
+independent subagent, in parallel.** Use this when investigating several
+targets (projects, matters, ...) one at a time would take too long.
+
+The output shape matches the sequential `for_each` case — `results` holds
+each subagent's own output (`answer` / `stopped_because` / `tool_calls` /
+`tokens`).
+
+**`concurrent: true` is only permitted on an agent step**, rejected at load
+time on `adapter`/`llm` steps where it could invite unintended simultaneous
+writes — something like "one message per assignee" stays sequential as
+before.
+
+One subagent failing does not block the others (the same reasoning as
+ordinary `for_each`). Several tool calls running at once not corrupting an
+adapter's own state relies on locking already added to the adapter side —
+[the Postgres and vector-store adapters' own `_lock`](../aipmo/adapters/postgres.py)
+exists for exactly this.
+
+---
+
 ## 止め方 / Stopping
 
 **エージェントは自分では止まりません。** 上限が無ければ、利用者自身の
@@ -296,6 +357,12 @@ llm:
 aipmo validate templates/examples/overdue_triage.yaml
 aipmo run templates/examples/overdue_triage.yaml
 ```
+
+複数の対象を並行にサブエージェント調査させる例は
+`templates/examples/portfolio_investigation.yaml`。
+
+An example spawning subagents to investigate several targets concurrently:
+`templates/examples/portfolio_investigation.yaml`.
 
 書き込みを許可したエージェントの例は
 `templates/examples/generalize_knowledge.yaml`。社内固有の知見を読み、
