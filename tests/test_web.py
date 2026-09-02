@@ -120,6 +120,22 @@ def test_cookie_alone_authenticates(client):
     assert client.get("/api/templates").status_code == 200
 
 
+def test_secure_cookie_when_https(client):
+    response = client.get(f"/?token={TOKEN}", headers={"x-forwarded-proto": "https"})
+    assert response.status_code == 200
+    cookie = response.headers.get("set-cookie")
+    assert cookie is not None
+    assert "Secure" in cookie
+
+
+def test_insecure_cookie_when_http(client):
+    response = client.get(f"/?token={TOKEN}")
+    assert response.status_code == 200
+    cookie = response.headers.get("set-cookie")
+    assert cookie is not None
+    assert "Secure" not in cookie
+
+
 # --- テンプレート一覧 / template listing -----------------------------------
 
 def test_broken_templates_stay_visible(client):
@@ -170,6 +186,30 @@ def test_broken_template_returns_a_readable_error(client, templates):
                            json={"path": str(templates / "broken.yaml")})
     assert response.status_code == 400
     assert "broken" in response.json()["detail"]
+
+
+def test_rate_limiter_blocks_many_requests(templates):
+    adapters = AdapterRegistry()
+    adapters.register(MockJiraAdapter())
+    adapters.register(MockSlackAdapter())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    app = create_app(Engine(adapters, llms), templates, TOKEN,
+                     tenant="acme_corp", lang="en", store=RunStore())
+    client = TestClient(app)
+
+    # 既定の制限は10回。10回までは通る。
+    for _ in range(10):
+        response = client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
+                               json={"path": str(templates / "simple.yaml")})
+        assert response.status_code == 200
+
+    # 11回目はブロックされる。
+    response = client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
+                           json={"path": str(templates / "simple.yaml")})
+    assert response.status_code == 429
+    assert response.json()["detail"] == "Too Many Requests"
 
 
 @pytest.mark.parametrize("path", [
