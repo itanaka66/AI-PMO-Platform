@@ -337,6 +337,74 @@ def create_app(
             }
         }
 
+    # -- WBS 再計画の承認 / WBS replan approval ----------------------------
+    #
+    # WBS再計画AIが提案した差分は、ここでしか人が見て決められない。
+    # 承認・却下ともに operator のみ。閲覧は viewer にも許す
+    # （進捗を見せたいだけの相手に決定権まで渡さない、という既存の役割分離
+    # をそのまま流用する）。
+    #
+    # This is the only place a human sees and decides on a diff the
+    # WBS-replanning AI proposed. Both approving and rejecting require
+    # operator; viewing does not, reusing the same role split that already
+    # keeps someone shown progress from also gaining the power to decide.
+
+    def _postgres_or_503() -> Any:
+        if not engine.adapters.has("postgres"):
+            raise HTTPException(
+                status_code=503,
+                detail="postgres adapter is not configured / "
+                       "postgres アダプタが設定されていません",
+            )
+        return engine.adapters.get("postgres")
+
+    @app.get("/api/wbs-proposals", dependencies=[guard])
+    def list_wbs_proposals() -> dict[str, Any]:
+        pg = _postgres_or_503()
+        result = pg.query("pending_wbs_proposals", {"tenant": tenant})
+        return {"items": result["rows"]}
+
+    @app.get("/api/wbs-proposals/{proposal_id}", dependencies=[guard])
+    def get_wbs_proposal(proposal_id: str) -> Any:
+        pg = _postgres_or_503()
+        result = pg.query("get_wbs_proposal", {"tenant": tenant, "id": proposal_id})
+        if not result["rows"]:
+            raise HTTPException(status_code=404, detail="no such proposal")
+        return result["rows"][0]
+
+    def _decide_wbs_proposal(
+        proposal_id: str, status: str, role: str, note: str | None,
+    ) -> dict[str, Any]:
+        pg = _postgres_or_503()
+        result = pg.execute("decide_wbs_proposal", {
+            "tenant": tenant, "id": proposal_id, "status": status,
+            "decided_by": role, "decision_note": note,
+        })
+        if not result["rows"]:
+            # pending でなかった（既に決定済み・存在しない・staleになった）。
+            # No such id, or it was not pending (already decided, or gone stale).
+            raise HTTPException(
+                status_code=409,
+                detail="proposal is not pending (already decided, missing, or stale)",
+            )
+        return result["rows"][0]
+
+    @app.post("/api/wbs-proposals/{proposal_id}/approve")
+    def approve_wbs_proposal(
+        proposal_id: str, payload: dict[str, Any] | None = None,
+        role: str = operator_guard,
+    ) -> dict[str, Any]:
+        note = (payload or {}).get("note")
+        return _decide_wbs_proposal(proposal_id, "approved", role, note)
+
+    @app.post("/api/wbs-proposals/{proposal_id}/reject")
+    def reject_wbs_proposal(
+        proposal_id: str, payload: dict[str, Any] | None = None,
+        role: str = operator_guard,
+    ) -> dict[str, Any]:
+        note = (payload or {}).get("note")
+        return _decide_wbs_proposal(proposal_id, "rejected", role, note)
+
     return app
 
 

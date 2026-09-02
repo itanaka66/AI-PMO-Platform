@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from typing import Any
 
+
 from .base import EchoProvider, LLMProvider, OpenAICompatibleProvider
+
+from .base import AnthropicProvider, EchoProvider, LLMProvider, OllamaProvider, OpenAICompatibleProvider
+
 from .presets import PRESETS, ProviderError
 
 
@@ -39,7 +43,7 @@ class LLMRegistry:
 
         llm:
           default:
-            provider: groq          # openai / gemini / groq / openrouter
+            provider: groq          # openai / gemini / groq / openrouter / claude
             model: openai/gpt-oss-120b
           fast:
             provider: ollama
@@ -66,6 +70,15 @@ def build_provider(spec: dict[str, Any] | str | None) -> LLMProvider:
 
     if provider == "echo":
         return EchoProvider(**spec)
+    # claude は presets.PRESETS に載っているが（鍵の環境変数・既定モデルの
+    # 案内のため）、OpenAI 互換ではないので OpenAICompatibleProvider には
+    # 渡さない。PRESETS のチェックより先にここで分岐させる。
+    #
+    # claude is listed in presets.PRESETS (for its key variable and default
+    # model), but it is not OpenAI-compatible, so it must not reach
+    # OpenAICompatibleProvider. This branch runs before the PRESETS check.
+    if provider == "claude":
+        return AnthropicProvider(**spec)
     if provider in PRESETS:
         return OpenAICompatibleProvider(provider=provider, **spec)
 
