@@ -598,7 +598,13 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 
 ## 未着手 / Not yet built
 
-- **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
+- **会議議事進行（リアルタイム）** — 別プロダクトラインの有料版として計画済み。
+  ここでの「すべて無料」という原則とは別枠であり、この OSS リポジトリには
+  今後も追加されない。
+
+- **Real-time meeting facilitation** — planned as a paid offering under a
+  separate product line, deliberately outside this repository's "all of it
+  is free" principle. It will not be added here.
 
 ---
 
