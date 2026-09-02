@@ -81,6 +81,22 @@ export AIPMO_VIEWER_TOKEN="$(python -c 'import secrets;print(secrets.token_urlsa
 Runs record who started them: the question asked is often who ran this, not
 merely when.
 
+**実行・WBS再計画提案の承認/却下・認証の失敗は、アプリのログにも
+記録されます**（ロガー名 `aipmo.web`）。履歴やDBはテナント単位のクエリを
+打たないと見えませんが、ログは通常の監視・集約基盤（syslog・CloudWatch
+など）にそのまま流れるので、承認待ちの提案が承認された瞬間や、権限の無い
+トークンでの操作の試みを、外部から監視できます。**トークンそのものは
+ログに残しません** — 誤って有効な鍵に近い値を書き残さないためです。
+
+Runs, WBS-replan proposal approve/reject decisions, and auth failures are
+also written to the application log (logger name `aipmo.web`). The run
+history and database are only visible via a tenant-scoped query; the log
+reaches whatever monitoring/aggregation pipeline (syslog, CloudWatch, etc.)
+already watches this process, so a proposal being approved, or an attempt
+with a token lacking permission, can be observed from outside. **The token
+itself is never logged** — so a value close to a real credential never ends
+up sitting in the logs.
+
 ---
 
 ## アクセスキー / The access key

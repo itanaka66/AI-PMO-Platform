@@ -313,3 +313,55 @@ def test_wbs_proposals_503_when_postgres_not_configured(tmp_path: Path):
     response = client.get("/api/wbs-proposals", headers=_auth(OPERATOR))
 
     assert response.status_code == 503
+
+
+# --- 監査ログ / audit logging ------------------------------------------------
+#
+# DB の decided_by/decided_at/decision_note だけでは、テナント単位のクエリを
+# 打たない限り誰も気づけない。決定はアプリのログにも残し、既存の監視・
+# 集約基盤がそのまま拾えるようにする。
+#
+# The DB's own decided_by/decided_at/decision_note is invisible to anyone
+# who isn't running a tenant-scoped query. Decisions are also written to the
+# application log, so whatever monitoring/aggregation pipeline already
+# watches this process picks them up without special-casing this endpoint.
+
+def test_approval_is_written_to_the_audit_log(client: TestClient,
+                                               postgres: StubPostgres, caplog):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    with caplog.at_level("INFO", logger="aipmo.web"):
+        client.post("/api/wbs-proposals/p1/approve", headers=_auth(OPERATOR))
+
+    assert any("p1" in r.message and "approved" in r.message and "operator" in r.message
+               for r in caplog.records)
+
+
+def test_rejection_note_is_written_to_the_audit_log(client: TestClient,
+                                                     postgres: StubPostgres, caplog):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    with caplog.at_level("INFO", logger="aipmo.web"):
+        client.post("/api/wbs-proposals/p1/reject", headers=_auth(OPERATOR),
+                    json={"note": "budget already reallocated"})
+
+    assert any("budget already reallocated" in r.message for r in caplog.records)
+
+
+def test_a_viewer_attempting_to_approve_is_logged(client: TestClient,
+                                                   postgres: StubPostgres, caplog):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    with caplog.at_level("WARNING", logger="aipmo.web"):
+        client.post("/api/wbs-proposals/p1/approve", headers=_auth(VIEWER))
+
+    assert any("permission denied" in r.message and "viewer" in r.message
+               for r in caplog.records)
+
+
+def test_an_invalid_token_is_logged_without_the_token_itself(client: TestClient, caplog):
+    with caplog.at_level("WARNING", logger="aipmo.web"):
+        client.get("/api/wbs-proposals", headers=_auth("not-a-real-token"))
+
+    assert any("auth failed" in r.message for r in caplog.records)
+    assert not any("not-a-real-token" in r.message for r in caplog.records)
