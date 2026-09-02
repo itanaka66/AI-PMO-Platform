@@ -68,7 +68,7 @@ accepts the default whenever you are unsure.
 5) Enable the database layer? → N
 ```
 
-**There are five providers to choose from.** If you are unsure, pick OpenAI:
+**There are four providers to choose from.** If you are unsure, pick OpenAI:
 it has embeddings too, so one setting covers everything.
 
 | Provider | Character |
@@ -77,7 +77,6 @@ it has embeddings too, so one setting covers everything.
 | Gemini | Handles long transcripts cheaply |
 | Groq | Fast, but needs two keys |
 | OpenRouter | One key, many models to compare |
-| Claude | High-quality writing, but needs two keys (no embeddings API) |
 
 **Getting an API key**
 Create an account with your chosen provider and issue a key. It is a long
