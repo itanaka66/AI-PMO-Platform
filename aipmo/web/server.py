@@ -148,6 +148,9 @@ def discover_templates(root: Path) -> list[dict[str, Any]]:
         })
     return found
 
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else "unknown"
+
 def create_app(
     engine: Engine,
     template_root: Path,
@@ -222,6 +225,14 @@ def create_app(
         )
         role = role_for(supplied)
         if role is None:
+            # トークンそのものはログに残さない。誤って有効な鍵に近い値を
+            # 書き残さないため。
+            # Never logs the supplied token itself, so a value close to a
+            # real credential doesn't end up sitting in the logs.
+            logger.warning(
+                "auth failed: invalid token from %s (%s %s)",
+                _client_ip(request), request.method, request.url.path,
+            )
             raise HTTPException(status_code=401, detail="invalid token")
         return role
 
@@ -232,6 +243,11 @@ def create_app(
             # 401 だと、利用者は「鍵が違う」と思って入れ直そうとする。
             # 403: the credential is valid, the permission is not. A 401 would
             # send the reader off to re-enter a key that was never the problem.
+            logger.warning(
+                "permission denied: %s token attempted an operator action "
+                "from %s (%s %s)",
+                role, _client_ip(request), request.method, request.url.path,
+            )
             raise HTTPException(
                 status_code=403,
                 detail="this token can view but not run",
@@ -329,6 +345,8 @@ def create_app(
                     "started_at": None,
                 }
                 runs.add(record)
+                logger.info("run %s: template=%s started_by=%s status=%s",
+                           record["id"], template.name, role, status)
                 return record
 
         record = {
@@ -350,6 +368,8 @@ def create_app(
             ],
         }
         runs.add(record)
+        logger.info("run %s: template=%s started_by=%s status=%s",
+                   record["id"], template.name, role, status)
         return record
 
     @app.post("/api/runs")
@@ -414,6 +434,9 @@ def create_app(
         for template in _get_cached_templates():
             if template.trigger.type == "event" and template.trigger.event == event_type:
                 matched.append(template)
+
+        logger.info("webhook received: event=%s matched=%d role=%s from %s",
+                   event_type, len(matched), role, _client_ip(request))
 
         if not matched:
             return JSONResponse(status_code=200, content={"detail": "no matching templates", "matched": 0})
@@ -481,7 +504,8 @@ def create_app(
         return result["rows"][0]
 
     def _decide_wbs_proposal(
-        proposal_id: str, status: str, role: str, note: str | None,
+        request: Request, proposal_id: str, status: str, role: str,
+        note: str | None,
     ) -> dict[str, Any]:
         pg = _postgres_or_503()
         result = pg.execute("decide_wbs_proposal", {
@@ -491,27 +515,46 @@ def create_app(
         if not result["rows"]:
             # pending でなかった（既に決定済み・存在しない・staleになった）。
             # No such id, or it was not pending (already decided, or gone stale).
+            logger.warning(
+                "wbs proposal decision rejected: %s %s by %s from %s "
+                "(not pending)",
+                proposal_id, status, role, _client_ip(request),
+            )
             raise HTTPException(
                 status_code=409,
                 detail="proposal is not pending (already decided, missing, or stale)",
             )
+        # WBS の計画そのものを変える決定なので、DB の decided_by/decided_at/
+        # decision_note とは別に、アプリのログにも残す。DB はテナント単位の
+        # クエリでしか見えないが、ログは通常の監視・集約基盤にそのまま流れる。
+        #
+        # This changes the WBS plan itself, so it's logged here in addition to
+        # the DB's own decided_by/decided_at/decision_note — the DB is only
+        # visible through a tenant-scoped query, while the log reaches
+        # whatever monitoring/aggregation pipeline is already watching this
+        # process.
+        logger.info(
+            "wbs proposal decided: %s %s by %s from %s%s",
+            proposal_id, status, role, _client_ip(request),
+            f' note="{note}"' if note else "",
+        )
         return result["rows"][0]
 
     @app.post("/api/wbs-proposals/{proposal_id}/approve")
     def approve_wbs_proposal(
-        proposal_id: str, payload: dict[str, Any] | None = None,
+        request: Request, proposal_id: str, payload: dict[str, Any] | None = None,
         role: str = operator_guard,
     ) -> dict[str, Any]:
         note = (payload or {}).get("note")
-        return _decide_wbs_proposal(proposal_id, "approved", role, note)
+        return _decide_wbs_proposal(request, proposal_id, "approved", role, note)
 
     @app.post("/api/wbs-proposals/{proposal_id}/reject")
     def reject_wbs_proposal(
-        proposal_id: str, payload: dict[str, Any] | None = None,
+        request: Request, proposal_id: str, payload: dict[str, Any] | None = None,
         role: str = operator_guard,
     ) -> dict[str, Any]:
         note = (payload or {}).get("note")
-        return _decide_wbs_proposal(proposal_id, "rejected", role, note)
+        return _decide_wbs_proposal(request, proposal_id, "rejected", role, note)
 
     return app
 

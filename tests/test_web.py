@@ -191,6 +191,14 @@ def test_broken_template_returns_a_readable_error(client, templates):
     assert response.status_code == 400
     assert "broken" in response.json()["detail"]
 
+def test_a_run_is_written_to_the_audit_log(client, templates, caplog):
+    with caplog.at_level("INFO", logger="aipmo.web"):
+        client.post("/api/runs", headers=auth(client),
+                    json={"path": str(templates / "simple.yaml")})
+
+    assert any("simple_demo" in r.message and "success" in r.message
+               for r in caplog.records)
+
 def test_rate_limiter_blocks_many_requests(templates):
     adapters = AdapterRegistry()
     adapters.register(MockJiraAdapter())
@@ -455,6 +463,25 @@ steps:
     assert len(runs) > 0
     assert runs[0]["template"] == "Webhook Test"
     assert runs[0]["status"] == "success"
+
+def test_webhook_receipt_is_written_to_the_audit_log(client, templates, caplog):
+    content = """
+name: Webhook Test
+trigger: event:pull_request
+steps:
+  - id: t
+    adapter: slack
+    action: post_message
+    inputs: { channel: "C123", text: "Hello" }
+"""
+    (templates / "webhook.yaml").write_text(content.strip(), encoding="utf-8")
+
+    with caplog.at_level("INFO", logger="aipmo.web"):
+        client.post("/api/webhook", json={"event": "pull_request", "action": "opened"},
+                    headers={"x-aipmo-token": TOKEN})
+
+    assert any("webhook received" in r.message and "pull_request" in r.message
+               for r in caplog.records)
 
 def test_webhook_no_match(client):
     payload = {"event": "unknown_event"}
