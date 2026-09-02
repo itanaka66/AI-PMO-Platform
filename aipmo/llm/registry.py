@@ -9,15 +9,9 @@ configuration. Switching providers leaves every template untouched.
 from __future__ import annotations
 
 from typing import Any
-
-
 from .base import EchoProvider, LLMProvider, OpenAICompatibleProvider
-
-from .base import AnthropicProvider, EchoProvider, LLMProvider, OllamaProvider, OpenAICompatibleProvider
-
-
+from .base import AnthropicProvider
 from .presets import PRESETS, ProviderError
-
 
 class LLMRegistry:
     def __init__(self) -> None:
@@ -54,7 +48,6 @@ class LLMRegistry:
         for profile, spec in (config or {}).items():
             registry.register(profile, build_provider(spec))
         return registry
-
 
 def build_provider(spec: dict[str, Any] | str | None) -> LLMProvider:
     """設定の一節から提供元を作る / build one provider from its config block."""
