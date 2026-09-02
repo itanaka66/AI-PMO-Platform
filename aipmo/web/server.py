@@ -301,27 +301,18 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such run")
         return record
 
-    @app.post("/api/runs")
-    def start_run(request: Request, payload: dict[str, Any], role: str = operator_guard) -> Any:
-        client_ip = request.client.host if request.client else "unknown"
-        if not rate_limiter.is_allowed(client_ip):
-            raise HTTPException(status_code=429, detail="Too Many Requests")
+    def _do_run(template: Any, params: dict[str, Any], trigger: dict[str, Any],
+                role: str) -> dict[str, Any]:
+        """テンプレートを実際に走らせ、実行履歴の1件として記録する。
 
-        raw_path = str(payload.get("path", ""))
-        root = template_root.resolve()
-        supplied = Path(raw_path)
-        target = (supplied if supplied.is_absolute() else root / supplied).resolve()
+        `/api/runs`（同期）と `/api/webhook`（バックグラウンド実行）の
+        両方から呼ばれる共通の実行本体。
 
-        # テンプレート置き場の外を実行させない。
-        # resolve() で正規化してから包含を確認するので、.. もシンボリックリンクも
-        # 抜けられない。サブディレクトリは通す（一覧に出る以上、実行できないと筋が通らない）。
-        # Never execute outside the template directory. Normalising with
-        # resolve() before the containment check closes both `..` traversal and
-        # symlinks. Subdirectories are allowed: listing a template the user
-        # cannot then run would be incoherent.
-        if not target.is_file() or not target.is_relative_to(root):
-            raise HTTPException(status_code=400, detail="template not found")
-
+        Actually runs a template and records it as one run-history entry.
+        Shared by both `/api/runs` (synchronous) and `/api/webhook`
+        (backgrounded).
+        """
+        ctx: RunContext | None
         try:
             ctx = engine.run(template, params=params, trigger=trigger)
             status = "success"
@@ -362,12 +353,23 @@ def create_app(
         return record
 
     @app.post("/api/runs")
-    def start_run(payload: dict[str, Any], role: str = operator_guard) -> Any:
+    def start_run(request: Request, payload: dict[str, Any], role: str = operator_guard) -> Any:
+        client_ip = request.client.host if request.client else "unknown"
+        if not rate_limiter.is_allowed(client_ip):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
         raw_path = str(payload.get("path", ""))
         root = template_root.resolve()
         supplied = Path(raw_path)
         target = (supplied if supplied.is_absolute() else root / supplied).resolve()
 
+        # テンプレート置き場の外を実行させない。
+        # resolve() で正規化してから包含を確認するので、.. もシンボリックリンクも
+        # 抜けられない。サブディレクトリは通す（一覧に出る以上、実行できないと筋が通らない）。
+        # Never execute outside the template directory. Normalising with
+        # resolve() before the containment check closes both `..` traversal and
+        # symlinks. Subdirectories are allowed: listing a template the user
+        # cannot then run would be incoherent.
         if not target.is_file() or not target.is_relative_to(root):
             raise HTTPException(status_code=400, detail="template not found")
 

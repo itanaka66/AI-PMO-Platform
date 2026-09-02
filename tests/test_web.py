@@ -144,27 +144,6 @@ def test_static_app_js_wires_up_proposal_review():
     assert '"approve"' in app_js
     assert '"reject"' in app_js
 
-def test_index_page_includes_the_proposals_section(client):
-    """承認待ち一覧の表示先が index.html から消えていないこと。"""
-    client.cookies.set("aipmo_token", TOKEN)
-    response = client.get("/")
-    assert response.status_code == 200
-    assert 'id="proposals"' in response.text
-    assert 'id="h-proposals"' in response.text
-
-
-def test_static_app_js_wires_up_proposal_review():
-    """承認・却下の呼び出しコードが app.js から消えていないこと。
-    ブラウザテストは無いので、配線自体が残っていることを機械的に確認する。"""
-    app_js = (Path(__file__).resolve().parents[1]
-              / "aipmo" / "web" / "static" / "app.js").read_text(encoding="utf-8")
-
-    assert "renderProposals" in app_js
-    assert "refreshProposals" in app_js
-    assert "/api/wbs-proposals" in app_js
-    assert '"approve"' in app_js
-    assert '"reject"' in app_js
-
 # --- テンプレート一覧 / template listing -----------------------------------
 
 def test_broken_templates_stay_visible(client):
