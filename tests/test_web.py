@@ -110,6 +110,40 @@ def test_cookie_alone_authenticates(client):
     client.cookies.set("aipmo_token", TOKEN)
     assert client.get("/api/templates").status_code == 200
 
+def test_secure_cookie_when_https(client):
+    response = client.get(f"/?token={TOKEN}", headers={"x-forwarded-proto": "https"})
+    assert response.status_code == 200
+    cookie = response.headers.get("set-cookie")
+    assert cookie is not None
+    assert "Secure" in cookie
+
+def test_insecure_cookie_when_http(client):
+    response = client.get(f"/?token={TOKEN}")
+    assert response.status_code == 200
+    cookie = response.headers.get("set-cookie")
+    assert cookie is not None
+    assert "Secure" not in cookie
+
+def test_index_page_includes_the_proposals_section(client):
+    """承認待ち一覧の表示先が index.html から消えていないこと。"""
+    client.cookies.set("aipmo_token", TOKEN)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'id="proposals"' in response.text
+    assert 'id="h-proposals"' in response.text
+
+def test_static_app_js_wires_up_proposal_review():
+    """承認・却下の呼び出しコードが app.js から消えていないこと。
+    ブラウザテストは無いので、配線自体が残っていることを機械的に確認する。"""
+    app_js = (Path(__file__).resolve().parents[1]
+              / "aipmo" / "web" / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "renderProposals" in app_js
+    assert "refreshProposals" in app_js
+    assert "/api/wbs-proposals" in app_js
+    assert '"approve"' in app_js
+    assert '"reject"' in app_js
+
 def test_index_page_includes_the_proposals_section(client):
     """承認待ち一覧の表示先が index.html から消えていないこと。"""
     client.cookies.set("aipmo_token", TOKEN)
@@ -177,6 +211,29 @@ def test_broken_template_returns_a_readable_error(client, templates):
                            json={"path": str(templates / "broken.yaml")})
     assert response.status_code == 400
     assert "broken" in response.json()["detail"]
+
+def test_rate_limiter_blocks_many_requests(templates):
+    adapters = AdapterRegistry()
+    adapters.register(MockJiraAdapter())
+    adapters.register(MockSlackAdapter())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    app = create_app(Engine(adapters, llms), templates, TOKEN,
+                     tenant="acme_corp", lang="en", store=RunStore())
+    client = TestClient(app)
+
+    # 既定の制限は10回。10回までは通る。
+    for _ in range(10):
+        response = client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
+                               json={"path": str(templates / "simple.yaml")})
+        assert response.status_code == 200
+
+    # 11回目はブロックされる。
+    response = client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
+                           json={"path": str(templates / "simple.yaml")})
+    assert response.status_code == 429
+    assert response.json()["detail"] == "Too Many Requests"
 
 @pytest.mark.parametrize("path", [
     "../../../etc/passwd",

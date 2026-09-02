@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,30 @@ STATIC_DIR = Path(__file__).parent / "static"
 # 実行履歴の保持件数。Postgres 連携が入るまではメモリ上のみ。
 # In-memory run history until the Postgres wiring lands.
 HISTORY_LIMIT = 50
+
+
+class RateLimiter:
+    """簡易インメモリ・レートリミッター / Simple in-memory rate limiter."""
+
+    def __init__(self, limit: int = 10, window_seconds: float = 60.0) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._requests: dict[str, list[float]] = {}
+
+    def is_allowed(self, key: str) -> bool:
+        now = time.time()
+        timestamps = self._requests.get(key, [])
+        # 期限内のリクエストのみ残す / Keep only requests within the window
+        timestamps = [t for t in timestamps if now - t < self.window_seconds]
+
+        if len(timestamps) >= self.limit:
+            self._requests[key] = timestamps
+            return False
+
+        timestamps.append(now)
+        self._requests[key] = timestamps
+        return True
+
 
 class RunStore:
     """実行履歴を新しい順に保持する / keeps run records, newest first."""
@@ -134,6 +159,7 @@ def create_app(
 ):
     runs = store or RunStore()
     ui_lang = normalize(lang) if lang else detect()
+    rate_limiter = RateLimiter(limit=10, window_seconds=60.0)
 
     # Webhook 用のテンプレートキャッシュ
     # Webhooks cache templates so they don't hit the disk on every event.
@@ -233,8 +259,11 @@ def create_app(
         # 共有・スクリーンショット・履歴からの漏洩を減らせる。
         # Move the token from the query string into a cookie so it stops
         # appearing in the address bar, screenshots and browser history.
+        # TLS or X-Forwarded-Proto implies it should be a secure cookie.
+        is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
         response.set_cookie(
             "aipmo_token", supplied, httponly=True, samesite="strict",
+            secure=is_secure,
             max_age=60 * 60 * 24 * 30,
         )
         return response
@@ -272,8 +301,27 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such run")
         return record
 
-    def _do_run(template: Any, params: dict[str, Any], trigger: dict[str, Any], role: str) -> dict[str, Any]:
-        ctx: RunContext | None = None
+    @app.post("/api/runs")
+    def start_run(request: Request, payload: dict[str, Any], role: str = operator_guard) -> Any:
+        client_ip = request.client.host if request.client else "unknown"
+        if not rate_limiter.is_allowed(client_ip):
+            raise HTTPException(status_code=429, detail="Too Many Requests")
+
+        raw_path = str(payload.get("path", ""))
+        root = template_root.resolve()
+        supplied = Path(raw_path)
+        target = (supplied if supplied.is_absolute() else root / supplied).resolve()
+
+        # テンプレート置き場の外を実行させない。
+        # resolve() で正規化してから包含を確認するので、.. もシンボリックリンクも
+        # 抜けられない。サブディレクトリは通す（一覧に出る以上、実行できないと筋が通らない）。
+        # Never execute outside the template directory. Normalising with
+        # resolve() before the containment check closes both `..` traversal and
+        # symlinks. Subdirectories are allowed: listing a template the user
+        # cannot then run would be incoherent.
+        if not target.is_file() or not target.is_relative_to(root):
+            raise HTTPException(status_code=400, detail="template not found")
+
         try:
             ctx = engine.run(template, params=params, trigger=trigger)
             status = "success"
