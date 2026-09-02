@@ -42,6 +42,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -238,18 +239,43 @@ class JiraAdapter(Adapter):
         return self.search(jql=jql)
 
     @action()
-    def search(self, jql: str, fields: list[str] | None = None,
+    def search(self, jql: str, project: str | None = None, fields: list[str] | None = None,
                limit: int = 50) -> dict[str, Any]:
         """JQL で検索する / search with JQL.
 
         新しいエンドポイントを使い、fields を明示する。
         既定は id のみなので、書かないと中身が空に見える。
 
-        Uses the current endpoint and names the fields: the default is id
-        alone, so omitting them makes the results look empty.
+        安全のため、必ずプロジェクトで絞り込む。
+        jql のみに依存すると、任意のプロジェクトの情報を引けてしまうため。
+
+        Uses the current endpoint and names the fields.
+        Enforces a project filter for safety, preventing queries from reading
+        across the entire Jira instance.
         """
+        key = project or self.project
+        if not key:
+            raise AdapterError("jira: project が必要です / project is required")
+
+        # ORDER BY を分離して括弧の外に出す / Extract ORDER BY to keep it outside the parens
+        match = re.search(r'(?i)\s+ORDER\s+BY\s+', jql)
+        if match:
+            condition = jql[:match.start()].strip()
+            order_by = jql[match.start():].strip()
+        else:
+            condition = jql.strip()
+            order_by = ""
+
+        if condition:
+            safe_jql = f'project = "{key}" AND ({condition})'
+        else:
+            safe_jql = f'project = "{key}"'
+            
+        if order_by:
+            safe_jql += f" {order_by}"
+
         payload = {
-            "jql": jql,
+            "jql": safe_jql,
             "fields": fields or DEFAULT_FIELDS,
             "maxResults": min(limit, 100),
         }

@@ -48,7 +48,8 @@ steps:
     adapter: jira
     action: search
     inputs:
-      jql: 'project = "{{ params.jira_project }}" AND statusCategory != Done ORDER BY updated DESC'
+      project: "{{ params.jira_project }}"
+      jql: \'statusCategory != Done ORDER BY updated DESC\'
       limit: 60
 
   - id: propose
