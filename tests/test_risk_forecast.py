@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
-import yaml
 
 from aipmo.adapters.base import AdapterRegistry
 from aipmo.adapters.postgres import PostgresAdapter
