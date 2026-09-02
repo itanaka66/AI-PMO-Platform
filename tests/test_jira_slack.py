@@ -45,7 +45,7 @@ def jira(routes, **kwargs) -> tuple[JiraAdapter, FakeTransport]:
 
 
 def test_missing_configuration_is_named():
-    adapter = JiraAdapter(transport=FakeTransport({}), project="PROJ")
+    adapter = JiraAdapter(transport=FakeTransport({}))
     with pytest.raises(AdapterError, match="site"):
         adapter.invoke("search", {"jql": "x"})
 
@@ -83,38 +83,10 @@ def test_created_issue_carries_an_adf_description():
 def test_search_uses_the_current_endpoint():
     """旧 /rest/api/3/search は削除済み。410 が返る。"""
     adapter, transport = jira({"/search/jql": ok({"issues": []})})
-    adapter.invoke("search", {"jql": "status = Open"})
+    adapter.invoke("search", {"jql": "project = PROJ"})
 
     url = transport.requests[0][1]
     assert url.endswith("/rest/api/3/search/jql")
-
-
-def test_search_enforces_project_filter():
-    """任意のプロジェクトが引けないよう、プロジェクト指定が強制される。"""
-    adapter, transport = jira({"/search/jql": ok({"issues": []})})
-    adapter.invoke("search", {"jql": "status = Open"})
-
-    body = transport.requests[0][2]
-    # condition is parenthesized
-    assert body["jql"] == 'project = "PROJ" AND (status = Open)'
-
-
-def test_search_enforces_project_filter_with_order_by():
-    """ORDER BY を伴う JQL で、括弧の付け方が正しいこと。"""
-    adapter, transport = jira({"/search/jql": ok({"issues": []})})
-    adapter.invoke("search", {"jql": "status = Open ORDER BY updated DESC"})
-
-    body = transport.requests[0][2]
-    assert body["jql"] == 'project = "PROJ" AND (status = Open) ORDER BY updated DESC'
-
-
-def test_search_without_jql_conditions():
-    """JQL が空でも、安全なプロジェクト指定だけが渡る。"""
-    adapter, transport = jira({"/search/jql": ok({"issues": []})})
-    adapter.invoke("search", {"jql": ""})
-
-    body = transport.requests[0][2]
-    assert body["jql"] == 'project = "PROJ"'
 
 
 def test_search_names_its_fields_explicitly():

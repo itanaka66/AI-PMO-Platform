@@ -1,0 +1,43 @@
+name: wbs_proposal_cleanup
+version: "1"
+industry: generic
+description: |
+  承認待ちのまま一定時間放置された WBS 再計画提案を stale として無効化する。
+
+  古い状況に基づく差分を、その間に状況が変わっているかもしれないまま
+  今日承認してしまう事故を防ぐための定期処理。mark_stale_wbs_proposals は
+  承認フロー実装時から用意されていたが、呼び出し元が無かった。
+
+trigger: "schedule:0 3 * * *"
+
+params:
+  stale_after_hours: 72
+  notify_channel: "#pmo"
+
+steps:
+  - id: cutoff
+    expression: hours_ago
+    inputs:
+      hours: "{{ params.stale_after_hours }}"
+      from_time: "{{ run.started_at }}"
+
+  - id: cleanup
+    adapter: postgres
+    action: execute
+    inputs:
+      name: mark_stale_wbs_proposals
+      params:
+        older_than: "{{ steps.cutoff.output }}"
+
+  - id: notify
+    when: "{{ steps.cleanup.output.affected }} > 0"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.notify_channel }}"
+      text: |
+        {{ steps.cleanup.output.affected }} 件の WBS 再計画提案が
+        {{ params.stale_after_hours }} 時間 承認待ちのまま放置されたため、
+        無効化（stale）としました。状況が続いていれば、次回の実行で
+        新しい提案が作られます。
