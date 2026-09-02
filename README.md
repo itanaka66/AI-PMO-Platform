@@ -29,6 +29,7 @@ commercial use, modification and redistribution are all permitted.
 | `overdue_chase` | 期限超過の担当者へ個別に催促 / Individually chases overdue owners |
 | `overdue_triage` | 遅延状況をエージェントが調査して報告 / An agent investigates delays and reports back |
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） / Sprint health check — notifies only when something is wrong |
+| `portfolio_risk_forecast` | 複数 WBS を横断して遅延リスクを決定論的に採点し、危険な WBS だけ週次で報告 / Scores delay risk deterministically across several WBS, reporting weekly only on the ones at risk |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 / Drafts a WBS from meeting decisions |
 | `model_comparison` | 同じプロンプトを複数の AI に同時投稿し、書きぶりを比較 / Sends the same prompt to several AI providers at once and compares the results |
 | `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める / Sends independent notifications concurrently to cut run time |
@@ -68,7 +69,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 721 件
+pytest                               # 741 件
 ```
 
 ---
@@ -442,9 +443,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-721 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+741 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-721 tests, aimed at the guarantees and at the failure shapes that look like
+741 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
