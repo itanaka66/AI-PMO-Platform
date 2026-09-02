@@ -9,8 +9,10 @@ OpenAI-compatible chat API. Rather than four near-identical classes, the
 differences are captured as data: base URL, where the key lives, and which
 features the endpoint actually supports.
 
-Ollama も v11 (OpenAI 互換) API を用いて同じ経路を通る。
-Ollama uses its v11-compatible (OpenAI-compatible) API and shares this path.
+Ollama だけは独自 API のまま別に持っている（llm/base.py）。
+ローカルで最も使われる経路で、互換層を挟まない方が素直なため。
+Ollama keeps its native client in llm/base.py: it is the most common local
+path and going through a compatibility shim buys nothing there.
 
 モデル名について / About model names
 ------------------------------------
@@ -72,18 +74,6 @@ class Preset:
 
 
 PRESETS: dict[str, Preset] = {
-    "ollama": Preset(
-        name="ollama",
-        base_url="http://localhost:11434/v1",
-        api_key_env=None,
-        default_chat_model="qwen2.5:14b",
-        default_embed_model="bge-m3",
-        default_embed_dimension=1024,
-        supports_tools=True,
-        supports_json_mode=True,
-        local=True,
-        notes="Ollama ネイティブの OpenAI 互換 API を使用 / uses Ollama's OpenAI compatible API",
-    ),
     "openai": Preset(
         name="openai",
         base_url=None,                     # SDK の既定 / the SDK default
@@ -157,6 +147,38 @@ PRESETS: dict[str, Preset] = {
         local=True,
         notes="llama-server で起動 / start with llama-server",
     ),
+    # Claude は OpenAI 互換の API を出していない（Messages API という
+    # 別の形式）ため、実体は OpenAICompatibleProvider を通らず
+    # AnthropicProvider という専用クラスが処理する（llm/base.py）。
+    # それでもここに載せているのは、鍵の環境変数・既定モデル・埋め込みの
+    # 有無といったメタデータを、他の提供元と同じ場所（このファイル）に
+    # 集約しておくため — セットアップウィザードや registry.build_provider
+    # は "claude" かどうかで先に分岐し、Preset は主に案内・検証用に使う。
+    #
+    # Claude does not speak an OpenAI-compatible API (it has its own
+    # Messages API shape), so it is actually handled by a dedicated
+    # AnthropicProvider class (llm/base.py), not OpenAICompatibleProvider.
+    # It is still listed here so its metadata - key variable, default
+    # model, whether it has embeddings - lives in the same place as every
+    # other provider's; registry.build_provider and the setup wizard branch
+    # on the name "claude" before consulting this Preset for anything else.
+    "claude": Preset(
+        name="claude",
+        base_url=None,                     # SDK の既定 / the SDK default
+        api_key_env="ANTHROPIC_API_KEY",
+        default_chat_model="claude-sonnet-5",
+        # Anthropic は埋め込み API を提供していない
+        # (Voyage AI 等のパートナー経由が案内されている)。
+        # Anthropic has no embeddings API of its own (it points users to
+        # partners such as Voyage AI instead).
+        supports_embeddings=False,
+        # response_format のような強制 JSON モードは無い。
+        # プロンプト側で JSON を要求する（OpenRouter と同じ扱い）。
+        # No forced JSON-mode parameter exists; JSON is requested in the
+        # prompt instead, the same treatment as OpenRouter.
+        supports_json_mode=False,
+        notes="console.anthropic.com で鍵を取得 / get a key at console.anthropic.com",
+    ),
 }
 
 
@@ -168,7 +190,7 @@ def resolve(name: str) -> Preset:
     if name not in PRESETS:
         raise ProviderError(
             f"未知の提供元 / unknown provider: {name!r}\n"
-            f"  使えるもの / available: {', '.join(sorted(PRESETS))}"
+            f"  使えるもの / available: {', '.join(sorted(PRESETS))}, ollama"
         )
     return PRESETS[name]
 

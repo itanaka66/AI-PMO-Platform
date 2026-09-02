@@ -1,0 +1,104 @@
+name: wbs_risk_forecast
+version: "1"
+industry: software
+description: |
+  WBS の残タスクとベロシティから遅延を予測し、ドリフトが閾値を超えたら
+  wbs_replan_proposals へ承認待ちの提案として記録する。
+
+  重要な境界: このテンプレートは提案を作るだけで、WBS そのものは一切
+  書き換えない。risk_forecast / postgres のどちらのアクションも、
+  実行中のWBSテーブルに触れる権限を持たない。人が Web UI で承認するまで
+  何も反映されない。
+
+  WBS の取得元はテナントによって異なるため、タスク一覧は params.tasks
+  で渡す想定にしている（このテンプレート自体はデータの出どころを問わない）。
+
+trigger: "schedule:0 7 * * MON-FRI"
+
+params:
+  wbs_id: "wbs-main"
+  deadline: "2026-03-31"
+  velocity_per_day: 2.0
+  slack_channel: "#pmo"
+  tasks: []
+
+steps:
+  - id: previous
+    adapter: postgres
+    action: query
+    inputs:
+      name: latest_forecast_snapshot
+      params:
+        wbs_id: "{{ params.wbs_id }}"
+
+  - id: forecast
+    adapter: risk_forecast
+    action: forecast
+    inputs:
+      tasks: "{{ params.tasks }}"
+      velocity_per_day: "{{ params.velocity_per_day }}"
+      deadline: "{{ params.deadline }}"
+      as_of: "{{ run.date }}"
+
+  - id: pending_check
+    adapter: postgres
+    action: query
+    inputs:
+      name: pending_wbs_proposals
+      params: {}
+
+  - id: classify
+    adapter: risk_forecast
+    action: classify_drift
+    inputs:
+      drift_days: "{{ steps.forecast.output.drift_days }}"
+      previous_drift_days: "{{ steps.previous.output.rows[0].drift_days }}"
+      pending_count: "{{ steps.pending_check.output.count }}"
+
+  - id: snapshot
+    adapter: postgres
+    action: execute
+    inputs:
+      name: save_forecast_snapshot
+      params:
+        wbs_id: "{{ params.wbs_id }}"
+        drift_days: "{{ steps.forecast.output.drift_days }}"
+        tier: "{{ steps.classify.output.tier }}"
+        forecast: "{{ steps.forecast.output }}"
+
+  - id: propose
+    when: "{{ steps.classify.output.should_propose }} == true"
+    adapter: postgres
+    action: execute
+    inputs:
+      name: save_wbs_proposal
+      idempotency_key: "{{ params.wbs_id }}:tier{{ steps.classify.output.tier }}"
+      params:
+        id: "{{ run.id }}"
+        wbs_version_from: "{{ params.wbs_id }}"
+        diff: "{{ steps.forecast.output }}"
+        rationale: "{{ steps.classify.output.reason }}"
+        assumptions: {}
+        tier: "{{ steps.classify.output.tier }}"
+        confidence: 0.7
+        option_label: null
+
+  # DSL の when は単一の比較式しか書けない（and/or 非対応）ため、
+  # 「propose が実行されたか」ではなく tier==3 単独で判定する。
+  # 危機的水域である限り、承認待ちが既にあっても毎回知らせる
+  # （construction/site_meeting の immediate 通知と同じ考え方）。
+  - id: notify_critical
+    when: "{{ steps.classify.output.tier }} == 3"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        :rotating_light: WBS 遅延が危機的水域です（Tier 3）
+
+        ドリフト: {{ steps.forecast.output.drift_days }} 日
+        予測完了日: {{ steps.forecast.output.projected_completion }}
+        締切: {{ params.deadline }}
+
+        Web UI で提案を確認してください。この提案はまだ何にも反映されていません。

@@ -26,9 +26,9 @@ steps:
     adapter: jira
     action: search
     inputs:
-      project: "{{ params.jira_project }}"
       jql: >-
-        status IN ({{ params.approval_statuses }})
+        project = "{{ params.jira_project }}"
+        AND status IN ({{ params.approval_statuses }})
         ORDER BY updated ASC
       limit: 50
 
@@ -36,9 +36,9 @@ steps:
     adapter: jira
     action: search
     inputs:
-      project: "{{ params.jira_project }}"
       jql: >-
-        statusCategory = "In Progress"
+        project = "{{ params.jira_project }}"
+        AND statusCategory = "In Progress"
         AND status NOT IN ({{ params.approval_statuses }})
       limit: 50
 

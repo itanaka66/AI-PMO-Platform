@@ -854,3 +854,119 @@ def test_provider_without_tool_support_is_refused_early():
 @pytest.mark.parametrize("name", ["openai", "gemini", "groq", "openrouter"])
 def test_hosted_providers_support_tools(name):
     assert require_tools(name).supports_tools
+
+
+# --- Claude (Anthropic) 経由でのエージェント実行 --------------------------
+# Claude が OpenAI 形式のツール呼び出し履歴を正しく往復できることを、
+# 単体の変換関数だけでなく、実際に run_agent を最初から最後まで動かして
+# 確認する。単体テストは変換ロジックの正しさは示せても、
+# ToolBox が実際に生成する道具名（jira__find_overdue のような二重下線）や
+# エージェントループ自体の RECOGNIZE/DECIDE/ACT/OBSERVE の流れとの
+# 組み合わせで壊れていないことまでは保証しない。
+
+def _install_anthropic_script(monkeypatch, replies):
+    """create() の呼び出しごとに replies を順に返す
+    （anthropic.messages.create の戻り値の列）。"""
+    import sys
+    import types
+
+    calls = {"n": 0}
+
+    def create(**kwargs):
+        index = min(calls["n"], len(replies) - 1)
+        calls["n"] += 1
+        return replies[index]
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            return create(**kwargs)
+
+    class FakeAnthropic:
+        def __init__(self, **kw):
+            self.messages = FakeMessages()
+
+    module = types.ModuleType("anthropic")
+    module.Anthropic = FakeAnthropic
+    monkeypatch.setitem(sys.modules, "anthropic", module)
+    return calls
+
+
+class _Usage:
+    input_tokens = 10
+    output_tokens = 5
+
+
+class _Message:
+    def __init__(self, content):
+        self.content = content
+        self.usage = _Usage()
+
+
+class _Text:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class _ToolUse:
+    type = "tool_use"
+
+    def __init__(self, id, name, input):
+        self.id = id
+        self.name = name
+        self.input = input
+
+
+def test_claude_can_drive_a_full_agent_run(monkeypatch):
+    """道具を呼んで、その結果を踏まえて最終回答するところまで通しで動く。"""
+    from aipmo.llm.base import AnthropicProvider
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    _install_anthropic_script(monkeypatch, [
+        _Message([
+            _Text("let me check overdue issues"),
+            _ToolUse("call_1", "jira__find_overdue", {"project": "PROJ"}),
+        ]),
+        _Message([_Text("PROJ has overdue issues; investigation complete.")]),
+    ])
+
+    provider = AnthropicProvider()
+    adapters = AdapterRegistry()
+    adapters.register(MockJiraAdapter())
+    spec = AgentSpec(tools=["jira.find_overdue"], allow_writes=False, max_iterations=5)
+
+    result = run_agent(provider, adapters, spec,
+                       prompt="Investigate overdue issues in PROJ",
+                       system="You investigate delays.")
+
+    assert result.stopped_because == "finished"
+    assert result.answer == "PROJ has overdue issues; investigation complete."
+    assert result.iterations == 2
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "jira__find_overdue"
+    assert result.tool_calls[0].ok is True
+    assert result.input_tokens == 20  # 2 turns x 10
+    assert result.output_tokens == 10  # 2 turns x 5
+
+
+def test_claude_stops_at_max_iterations_like_any_other_provider(monkeypatch):
+    """常に道具を呼び続けるスクリプトなら、他の提供元と同じく
+    iteration_limit で打ち切られること。"""
+    from aipmo.llm.base import AnthropicProvider
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    always_calls_tool = _Message([
+        _ToolUse("call_x", "jira__find_overdue", {"project": "PROJ"}),
+    ])
+    _install_anthropic_script(monkeypatch, [always_calls_tool])
+
+    provider = AnthropicProvider()
+    adapters = AdapterRegistry()
+    adapters.register(MockJiraAdapter())
+    spec = AgentSpec(tools=["jira.find_overdue"], allow_writes=False, max_iterations=2)
+
+    result = run_agent(provider, adapters, spec, prompt="keep checking")
+
+    assert result.stopped_because == "iteration_limit"
+    assert result.iterations == 2
