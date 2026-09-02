@@ -114,11 +114,9 @@ def test_token_in_url_is_moved_into_a_cookie(client):
     assert response.status_code == 200
     assert response.cookies.get("aipmo_token") == TOKEN
 
-
 def test_cookie_alone_authenticates(client):
     client.cookies.set("aipmo_token", TOKEN)
     assert client.get("/api/templates").status_code == 200
-
 
 def test_secure_cookie_when_https(client):
     response = client.get(f"/?token={TOKEN}", headers={"x-forwarded-proto": "https"})
@@ -126,7 +124,6 @@ def test_secure_cookie_when_https(client):
     cookie = response.headers.get("set-cookie")
     assert cookie is not None
     assert "Secure" in cookie
-
 
 def test_insecure_cookie_when_http(client):
     response = client.get(f"/?token={TOKEN}")
@@ -142,7 +139,6 @@ def test_index_page_includes_the_proposals_section(client):
     assert response.status_code == 200
     assert 'id="proposals"' in response.text
     assert 'id="h-proposals"' in response.text
-
 
 def test_static_app_js_wires_up_proposal_review():
     """承認・却下の呼び出しコードが app.js から消えていないこと。
