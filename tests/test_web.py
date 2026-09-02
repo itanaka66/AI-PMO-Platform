@@ -53,7 +53,6 @@ steps:
     action: post_message
 """
 
-
 @pytest.fixture
 def templates(tmp_path: Path) -> Path:
     root = tmp_path / "templates"
@@ -61,7 +60,6 @@ def templates(tmp_path: Path) -> Path:
     (root / "simple.yaml").write_text(SIMPLE, encoding="utf-8")
     (root / "broken.yaml").write_text(BROKEN, encoding="utf-8")
     return root
-
 
 @pytest.fixture
 def client(templates: Path) -> TestClient:
@@ -77,10 +75,8 @@ def client(templates: Path) -> TestClient:
                      tenant="acme_corp", lang="en", store=RunStore())
     return TestClient(app)
 
-
 def auth(client: TestClient) -> dict[str, str]:
     return {"x-aipmo-token": TOKEN}
-
 
 # --- 認証 / authentication -------------------------------------------------
 
@@ -90,23 +86,19 @@ def auth(client: TestClient) -> dict[str, str]:
 def test_endpoints_require_a_token(client, path):
     assert client.get(path).status_code == 401
 
-
 def test_wrong_token_is_rejected(client):
     response = client.get("/api/templates", headers={"x-aipmo-token": "wrong"})
     assert response.status_code == 401
-
 
 def test_running_requires_a_token(client, templates):
     response = client.post("/api/runs",
                            json={"path": str(templates / "simple.yaml")})
     assert response.status_code == 401
 
-
 def test_index_without_token_shows_the_locked_page(client):
     response = client.get("/")
     assert response.status_code == 401
     assert "token" in response.text.lower()
-
 
 def test_token_in_url_is_moved_into_a_cookie(client):
     """URL に鍵が残り続けないこと。共有や履歴からの漏洩を防ぐ。"""
@@ -173,7 +165,6 @@ def test_static_app_js_wires_up_proposal_review():
     assert '"approve"' in app_js
     assert '"reject"' in app_js
 
-
 # --- テンプレート一覧 / template listing -----------------------------------
 
 def test_broken_templates_stay_visible(client):
@@ -189,12 +180,10 @@ def test_broken_templates_stay_visible(client):
     assert by_name["broken"]["valid"] is False
     assert by_name["broken"]["error"]
 
-
 def test_discover_reports_industry_and_steps(templates):
     items = {i["name"]: i for i in discover_templates(templates)}
     assert items["simple_demo"]["industry"] == "software"
     assert items["simple_demo"]["steps"] == ["overdue", "notify"]
-
 
 # --- 実行 / running --------------------------------------------------------
 
@@ -208,7 +197,6 @@ def test_run_records_step_outcomes(client, templates):
     # 条件を満たさない工程は skipped として残る。消してはいけない。
     assert record["steps"][1]["status"] == "skipped"
 
-
 def test_run_appears_in_history_newest_first(client, templates):
     for _ in range(2):
         client.post("/api/runs", headers=auth(client),
@@ -218,13 +206,11 @@ def test_run_appears_in_history_newest_first(client, templates):
     assert len(items) == 2
     assert items[0]["started_at"] >= items[1]["started_at"]
 
-
 def test_broken_template_returns_a_readable_error(client, templates):
     response = client.post("/api/runs", headers=auth(client),
                            json={"path": str(templates / "broken.yaml")})
     assert response.status_code == 400
     assert "broken" in response.json()["detail"]
-
 
 def test_rate_limiter_blocks_many_requests(templates):
     adapters = AdapterRegistry()
@@ -249,7 +235,6 @@ def test_rate_limiter_blocks_many_requests(templates):
     assert response.status_code == 429
     assert response.json()["detail"] == "Too Many Requests"
 
-
 @pytest.mark.parametrize("path", [
     "../../../etc/passwd",
     "/etc/passwd",
@@ -260,7 +245,6 @@ def test_paths_outside_the_template_directory_are_refused(client, path):
     """配布テンプレートを扱う以上、渡されたパスは信用しない。"""
     response = client.post("/api/runs", headers=auth(client), json={"path": path})
     assert response.status_code == 400
-
 
 def test_templates_in_subdirectories_can_be_run(client, templates):
     """一覧に出すなら実行もできること。片方だけ通るのは筋が通らない。"""
@@ -277,7 +261,6 @@ def test_templates_in_subdirectories_can_be_run(client, templates):
     assert response.status_code == 200
     assert response.json()["template"] == "nested_demo"
 
-
 def test_symlink_out_of_the_root_is_refused(client, templates, tmp_path):
     outside = tmp_path / "outside.yaml"
     outside.write_text(SIMPLE, encoding="utf-8")
@@ -291,17 +274,14 @@ def test_symlink_out_of_the_root_is_refused(client, templates, tmp_path):
                            json={"path": "sneaky.yaml"})
     assert response.status_code == 400
 
-
 def test_run_detail_by_id(client, templates):
     created = client.post("/api/runs", headers=auth(client),
                           json={"path": str(templates / "simple.yaml")}).json()
     fetched = client.get(f"/api/runs/{created['id']}", headers=auth(client))
     assert fetched.json()["id"] == created["id"]
 
-
 def test_unknown_run_id_is_404(client):
     assert client.get("/api/runs/nope", headers=auth(client)).status_code == 404
-
 
 # --- セッション / session --------------------------------------------------
 
@@ -309,7 +289,6 @@ def test_session_carries_tenant_and_strings(client):
     body = client.get("/api/session", headers=auth(client)).json()
     assert body["tenant"] == "acme_corp"
     assert body["strings"]["web_runs"] == "Runs"
-
 
 def test_session_language_follows_config(templates):
     adapters = AdapterRegistry()
@@ -323,13 +302,11 @@ def test_session_language_follows_config(templates):
     assert body["lang"] == "ja"
     assert body["strings"]["web_runs"] == "実行"
 
-
 def test_history_is_capped():
     store = RunStore(limit=3)
     for i in range(5):
         store.add({"id": str(i)})
     assert [r["id"] for r in store.list()] == ["4", "3", "2"]
-
 
 def test_failed_run_keeps_step_detail(client, templates):
     """失敗した実行こそ、どの工程で落ちたかが要る。空の結果を返してはいけない。
@@ -359,11 +336,9 @@ def test_failed_run_keeps_step_detail(client, templates):
     assert steps["bad_step"]["status"] == "failed"
     assert steps["bad_step"]["error"]
 
-
 # --- 権限分離 / role separation ---------------------------------------------
 
 VIEWER = "viewer-token-value"
-
 
 @pytest.fixture
 def two_role_client(templates: Path) -> TestClient:
@@ -378,10 +353,8 @@ def two_role_client(templates: Path) -> TestClient:
                      store=RunStore())
     return TestClient(app)
 
-
 def viewer(client: TestClient) -> dict[str, str]:
     return {"x-aipmo-token": VIEWER}
-
 
 def test_the_two_tokens_must_differ(templates):
     """同じ値だと、閲覧用を配った相手が実行もできる。
@@ -397,16 +370,13 @@ def test_the_two_tokens_must_differ(templates):
     with pytest.raises(ValueError, match="differ"):
         create_app(Engine(adapters, llms), templates, TOKEN, viewer_token=TOKEN)
 
-
 def test_a_viewer_can_read_templates(two_role_client):
     response = two_role_client.get("/api/templates", headers=viewer(two_role_client))
     assert response.status_code == 200
 
-
 def test_a_viewer_can_read_run_history(two_role_client):
     assert two_role_client.get("/api/runs",
                                headers=viewer(two_role_client)).status_code == 200
-
 
 def test_a_viewer_cannot_start_a_run(two_role_client, templates):
     """画面でボタンを隠すのは権限管理ではない。サーバーが拒否すること。
@@ -416,7 +386,6 @@ def test_a_viewer_cannot_start_a_run(two_role_client, templates):
     response = two_role_client.post("/api/runs", headers=viewer(two_role_client),
                                     json={"path": "simple.yaml"})
     assert response.status_code == 403
-
 
 def test_refusal_is_403_not_401(two_role_client):
     """401 だと『鍵が違う』と思って入れ直そうとする。問題はそこではない。
@@ -428,7 +397,6 @@ def test_refusal_is_403_not_401(two_role_client):
     assert response.status_code == 403
     assert "run" in response.json()["detail"]
 
-
 def test_a_viewer_run_attempt_leaves_no_trace(two_role_client, templates):
     """拒否された実行が履歴に残らないこと。"""
     two_role_client.post("/api/runs", headers=viewer(two_role_client),
@@ -437,12 +405,10 @@ def test_a_viewer_run_attempt_leaves_no_trace(two_role_client, templates):
                                 headers=viewer(two_role_client)).json()["items"]
     assert items == []
 
-
 def test_an_operator_can_still_run(two_role_client, templates):
     response = two_role_client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
                                     json={"path": "simple.yaml"})
     assert response.status_code == 200
-
 
 def test_session_reports_the_role(two_role_client):
     as_viewer = two_role_client.get("/api/session",
@@ -454,18 +420,15 @@ def test_session_reports_the_role(two_role_client):
         "/api/session", headers={"x-aipmo-token": TOKEN}).json()
     assert as_operator["can_run"] is True
 
-
 def test_an_unknown_token_gets_no_role(two_role_client):
     assert two_role_client.get(
         "/api/session", headers={"x-aipmo-token": "neither"}).status_code == 401
-
 
 def test_runs_record_who_started_them(two_role_client, templates):
     """PMO では『いつ動いたか』より『誰が動かしたか』が問われる。"""
     record = two_role_client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
                                   json={"path": "simple.yaml"}).json()
     assert record["started_by"] == "operator"
-
 
 def test_the_viewer_cookie_does_not_grant_running(two_role_client, templates):
     """URL から Cookie に移した後も、権限は上がらないこと。"""
@@ -474,7 +437,6 @@ def test_the_viewer_cookie_does_not_grant_running(two_role_client, templates):
 
     response = two_role_client.post("/api/runs", json={"path": "simple.yaml"})
     assert response.status_code == 403
-
 
 def test_a_single_token_deployment_still_works(templates):
     """閲覧用を設定していない場合、従来どおり動くこと。"""
@@ -489,3 +451,34 @@ def test_a_single_token_deployment_still_works(templates):
 
     assert client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
                        json={"path": "simple.yaml"}).status_code == 200
+
+def test_webhook_triggers_event_templates(client, templates):
+    # Prepare a template with event trigger
+    content = """
+name: Webhook Test
+trigger: event:pull_request
+steps:
+  - id: t
+    adapter: slack
+    action: post_message
+    inputs: { channel: "C123", text: "Hello" }
+"""
+    (templates / "webhook.yaml").write_text(content.strip(), encoding="utf-8")
+
+    payload = {"event": "pull_request", "action": "opened"}
+    response = client.post("/api/webhook", json=payload, headers={"x-aipmo-token": TOKEN})
+    assert response.status_code == 200
+    assert response.json()["matched"] == 1
+
+    runs_res = client.get("/api/runs", headers={"x-aipmo-token": TOKEN})
+    assert runs_res.status_code == 200
+    runs = runs_res.json()["items"]
+    assert len(runs) > 0
+    assert runs[0]["template"] == "Webhook Test"
+    assert runs[0]["status"] == "success"
+
+def test_webhook_no_match(client):
+    payload = {"event": "unknown_event"}
+    response = client.post("/api/webhook", json=payload, headers={"x-aipmo-token": TOKEN})
+    assert response.status_code == 200
+    assert response.json()["matched"] == 0
