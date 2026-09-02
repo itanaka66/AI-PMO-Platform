@@ -9,10 +9,8 @@ OpenAI-compatible chat API. Rather than four near-identical classes, the
 differences are captured as data: base URL, where the key lives, and which
 features the endpoint actually supports.
 
-Ollama だけは独自 API のまま別に持っている（llm/base.py）。
-ローカルで最も使われる経路で、互換層を挟まない方が素直なため。
-Ollama keeps its native client in llm/base.py: it is the most common local
-path and going through a compatibility shim buys nothing there.
+Ollama も v11 (OpenAI 互換) API を用いて同じ経路を通る。
+Ollama uses its v11-compatible (OpenAI-compatible) API and shares this path.
 
 モデル名について / About model names
 ------------------------------------
@@ -74,6 +72,18 @@ class Preset:
 
 
 PRESETS: dict[str, Preset] = {
+    "ollama": Preset(
+        name="ollama",
+        base_url="http://localhost:11434/v1",
+        api_key_env=None,
+        default_chat_model="qwen2.5:14b",
+        default_embed_model="bge-m3",
+        default_embed_dimension=1024,
+        supports_tools=True,
+        supports_json_mode=True,
+        local=True,
+        notes="Ollama ネイティブの OpenAI 互換 API を使用 / uses Ollama's OpenAI compatible API",
+    ),
     "openai": Preset(
         name="openai",
         base_url=None,                     # SDK の既定 / the SDK default
@@ -158,7 +168,7 @@ def resolve(name: str) -> Preset:
     if name not in PRESETS:
         raise ProviderError(
             f"未知の提供元 / unknown provider: {name!r}\n"
-            f"  使えるもの / available: {', '.join(sorted(PRESETS))}, ollama"
+            f"  使えるもの / available: {', '.join(sorted(PRESETS))}"
         )
     return PRESETS[name]
 

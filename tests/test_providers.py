@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from aipmo.llm.base import LLMRequest, OpenAICompatibleProvider
-from aipmo.llm.embeddings import OllamaEmbedder, build_embedder
+from aipmo.llm.embeddings import build_embedder, OpenAICompatibleEmbedder
 from aipmo.llm.presets import PRESETS, ProviderError, require_embeddings, resolve
 from aipmo.llm.registry import LLMRegistry, build_provider
 
@@ -78,7 +78,7 @@ def test_groq_chat_still_works_alongside_another_embedder(monkeypatch):
     embedder = build_embedder({"provider": "ollama", "model": "bge-m3"})
 
     assert chat.preset.name == "groq"
-    assert isinstance(embedder, OllamaEmbedder)
+    assert isinstance(embedder, OpenAICompatibleEmbedder)
 
 
 # --- JSON モードの差 / JSON-mode differences --------------------------------
@@ -184,6 +184,25 @@ def test_base_url_can_be_overridden(monkeypatch):
     provider = OpenAICompatibleProvider(provider="groq",
                                         base_url="http://gateway.internal/v1")
     assert provider.base_url == "http://gateway.internal/v1"
+
+
+def test_ollama_host_is_mapped_to_base_url():
+    """旧設定の host が base_url に変換され、末尾に /v1 が補完されること。"""
+    provider = build_provider({"provider": "ollama", "model": "qwen2.5:7b", "host": "http://ollama:11434"})
+    assert provider.base_url == "http://ollama:11434/v1"
+
+    provider2 = build_provider({"provider": "ollama", "model": "qwen2.5:7b", "host": "http://ollama:11434/"})
+    assert provider2.base_url == "http://ollama:11434/v1"
+
+    provider3 = build_provider({"provider": "ollama", "model": "qwen2.5:7b", "host": "http://ollama:11434/v1"})
+    assert provider3.base_url == "http://ollama:11434/v1"
+
+
+def test_ollama_embedder_host_is_mapped_to_base_url():
+    """Embedder においても旧設定の host が base_url に変換されること。"""
+    embedder = build_embedder({"provider": "ollama", "model": "bge-m3", "host": "http://ollama:11434"})
+    assert isinstance(embedder, OpenAICompatibleEmbedder)
+    assert embedder.base_url == "http://ollama:11434/v1"
 
 
 # --- レジストリ / registry --------------------------------------------------
