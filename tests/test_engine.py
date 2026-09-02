@@ -813,6 +813,58 @@ def test_an_unreadable_date_yields_nothing_rather_than_stopping_the_run():
     assert BUILTIN_TRANSFORMS["days_between"]("2026-08-28", "来週") is None
 
 
+def test_hours_ago_defaults_to_now():
+    from datetime import datetime, timedelta, timezone
+
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    before = datetime.now(timezone.utc)
+    result = datetime.fromisoformat(BUILTIN_TRANSFORMS["hours_ago"](1))
+    after = datetime.now(timezone.utc)
+
+    assert before - timedelta(hours=1, seconds=2) <= result <= after - timedelta(hours=1) + timedelta(seconds=2)
+
+
+def test_hours_ago_anchors_on_given_time():
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    result = BUILTIN_TRANSFORMS["hours_ago"](72, from_time="2026-01-10T00:00:00+00:00")
+    assert result == "2026-01-07T00:00:00+00:00"
+
+
+def test_to_forecast_tasks_renames_points_to_effort():
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    sprint_issues = [
+        {"key": "T1", "done": True, "points": 3, "summary": "ignored"},
+        {"key": "T2", "done": False, "points": None},
+    ]
+
+    result = BUILTIN_TRANSFORMS["to_forecast_tasks"](sprint_issues)
+
+    assert result == [
+        {"key": "T1", "done": True, "effort": 3},
+        {"key": "T2", "done": False, "effort": None},
+    ]
+
+
+def test_to_forecast_tasks_supports_a_different_source_field():
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    items = [{"key": "T1", "done": False, "estimate_days": 2}]
+
+    result = BUILTIN_TRANSFORMS["to_forecast_tasks"](items, effort_field="estimate_days")
+
+    assert result == [{"key": "T1", "done": False, "effort": 2}]
+
+
+def test_to_forecast_tasks_tolerates_non_list_input():
+    from aipmo.engine.runner import BUILTIN_TRANSFORMS
+
+    assert BUILTIN_TRANSFORMS["to_forecast_tasks"](None) == []
+    assert BUILTIN_TRANSFORMS["to_forecast_tasks"]("not a list") == []
+
+
 def test_a_transform_step_runs_in_a_template():
     engine, slack = _looping_engine()
     template = loader.load_dict({"name": "t", "steps": [

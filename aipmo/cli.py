@@ -172,6 +172,40 @@ def build_engine(
             queries.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
         adapters.register(PostgresAdapter(queries=queries, tenant=tenant, **spec))
 
+    # risk_forecast は外部認証情報を持たない純粋な計算アダプタだが、
+    # 他のすべての実アダプタと同じく明示的な opt-in にする — 有効かどうかが
+    # config.yaml を見るだけで分かるようにするため（黙って常時有効にすると、
+    # 「なぜこの機能が動いているのか」が config から読み取れなくなる）。
+    #
+    # risk_forecast needs no credentials, but is still opt-in like every
+    # other real adapter — so whether it is active is visible from
+    # config.yaml alone, rather than always running silently with no line
+    # in the config to explain why.
+    if "risk_forecast" in adapter_config:
+        from .adapters.risk_forecast import RiskForecastAdapter
+
+        adapters.register(RiskForecastAdapter(**dict(adapter_config["risk_forecast"])))
+
+    # wbs_replan は postgres の上に合成される（JiraAgileAdapter が jira の
+    # 上に合成されるのと同じ形）。postgres が無ければ wbs_replan_proposals
+    # にもそもそも書けないので、postgres が設定されているときだけ登録する。
+    #
+    # wbs_replan is composed on top of postgres (same shape as
+    # JiraAgileAdapter over jira). With no postgres there is nowhere for
+    # wbs_replan_proposals to live, so this only registers when postgres is
+    # configured.
+    if "wbs_replan" in adapter_config:
+        if not adapters.has("postgres"):
+            raise ConfigError(
+                "config.yaml の adapters.wbs_replan を使うには adapters.postgres の"
+                "設定も必要です / adapters.wbs_replan requires adapters.postgres "
+                "to also be configured"
+            )
+        from .adapters.wbs_replan import WbsReplanAdapter
+
+        adapters.register(WbsReplanAdapter(
+            postgres=cast(PostgresAdapter, adapters.get("postgres"))))
+
     # ベクトルストアは5種類のうちどれを設定してもよい。ちょうど1つだけ
     # 設定されているときは、論理名 vector_store でも同じインスタンスを
     # 登録する — 新しいテンプレートはそちらを使えば、あとでバックエンドを

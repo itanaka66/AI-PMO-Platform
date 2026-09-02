@@ -34,7 +34,7 @@ class SetupAnswers:
     """ウィザードの回答 / the answers a user gives."""
 
     mode: str = "cloud"          # cloud | local
-    provider: str = "openai"     # cloud のとき: openai | gemini | groq | openrouter
+    provider: str = "openai"     # cloud のとき: openai | gemini | groq | openrouter | claude
     chat_model: str | None = None
     tenant: str = "my_company"
     use_data_layer: bool = False
@@ -109,20 +109,17 @@ def build_config(answers: SetupAnswers) -> dict[str, Any]:
                 f" set OPENAI_API_KEY as well."
             )
     else:
-        base_url = answers.ollama_host
-        if not base_url.endswith("/v1") and not base_url.endswith("/v1/"):
-            base_url = base_url.rstrip("/") + "/v1"
         llm = {
             "default": {"provider": "ollama", "model": LOCAL_CHAT_MODEL,
-                        "base_url": base_url},
+                        "host": answers.ollama_host},
             "fast": {"provider": "ollama", "model": LOCAL_CHAT_MODEL,
-                     "base_url": base_url},
+                     "host": answers.ollama_host},
         }
         embedding = {
             "provider": "ollama",
             "model": LOCAL_EMBED_MODEL,
             "dimension": LOCAL_EMBED_DIM,
-            "base_url": base_url,
+            "host": answers.ollama_host,
         }
 
     config: dict[str, Any] = {
@@ -258,7 +255,7 @@ def run_interactive(
 
         out("")
         out(t("q_provider"))
-        choices = ["openai", "gemini", "groq", "openrouter"]
+        choices = ["openai", "gemini", "groq", "openrouter", "claude"]
         for index, name in enumerate(choices, start=1):
             preset = PRESETS[name]
             suffix = "" if preset.supports_embeddings else t("no_embeddings")

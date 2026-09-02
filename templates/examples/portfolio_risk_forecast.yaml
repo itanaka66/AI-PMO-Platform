@@ -1,0 +1,88 @@
+name: portfolio_risk_forecast
+version: "1"
+industry: software
+description: |
+  複数の WBS（Jira プロジェクト）を横断して、期限超過の件数と目標日までの
+  残日数から遅延リスクを機械的に採点し、ポートフォリオ全体としてどの WBS
+  から手を打つべきかを毎週まとめて知らせる。採点そのものは決定論的
+  （aipmo/portfolio.py）— 言語モデルには文面の要約だけを任せる。
+  危険度の高い WBS が1つも無ければ、何も送らない。
+
+trigger: "schedule:0 8 * * MON"
+
+params:
+  # 1件が1つの WBS。name は表示用、project は Jira のプロジェクトキー、
+  # days_remaining はその WBS の目標日までの残日数（過ぎていれば負の値）を
+  # 手で入れる。Jira に「WBS の目標日」という共通の項目は無いため。
+  #
+  # One entry per WBS. `name` is for display, `project` is the Jira project
+  # key, and `days_remaining` (days left to that WBS's target date — negative
+  # if already past it) is entered by hand: Jira has no standard field for
+  # "this WBS's target date".
+  wbs:
+    - name: "基幹システム刷新"
+      project: CORE
+      days_remaining: 12
+    - name: "顧客ポータル"
+      project: PORTAL
+      days_remaining: 45
+  report_channel: "#pmo-portfolio"
+
+steps:
+  # WBS ごとに期限超過を調べる。1件失敗しても他の WBS は続ける
+  # （個々の Jira プロジェクト設定の違いで落ちることがある）。
+  # Checked per WBS; one failure does not stop the rest (a single project's
+  # own Jira configuration can differ enough to fail on its own).
+  - id: overdue
+    for_each: "{{ params.wbs }}"
+    as: item
+    continue_on_error: true
+    adapter: jira
+    action: find_overdue
+    inputs:
+      project: "{{ item.project }}"
+      as_of: "{{ run.date }}"
+
+  # 決定論的な採点。詳しくは aipmo/portfolio.py。
+  # Deterministic scoring — see aipmo/portfolio.py.
+  - id: risk
+    expression: portfolio_risk_forecast
+    inputs:
+      wbs: "{{ params.wbs }}"
+      overdue: "{{ steps.overdue.output.results }}"
+      overdue_errors: "{{ steps.overdue.output.errors }}"
+
+  # 危険度の高い WBS が無ければ何も送らない。
+  # 毎週「全部順調です」が届くチャンネルは、そのうち読まれなくなる。
+  #
+  # Nothing follows when nothing is at risk: a channel that receives "all
+  # fine" every week stops being read.
+  - id: summarize
+    when: "{{ steps.risk.output.at_risk_count }} > 0"
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt: portfolio_risk_forecast_ja
+    inputs:
+      today: "{{ run.date }}"
+      portfolio: "{{ steps.risk.output }}"
+    output_format: json
+    output_schema:
+      required: [headline, items]
+
+  - id: notify
+    when: "{{ steps.risk.output.at_risk_count }} > 0"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.report_channel }}"
+      text: |
+        *ポートフォリオ Risk/Forecast* — {{ run.date }}
+        {{ steps.risk.output.high_risk_count }} 件が危険 /
+        {{ steps.risk.output.medium_risk_count }} 件が注意
+        （全 {{ steps.risk.output.total_count }} WBS 中）
+
+        {{ steps.summarize.output.headline }}
+
+        {{ steps.summarize.output.items }}

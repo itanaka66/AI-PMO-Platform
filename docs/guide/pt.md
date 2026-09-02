@@ -69,7 +69,7 @@ Responda às perguntas; na dúvida, Enter aceita o valor padrão.
 5) Ativar a camada de banco de dados?  → N
 ```
 
-**São quatro provedores para escolher.** Na dúvida, escolha OpenAI: ele também
+**São cinco provedores para escolher.** Na dúvida, escolha OpenAI: ele também
 tem embeddings, então uma única configuração resolve.
 
 | Provedor | Característica |
@@ -78,6 +78,7 @@ tem embeddings, então uma única configuração resolve.
 | Gemini | Processa transcrições longas de forma barata |
 | Groq | Rápido, mas exige duas chaves |
 | OpenRouter | Uma chave para comparar muitos modelos |
+| Claude | Escrita de alta qualidade, mas exige duas chaves (sem API de embeddings) |
 
 **Como obter uma chave de API**
 Crie uma conta no provedor escolhido e emita uma chave.

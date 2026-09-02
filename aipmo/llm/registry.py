@@ -9,8 +9,10 @@ configuration. Switching providers leaves every template untouched.
 from __future__ import annotations
 
 from typing import Any
-from .base import EchoProvider, LLMProvider, OpenAICompatibleProvider
+
+from .base import AnthropicProvider, EchoProvider, LLMProvider, OllamaProvider, OpenAICompatibleProvider
 from .presets import PRESETS, ProviderError
+
 
 class LLMRegistry:
     def __init__(self) -> None:
@@ -37,7 +39,7 @@ class LLMRegistry:
 
         llm:
           default:
-            provider: groq          # openai / gemini / groq / openrouter
+            provider: groq          # openai / gemini / groq / openrouter / claude
             model: openai/gpt-oss-120b
           fast:
             provider: ollama
@@ -48,6 +50,7 @@ class LLMRegistry:
             registry.register(profile, build_provider(spec))
         return registry
 
+
 def build_provider(spec: dict[str, Any] | str | None) -> LLMProvider:
     """設定の一節から提供元を作る / build one provider from its config block."""
     if isinstance(spec, str):
@@ -55,18 +58,23 @@ def build_provider(spec: dict[str, Any] | str | None) -> LLMProvider:
     spec = dict(spec or {})
     provider = spec.pop("provider", "openai")
 
-    if provider == "ollama" and "host" in spec:
-        host = spec.pop("host")
-        if not host.endswith("/v1") and not host.endswith("/v1/"):
-            host = host.rstrip("/") + "/v1"
-        spec["base_url"] = host
-
+    if provider == "ollama":
+        return OllamaProvider(**spec)
     if provider == "echo":
         return EchoProvider(**spec)
+    # claude は presets.PRESETS に載っているが（鍵の環境変数・既定モデルの
+    # 案内のため）、OpenAI 互換ではないので OpenAICompatibleProvider には
+    # 渡さない。PRESETS のチェックより先にここで分岐させる。
+    #
+    # claude is listed in presets.PRESETS (for its key variable and default
+    # model), but it is not OpenAI-compatible, so it must not reach
+    # OpenAICompatibleProvider. This branch runs before the PRESETS check.
+    if provider == "claude":
+        return AnthropicProvider(**spec)
     if provider in PRESETS:
         return OpenAICompatibleProvider(provider=provider, **spec)
 
     raise ProviderError(
         f"未知の提供元 / unknown provider: {provider!r}\n"
-        f"  使えるもの / available: {', '.join(sorted(PRESETS))}"
+        f"  使えるもの / available: {', '.join(sorted(PRESETS))}, ollama"
     )

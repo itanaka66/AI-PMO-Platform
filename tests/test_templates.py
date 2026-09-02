@@ -264,7 +264,7 @@ class RecordingJira(MockJiraAdapter):
         super().__init__()
         self.updates = []
 
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [{"key": "PROJ-7", "summary": "API互換対応"},
                           {"key": "PROJ-9", "summary": "負荷試験"}], "count": 2}
 
@@ -576,7 +576,7 @@ HEALTHY_CAMPAIGN = json.dumps({
 
 
 class SearchingJira(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [{"key": "MKT-12", "summary": "バナー差し替え"}],
                 "count": 1}
 
@@ -645,7 +645,7 @@ NO_STOPPAGES_REPLY = json.dumps({
 
 
 class SearchingJiraStoppages(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [
             {"key": "MFG-1", "summary": "投入部が停止"},
             {"key": "MFG-2", "summary": "モーター交換待ち"},
@@ -734,7 +734,7 @@ NO_MATTERS_REPLY = json.dumps({
 
 
 class SearchingJiraMatters(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [
             {"key": "LEGAL-1", "summary": "契約更新"},
             {"key": "LEGAL-2", "summary": "係争案件A"},
@@ -816,7 +816,7 @@ NO_ACCOUNTS_REPLY = json.dumps({
 
 
 class SearchingJiraAccounts(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [
             {"key": "CS-1", "summary": "株式会社アクメ 更新前レビュー"},
             {"key": "CS-2", "summary": "株式会社ベータ 導入対応"},
@@ -901,7 +901,7 @@ NO_FINDINGS_REPLY = json.dumps({
 
 
 class SearchingJiraFindings(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [
             {"key": "AUDIT-1", "summary": "決算処理の承認統制"},
             {"key": "AUDIT-2", "summary": "アクセス権限の棚卸"},
@@ -991,7 +991,7 @@ NO_PROPOSALS_REPLY = json.dumps({
 
 
 class SearchingJiraProposals(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [
             {"key": "CURR-1", "summary": "データサイエンス副専攻"},
             {"key": "CURR-2", "summary": "統計学入門の必修化"},
@@ -1036,7 +1036,7 @@ NO_GRANT_ACTIVITY_REPLY = json.dumps({
 
 
 class SearchingJiraGrants(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [
             {"key": "GRANTS-1", "summary": "中間報告書の提出"},
             {"key": "GRANTS-2", "summary": "設備調達"},
@@ -1083,7 +1083,7 @@ NO_CLAIMS_REPLY = json.dumps({
 
 
 class SearchingJiraClaims(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [
             {"key": "CLAIM-1", "summary": "追突事故"},
             {"key": "CLAIM-2", "summary": "火災損害"},
@@ -1243,7 +1243,7 @@ NO_TASKS_REPLY = json.dumps({
 
 
 class SearchingJiraGovTasks(MockJiraAdapter):
-    def search(self, jql, project=None, fields=None, limit=50):
+    def search(self, jql, fields=None, limit=50):
         return {"items": [
             {"key": "GOVCON-1", "summary": "暗号モジュール統合"},
             {"key": "GOVCON-2", "summary": "月次進捗報告の提出"},
