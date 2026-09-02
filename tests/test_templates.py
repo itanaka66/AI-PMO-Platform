@@ -1368,7 +1368,7 @@ def test_scope_change_candidates_go_only_to_the_scope_channel():
     assert "ENGAGE-2" not in other_channels_text
 
 
-def test_deliverable_deadlines_are_sent_alone_immediately():
+def test_client_deliverable_deadlines_are_sent_alone_immediately():
     """クライアントへの約束であり、社内期日と違って信頼関係に直接影響する。"""
     _, slack = run_consulting()
     deliverables = [m for m in slack.posted if m["channel"] == "#consulting-deliverables"]
