@@ -621,3 +621,688 @@ def test_approval_waits_are_reported_separately_from_late_work():
 def test_a_healthy_campaign_says_nothing():
     _, slack = run_campaign(reply=HEALTHY_CAMPAIGN)
     assert slack.posted == []
+
+
+# --- 製造 / manufacturing ----------------------------------------------------
+
+DOWNTIME_REPLY = json.dumps({
+    "headline": "安全案件が1件、資材待ちが1件あります",
+    "safety_items": [
+        {"issue_key": "MFG-1", "line": "Aライン", "description": "投入部のロックアウト未解除",
+         "downtime_hours": 2},
+    ],
+    "supply_blocked": [
+        {"issue_key": "MFG-2", "line": "Bライン", "waiting_on": "モーター部品",
+         "downtime_hours": 6},
+    ],
+    "internal": [],
+}, ensure_ascii=False)
+
+NO_STOPPAGES_REPLY = json.dumps({
+    "headline": "対応が必要な停止はありません",
+    "safety_items": [], "supply_blocked": [], "internal": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraStoppages(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "MFG-1", "summary": "投入部が停止"},
+            {"key": "MFG-2", "summary": "モーター交換待ち"},
+        ], "count": 2}
+
+
+SearchingJiraStoppages.search = action()(SearchingJiraStoppages.search)
+
+
+def run_downtime(reply=DOWNTIME_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraStoppages(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "manufacturing" / "line_downtime_triage.yaml"))
+    return ctx, slack
+
+
+def test_safety_stoppages_go_to_the_safety_channel_alone():
+    """安全に関わる停止は、進捗の報告に混ぜない。"""
+    _, slack = run_downtime()
+    safety = [m for m in slack.posted if m["channel"] == "#safety"]
+
+    assert len(safety) == 1
+    assert "ロックアウト" in safety[0]["text"]
+
+
+def test_supply_blocked_stoppages_go_to_procurement_not_the_floor():
+    """資材待ちは現場ではなく調達へ。現場に催促しても資材は届かない。"""
+    _, slack = run_downtime()
+    supply = [m for m in slack.posted if m["channel"] == "#procurement"]
+    floor = [m for m in slack.posted if m["channel"] == "#line-a-floor"]
+
+    assert supply and "モーター部品" in supply[0]["text"]
+    assert all("モーター部品" not in m["text"] for m in floor)
+
+
+def test_internal_fixes_are_batched_not_sent_individually():
+    """件数分バラバラに送ると、対応が必要なものが埋もれる。"""
+    reply = json.dumps({
+        "headline": "内製で直せる停止が2件",
+        "safety_items": [], "supply_blocked": [],
+        "internal": [
+            {"issue_key": "MFG-3", "line": "Cライン", "description": "センサー再調整",
+             "downtime_hours": 1},
+            {"issue_key": "MFG-4", "line": "Dライン", "description": "ベルト張り直し",
+             "downtime_hours": 1},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_downtime(reply=reply)
+    floor = [m for m in slack.posted if m["channel"] == "#line-a-floor"]
+
+    assert len(floor) == 1
+    assert "MFG-3" in floor[0]["text"] and "MFG-4" in floor[0]["text"]
+
+
+def test_nothing_is_said_when_no_stoppage_needs_attention():
+    _, slack = run_downtime(reply=NO_STOPPAGES_REPLY)
+    assert slack.posted == []
+
+
+# --- 法務 / legal and compliance ---------------------------------------------
+
+DEADLINE_REPLY = json.dumps({
+    "urgent": [
+        {"issue_key": "LEGAL-1", "matter_name": "契約更新期限", "deadline": "2026-09-01",
+         "days_until_deadline": 2},
+    ],
+    "blocked": [
+        {"issue_key": "LEGAL-2", "matter_name": "係争案件A", "waiting_on": "相手方の回答待ち"},
+    ],
+    "internal": [],
+    "privileged": [
+        {"issue_key": "LEGAL-3", "days_until_deadline": 5},
+    ],
+}, ensure_ascii=False)
+
+NO_MATTERS_REPLY = json.dumps({
+    "urgent": [], "blocked": [], "internal": [], "privileged": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraMatters(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "LEGAL-1", "summary": "契約更新"},
+            {"key": "LEGAL-2", "summary": "係争案件A"},
+            {"key": "LEGAL-3", "summary": "秘匿特権対象案件"},
+        ], "count": 3}
+
+
+SearchingJiraMatters.search = action()(SearchingJiraMatters.search)
+
+
+def run_legal(reply=DEADLINE_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraMatters(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "legal" / "matter_deadline_triage.yaml"))
+    return ctx, slack
+
+
+def test_urgent_deadlines_are_sent_alone_to_the_urgent_channel():
+    """期日を過ぎると法的な効果が生じうる。まとめて翌朝に送らない。"""
+    _, slack = run_legal()
+    urgent = [m for m in slack.posted if m["channel"] == "#legal-urgent"]
+
+    assert len(urgent) == 1
+    assert "契約更新期限" in urgent[0]["text"]
+    assert "残り 2 日" in urgent[0]["text"]
+
+
+def test_matters_blocked_on_the_other_side_are_not_a_chase():
+    """担当者に確認しても、相手方や裁判所は動かせない。"""
+    _, slack = run_legal()
+    blocked = [m for m in slack.posted if "相手方の回答待ち" in m["text"]]
+
+    assert blocked
+    assert blocked[0]["channel"] == "#legal-ops"
+    assert "担当者の手を離れています" in blocked[0]["text"]
+
+
+def test_privileged_matters_go_only_to_the_restricted_channel_without_detail():
+    """秘匿特権の対象は、緊急度に関わらず限定チャンネルへ、詳細を伏せて。"""
+    _, slack = run_legal()
+    privileged = [m for m in slack.posted if m["channel"] == "#legal-privileged"]
+    other_channels_text = "".join(
+        m["text"] for m in slack.posted if m["channel"] != "#legal-privileged")
+
+    assert privileged and "LEGAL-3" in privileged[0]["text"]
+    # 案件名や内容は他のどの通知にも出てこないこと。
+    assert "LEGAL-3" not in other_channels_text
+
+
+def test_nothing_is_said_when_no_matter_needs_attention():
+    _, slack = run_legal(reply=NO_MATTERS_REPLY)
+    assert slack.posted == []
+
+
+# --- カスタマーサクセス / customer success -----------------------------------
+
+ACCOUNT_HEALTH_REPLY = json.dumps({
+    "at_risk": [
+        {"issue_key": "CS-1", "account_name": "株式会社アクメ",
+         "reason": "ヘルススコア低下、更新間近", "days_until_renewal": 14},
+    ],
+    "waiting_on_customer": [
+        {"issue_key": "CS-2", "account_name": "株式会社ベータ",
+         "waiting_on": "導入データの提供待ち"},
+    ],
+    "internal_delivery": [],
+}, ensure_ascii=False)
+
+NO_ACCOUNTS_REPLY = json.dumps({
+    "at_risk": [], "waiting_on_customer": [], "internal_delivery": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraAccounts(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "CS-1", "summary": "株式会社アクメ 更新前レビュー"},
+            {"key": "CS-2", "summary": "株式会社ベータ 導入対応"},
+        ], "count": 2}
+
+
+SearchingJiraAccounts.search = action()(SearchingJiraAccounts.search)
+
+
+def run_account_health(reply=ACCOUNT_HEALTH_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraAccounts(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "customer_success" / "account_health_triage.yaml"))
+    return ctx, slack
+
+
+def test_at_risk_accounts_are_escalated_alone_to_leadership():
+    """解約は後戻りしにくい。翌朝まとめて送っても対処の時間が削られるだけ。"""
+    _, slack = run_account_health()
+    escalated = [m for m in slack.posted if m["channel"] == "#cs-leadership"]
+
+    assert len(escalated) == 1
+    assert "株式会社アクメ" in escalated[0]["text"]
+    assert "残り 14 日" in escalated[0]["text"]
+
+
+def test_customer_waits_are_not_framed_as_blaming_the_owner():
+    """社内の遅れと違い、担当者の落ち度ではない。"""
+    _, slack = run_account_health()
+    waiting = [m for m in slack.posted if m["channel"] == "#csm-followups"]
+
+    assert waiting and "導入データの提供待ち" in waiting[0]["text"]
+    assert "急かす連絡にはしない" in waiting[0]["text"]
+
+
+def test_internal_delays_go_to_the_team_not_the_csm_channel():
+    """自社側の遅れは、緊急度を上げて配送チームへ。顧客の遅れとは別扱い。"""
+    reply = json.dumps({
+        "at_risk": [], "waiting_on_customer": [],
+        "internal_delivery": [
+            {"issue_key": "CS-3", "account_name": "株式会社ガンマ",
+             "next_step": "導入手順書の送付"},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_account_health(reply=reply)
+    team = [m for m in slack.posted if m["channel"] == "#customer-success"]
+    csm = [m for m in slack.posted if m["channel"] == "#csm-followups"]
+
+    assert team and "株式会社ガンマ" in team[0]["text"]
+    assert csm == []
+
+
+def test_nothing_is_said_when_every_account_is_healthy():
+    _, slack = run_account_health(reply=NO_ACCOUNTS_REPLY)
+    assert slack.posted == []
+
+
+# --- 財務監査 / financial services and audit ---------------------------------
+
+FINDING_REPLY = json.dumps({
+    "material_weakness": [
+        {"issue_key": "AUDIT-1", "finding": "決算処理の承認統制が機能していない",
+         "days_until_deadline": 14},
+    ],
+    "significant_deficiency": [
+        {"issue_key": "AUDIT-2", "finding": "アクセス権限の定期棚卸が未実施",
+         "owner": "情報システム部長", "days_until_deadline": 30},
+    ],
+    "control_deficiency": [],
+}, ensure_ascii=False)
+
+NO_FINDINGS_REPLY = json.dumps({
+    "material_weakness": [], "significant_deficiency": [], "control_deficiency": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraFindings(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "AUDIT-1", "summary": "決算処理の承認統制"},
+            {"key": "AUDIT-2", "summary": "アクセス権限の棚卸"},
+        ], "count": 2}
+
+
+SearchingJiraFindings.search = action()(SearchingJiraFindings.search)
+
+
+def run_audit(reply=FINDING_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraFindings(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "financial_audit" / "finding_remediation_triage.yaml"))
+    return ctx, slack
+
+
+def test_material_weakness_is_sent_alone_to_the_audit_committee():
+    """財務諸表の信頼性に関わるため、翌週の定例報告まで待たない。"""
+    _, slack = run_audit()
+    board = [m for m in slack.posted if m["channel"] == "#audit-committee"]
+
+    assert len(board) == 1
+    assert "承認統制が機能していない" in board[0]["text"]
+    assert "残り 14 日" in board[0]["text"]
+
+
+def test_significant_deficiency_goes_to_management_not_the_audit_team():
+    """監査チームの是正担当者だけでは、統制の所有者を動かせないことが多い。"""
+    _, slack = run_audit()
+    management = [m for m in slack.posted if m["channel"] == "#audit-management"]
+    team = [m for m in slack.posted if m["channel"] == "#audit-remediation"]
+
+    assert management and "アクセス権限" in management[0]["text"]
+    assert team == []
+
+
+def test_control_deficiencies_are_batched_for_the_audit_team():
+    reply = json.dumps({
+        "material_weakness": [], "significant_deficiency": [],
+        "control_deficiency": [
+            {"issue_key": "AUDIT-3", "finding": "証憑の保管ルール未整備",
+             "next_step": "保管ルールの策定"},
+            {"issue_key": "AUDIT-4", "finding": "承認履歴の記録漏れ",
+             "next_step": "記録様式の見直し"},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_audit(reply=reply)
+    team = [m for m in slack.posted if m["channel"] == "#audit-remediation"]
+
+    assert len(team) == 1
+    assert "AUDIT-3" in team[0]["text"] and "AUDIT-4" in team[0]["text"]
+
+
+def test_nothing_is_said_when_no_finding_needs_attention():
+    _, slack = run_audit(reply=NO_FINDINGS_REPLY)
+    assert slack.posted == []
+
+
+# --- 高等教育 / higher education governance ----------------------------------
+
+CURRICULUM_REPLY = json.dumps({
+    "calendar_at_risk": [
+        {"issue_key": "CURR-1", "proposal_name": "データサイエンス副専攻の新設",
+         "days_until_catalog_deadline": 10, "current_stage": "faculty_senate"},
+    ],
+    "stalled_at_stage": [
+        {"issue_key": "CURR-2", "proposal_name": "統計学入門の必修化",
+         "current_stage": "college_committee",
+         "channel": "#college-curriculum-committee", "days_in_current_stage": 30},
+    ],
+    "returned_for_revision": [
+        {"issue_key": "CURR-3", "proposal_name": "選択科目の単位数変更",
+         "reason": "シラバスの補足が必要"},
+    ],
+}, ensure_ascii=False)
+
+NO_PROPOSALS_REPLY = json.dumps({
+    "calendar_at_risk": [], "stalled_at_stage": [], "returned_for_revision": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraProposals(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "CURR-1", "summary": "データサイエンス副専攻"},
+            {"key": "CURR-2", "summary": "統計学入門の必修化"},
+            {"key": "CURR-3", "summary": "選択科目の単位数変更"},
+        ], "count": 3}
+
+
+SearchingJiraProposals.search = action()(SearchingJiraProposals.search)
+
+
+def run_curriculum(reply=CURRICULUM_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraProposals(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "higher_education" / "curriculum_approval_triage.yaml"))
+    return ctx, slack
+
+
+# --- 非営利・助成金事業 / nonprofit and grant-funded programs ----------------
+
+GRANT_REPLY = json.dumps({
+    "funder_deadline_at_risk": [
+        {"issue_key": "GRANTS-1", "funder": "〇〇財団", "report_name": "中間報告書",
+         "days_until_deadline": 5},
+    ],
+    "restricted_fund_hold": [
+        {"issue_key": "GRANTS-2", "funder": "△△基金",
+         "restriction": "設備費への充当は第2フェーズ開始後のみ許可"},
+    ],
+    "internal_program": [],
+}, ensure_ascii=False)
+
+NO_GRANT_ACTIVITY_REPLY = json.dumps({
+    "funder_deadline_at_risk": [], "restricted_fund_hold": [], "internal_program": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraGrants(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "GRANTS-1", "summary": "中間報告書の提出"},
+            {"key": "GRANTS-2", "summary": "設備調達"},
+        ], "count": 2}
+
+
+SearchingJiraGrants.search = action()(SearchingJiraGrants.search)
+
+
+def run_grants(reply=GRANT_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraGrants(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "nonprofit" / "grant_compliance_triage.yaml"))
+    return ctx, slack
+
+
+# --- 保険 / insurance claims --------------------------------------------------
+
+CLAIM_REPLY = json.dumps({
+    "deadline_at_risk": [
+        {"issue_key": "CLAIM-1", "claim_number": "CA-2026-0042",
+         "jurisdiction": "California", "days_until_deadline": 1},
+    ],
+    "fraud_referral": [
+        {"issue_key": "CLAIM-2", "claim_number": "TX-2026-0099", "days_until_deadline": 5},
+    ],
+    "policyholder_blocked": [
+        {"issue_key": "CLAIM-3", "claim_number": "NY-2026-0110",
+         "waiting_on": "被害箇所の写真提出"},
+    ],
+    "internal": [],
+}, ensure_ascii=False)
+
+NO_CLAIMS_REPLY = json.dumps({
+    "deadline_at_risk": [], "fraud_referral": [], "policyholder_blocked": [], "internal": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraClaims(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "CLAIM-1", "summary": "追突事故"},
+            {"key": "CLAIM-2", "summary": "火災損害"},
+            {"key": "CLAIM-3", "summary": "水漏れ損害"},
+        ], "count": 3}
+
+
+SearchingJiraClaims.search = action()(SearchingJiraClaims.search)
+
+
+def run_claims(reply=CLAIM_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraClaims(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "insurance" / "claim_sla_triage.yaml"))
+    return ctx, slack
+
+
+def test_calendar_at_risk_proposals_are_sent_alone_to_the_registrar():
+    """1段階の停滞より、プロセス全体の期限超過の方が重い。"""
+    _, slack = run_curriculum()
+    calendar = [m for m in slack.posted if m["channel"] == "#registrar-deadlines"]
+
+    assert len(calendar) == 1
+    assert "データサイエンス副専攻" in calendar[0]["text"]
+    assert "残り 10 日" in calendar[0]["text"]
+
+
+def test_stalled_proposals_are_routed_to_whichever_committee_holds_them():
+    """宛先は固定チャンネルではなく、いま持っている審議段階で変わる。"""
+    _, slack = run_curriculum()
+    stalled = [m for m in slack.posted if m["channel"] == "#college-curriculum-committee"]
+
+    assert stalled
+    assert "統計学入門" in stalled[0]["text"]
+    assert "30 日" in stalled[0]["text"]
+    # 他の段階のチャンネルには出ていないこと。
+    assert all("統計学入門" not in m["text"] for m in slack.posted
+              if m["channel"] != "#college-curriculum-committee")
+
+
+def test_returned_for_revision_goes_to_proposers_not_a_committee():
+    """差し戻し中は審議機関の遅れとして扱わない。"""
+    _, slack = run_curriculum()
+    proposers = [m for m in slack.posted if m["channel"] == "#curriculum-proposers"]
+    committees = [m for m in slack.posted
+                  if m["channel"] not in ("#curriculum-proposers", "#registrar-deadlines")]
+
+    assert proposers and "選択科目の単位数変更" in proposers[0]["text"]
+    assert all("選択科目の単位数変更" not in m["text"] for m in committees)
+
+
+def test_nothing_is_said_when_no_proposal_needs_attention():
+    _, slack = run_curriculum(reply=NO_PROPOSALS_REPLY)
+    assert slack.posted == []
+
+
+def test_funder_deadlines_are_sent_alone_immediately():
+    """報告期限を過ぎると、資金の返還や次期助成の見送りにつながりうる。"""
+    _, slack = run_grants()
+    funder = [m for m in slack.posted if m["channel"] == "#funder-deadlines"]
+
+    assert len(funder) == 1
+    assert "〇〇財団" in funder[0]["text"]
+    assert "残り 5 日" in funder[0]["text"]
+
+
+def test_restricted_fund_holds_go_to_compliance_not_the_program_team():
+    """現場に確認しても、使途制限の解除は現場の判断では進められない。"""
+    _, slack = run_grants()
+    compliance = [m for m in slack.posted if m["channel"] == "#grants-compliance"]
+    team = [m for m in slack.posted if m["channel"] == "#program-delivery"]
+
+    assert compliance and "設備費への充当" in compliance[0]["text"]
+    assert team == []
+
+
+def test_internal_program_activities_are_batched():
+    reply = json.dumps({
+        "funder_deadline_at_risk": [], "restricted_fund_hold": [],
+        "internal_program": [
+            {"issue_key": "GRANTS-3", "next_step": "研修資料の更新"},
+            {"issue_key": "GRANTS-4", "next_step": "参加者名簿の確定"},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_grants(reply=reply)
+    team = [m for m in slack.posted if m["channel"] == "#program-delivery"]
+
+    assert len(team) == 1
+    assert "GRANTS-3" in team[0]["text"] and "GRANTS-4" in team[0]["text"]
+
+
+def test_nothing_is_said_when_no_activity_needs_attention():
+    _, slack = run_grants(reply=NO_GRANT_ACTIVITY_REPLY)
+    assert slack.posted == []
+
+
+def test_deadline_at_risk_claims_are_sent_alone_immediately():
+    """規制期限は州ごとに異なり、守れないと行政処分につながりうる。"""
+    _, slack = run_claims()
+    urgent = [m for m in slack.posted if m["channel"] == "#claims-sla-alerts"]
+
+    assert len(urgent) == 1
+    assert "CA-2026-0042" in urgent[0]["text"]
+    assert "残り 1 日" in urgent[0]["text"]
+
+
+def test_fraud_referrals_go_only_to_siu_without_detail():
+    """不正の疑いは、期限や対応状況に関わらず調査部門だけに、詳細を伏せて。"""
+    _, slack = run_claims()
+    siu = [m for m in slack.posted if m["channel"] == "#siu-referrals"]
+    other_channels_text = "".join(
+        m["text"] for m in slack.posted if m["channel"] != "#siu-referrals")
+
+    assert siu and "TX-2026-0099" in siu[0]["text"]
+    assert "TX-2026-0099" not in other_channels_text
+
+
+def test_policyholder_waits_are_not_a_chase_aimed_at_the_adjuster():
+    """担当者に確認しても、契約者の対応は早まらない。"""
+    _, slack = run_claims()
+    blocked = [m for m in slack.posted if "被害箇所の写真提出" in m["text"]]
+
+    assert blocked
+    assert blocked[0]["channel"] == "#claims-processing"
+    assert "急かす連絡にはしないこと" in blocked[0]["text"]
+
+
+def test_nothing_is_said_when_no_claim_needs_attention():
+    _, slack = run_claims(reply=NO_CLAIMS_REPLY)
+    assert slack.posted == []
+
+
+# --- 政府調達 / government contracting ---------------------------------------
+
+CLEARANCE_REPLY = json.dumps({
+    "clearance_blocked": [
+        {"issue_key": "GOVCON-1", "task_name": "暗号モジュール統合", "assignee": "山田太郎",
+         "clearance_status": "expiring_soon", "days_until_clearance_expiry": 20},
+    ],
+    "deliverable_at_risk": [
+        {"issue_key": "GOVCON-2", "deliverable_name": "CDRL A003 月次進捗報告",
+         "days_until_deadline": 3},
+    ],
+    "internal": [],
+}, ensure_ascii=False)
+
+NO_TASKS_REPLY = json.dumps({
+    "clearance_blocked": [], "deliverable_at_risk": [], "internal": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraGovTasks(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "GOVCON-1", "summary": "暗号モジュール統合"},
+            {"key": "GOVCON-2", "summary": "月次進捗報告の提出"},
+        ], "count": 2}
+
+
+SearchingJiraGovTasks.search = action()(SearchingJiraGovTasks.search)
+
+
+def run_govcon(reply=CLEARANCE_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraGovTasks(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "government_contracting"
+                         / "clearance_deliverable_triage.yaml"))
+    return ctx, slack
+
+
+def test_clearance_blocked_tasks_go_to_the_fso_not_the_program_team():
+    """現場に確認しても、クリアランスの発給・更新は進められない。"""
+    _, slack = run_govcon()
+    fso = [m for m in slack.posted if m["channel"] == "#fso-clearance-alerts"]
+    team = [m for m in slack.posted if m["channel"] == "#program-delivery"]
+
+    assert fso and "山田太郎" in fso[0]["text"]
+    assert team == []
+
+
+def test_deliverable_deadlines_are_sent_alone_immediately():
+    """契約上の納品期限を過ぎると、契約履行評価に影響しうる。"""
+    _, slack = run_govcon()
+    deliverables = [m for m in slack.posted if m["channel"] == "#cdrl-deadlines"]
+
+    assert len(deliverables) == 1
+    assert "CDRL A003" in deliverables[0]["text"]
+    assert "残り 3 日" in deliverables[0]["text"]
+
+
+def test_internal_tasks_are_batched():
+    reply = json.dumps({
+        "clearance_blocked": [], "deliverable_at_risk": [],
+        "internal": [
+            {"issue_key": "GOVCON-3", "next_step": "設計レビュー資料の更新"},
+            {"issue_key": "GOVCON-4", "next_step": "テスト計画書の作成"},
+        ],
+    }, ensure_ascii=False)
+    _, slack = run_govcon(reply=reply)
+    team = [m for m in slack.posted if m["channel"] == "#program-delivery"]
+
+    assert len(team) == 1
+    assert "GOVCON-3" in team[0]["text"] and "GOVCON-4" in team[0]["text"]
+
+
+def test_nothing_is_said_when_no_task_needs_attention():
+    _, slack = run_govcon(reply=NO_TASKS_REPLY)
+    assert slack.posted == []

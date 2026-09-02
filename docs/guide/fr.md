@@ -158,8 +158,7 @@ sont stockées séparément, et atteindre celles d'une autre n'est techniquement
 pas possible.
 
 **Rien n'est publié automatiquement.** Un modèle ne peut pas écrire dans le
-dépôt public. Il peut déposer un candidat, mais l'étape d'approbation qui
-publie n'existe pas encore.
+dépôt public. Il peut déposer un candidat ; c'est tout.
 
 ---
 

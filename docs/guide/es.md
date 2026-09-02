@@ -157,8 +157,7 @@ mantiene aparte.
 separado y llegar a los de otra no es técnicamente posible.
 
 **Nada se publica automáticamente.** Una plantilla no puede escribir en el
-almacén público. Puede presentar un candidato, pero aún no hay un paso de
-aprobación que lo publique.
+almacén público. Puede presentar un candidato; hasta ahí llega.
 
 ---
 

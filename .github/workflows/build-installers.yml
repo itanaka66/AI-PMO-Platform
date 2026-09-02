@@ -8,22 +8,51 @@ on:
 jobs:
   windows-exe:
     runs-on: windows-latest
+    env:
+      AIPMO_SIGN_CERT_BASE64: ${{ secrets.AIPMO_SIGN_CERT_BASE64 }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
+      # コード署名証明書 (AIPMO_SIGN_CERT_BASE64 / AIPMO_SIGN_CERT_PASSWORD) が
+      # リポジトリ シークレットに設定されているときだけ動く。未設定なら
+      # このステップは何もせず、ビルドはこれまでどおり未署名で進む。
+      #
+      # Only runs when a code-signing certificate (AIPMO_SIGN_CERT_BASE64 /
+      # AIPMO_SIGN_CERT_PASSWORD) is configured as a repository secret. Left
+      # unset, this step does nothing and the build proceeds unsigned exactly
+      # as before.
+      - name: Import the code-signing certificate
+        if: ${{ env.AIPMO_SIGN_CERT_BASE64 != '' }}
+        shell: pwsh
+        run: |
+          $bytes = [Convert]::FromBase64String($env:AIPMO_SIGN_CERT_BASE64)
+          $path = Join-Path $env:RUNNER_TEMP "aipmo-sign.pfx"
+          [IO.File]::WriteAllBytes($path, $bytes)
+          echo "AIPMO_SIGN_CERT_PATH=$path" >> $env:GITHUB_ENV
+
       - name: Build the installer
         shell: pwsh
+        env:
+          AIPMO_SIGN_CERT_PASSWORD: ${{ secrets.AIPMO_SIGN_CERT_PASSWORD }}
         run: |
           $env:PATH += ";${env:ProgramFiles(x86)}\Inno Setup 6"
           .\installer\build.ps1
 
-      - uses: actions/upload-artifact@v4
+      - name: Remove the imported certificate
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:AIPMO_SIGN_CERT_PATH -and (Test-Path $env:AIPMO_SIGN_CERT_PATH)) {
+            Remove-Item $env:AIPMO_SIGN_CERT_PATH -Force
+          }
+
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           path: dist/*.exe
@@ -34,8 +63,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -50,13 +79,3 @@ jobs:
           printf 'tenant: ci\nllm:\n  default:\n    provider: echo\nprompts_dir: prompts\nadapters:\n  mode: mock\n' > config.yaml
           aipmo validate templates/examples/meeting_minutes.yaml
           aipmo adapters
-
-  tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: pytest -q

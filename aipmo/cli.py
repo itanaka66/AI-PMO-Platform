@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import sys
+from typing import cast
 from pathlib import Path
 from typing import Any
 
@@ -20,15 +21,36 @@ import yaml
 from .console import configure_stdio, mark
 from .adapters.base import AdapterRegistry
 from .adapters.mock import MockJiraAdapter, MockSlackAdapter, MockTeamsAdapter
+from .adapters.chroma import ChromaAdapter
+from .adapters.milvus import MilvusAdapter
+from .adapters.pgvector import PgVectorAdapter
 from .adapters.postgres import PostgresAdapter
 from .adapters.qdrant import QdrantAdapter
+from .adapters.slack import SlackAdapter
+from .adapters.weaviate import WeaviateAdapter
 from .dsl import loader
+from .engine.agent import ApprovalCallback
 from .engine.runner import Engine, PromptLibrary, StepFailure
 from .llm.embeddings import build_embedder
 from .setup_wizard import load_env, run_interactive
 from .llm.registry import LLMRegistry
 
 DEFAULT_CONFIG = Path(os.environ.get("AIPMO_CONFIG", "config.yaml"))
+
+# ベクトルストアの選択肢。どれか1つだけ config に書けばよい。
+# 5種類のうちどれを選んでも、テンプレートからは同じ形（search / upsert /
+# submit_candidate）で使える — 違いは接続方法だけ。
+#
+# The vector-store choices. Configure exactly one of them. Whichever is
+# chosen, a template sees the same shape (search / upsert / submit_candidate)
+# — only the connection differs.
+VECTOR_STORE_ADAPTERS: dict[str, type] = {
+    "qdrant": QdrantAdapter,
+    "pgvector": PgVectorAdapter,
+    "chroma": ChromaAdapter,
+    "milvus": MilvusAdapter,
+    "weaviate": WeaviateAdapter,
+}
 
 
 class ConfigError(Exception):
@@ -74,15 +96,26 @@ def load_config(path: Path) -> dict[str, Any]:
     return expand_env(raw)
 
 
-def build_engine(config: dict[str, Any], base_dir: Path | None = None) -> Engine:
+def build_engine(
+    config: dict[str, Any],
+    base_dir: Path | None = None,
+    approve: ApprovalCallback | None = None,
+) -> Engine:
     """設定からエンジンを組み立てる。
 
     相対パスは config.yaml のある場所を基準に解決する。ショートカットから
     起動すると作業ディレクトリが不定になるため、そこに依存させない。
 
+    `approve` は既定で無し — 対話端末の無いスケジューラや Web サーバーからは
+    渡さない。承認が要る書き込みは、そこでは常に断られる。
+
     Relative paths resolve against the directory holding config.yaml. Launching
     from a desktop shortcut leaves the working directory unpredictable, so it
     must not be the anchor.
+
+    `approve` defaults to none — the scheduler and web server, which have no
+    interactive terminal, do not pass one. Writes that require approval are
+    always refused there.
     """
     base = base_dir or Path.cwd()
     adapters = AdapterRegistry()
@@ -122,8 +155,6 @@ def build_engine(config: dict[str, Any], base_dir: Path | None = None) -> Engine
             adapters.register(JiraAgileAdapter(**spec))
 
         if "slack" in adapter_config:
-            from .adapters.slack import SlackAdapter
-
             adapters.register(SlackAdapter(**dict(adapter_config["slack"])))
 
     if "postgres" in adapter_config:
@@ -141,14 +172,67 @@ def build_engine(config: dict[str, Any], base_dir: Path | None = None) -> Engine
             queries.update(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
         adapters.register(PostgresAdapter(queries=queries, tenant=tenant, **spec))
 
-    if "qdrant" in adapter_config:
-        spec = dict(adapter_config["qdrant"])
+    # ベクトルストアは5種類のうちどれを設定してもよい。ちょうど1つだけ
+    # 設定されているときは、論理名 vector_store でも同じインスタンスを
+    # 登録する — 新しいテンプレートはそちらを使えば、あとでバックエンドを
+    # 乗り換えてもテンプレート側の変更が要らない。2つ以上設定された場合は
+    # 曖昧になるため、論理名の別名づけは行わない（各バックエンド固有の
+    # 名前では引き続き使える）。
+    #
+    # Configure whichever one of the five vector-store backends you want.
+    # When exactly one is configured, the same instance is additionally
+    # registered under the logical name vector_store — a new template can use
+    # that name and survive a later backend switch untouched. With two or
+    # more configured, the logical alias is skipped as ambiguous (each
+    # backend's own name still works).
+    configured_vector_stores = [name for name in VECTOR_STORE_ADAPTERS if name in adapter_config]
+    for name in configured_vector_stores:
+        spec = dict(adapter_config[name])
         embedder = build_embedder(spec.pop("embedding", None))
-        adapters.register(QdrantAdapter(tenant=tenant, embedder=embedder, **spec))
+        instance = VECTOR_STORE_ADAPTERS[name](tenant=tenant, embedder=embedder, **spec)
+        adapters.register(instance)
+        if len(configured_vector_stores) == 1:
+            adapters.register(instance, name="vector_store")
+
+    # config.yaml の approval.slack は、渡された approve より優先する。
+    # 明示的な運用設定の方が、呼び出し元既定の対話端末承認より意図が強い。
+    # これにより aipmo run / aipmo schedule / aipmo serve のどこから実行
+    # しても、Slack 上で承認できるようになる — 対話端末が無い実行環境でも
+    # 承認ゲートが機能する。
+    #
+    # config.yaml's approval.slack takes priority over any `approve` passed
+    # in: an explicit operator setting carries more intent than the caller's
+    # own default (an interactive terminal prompt). This is what lets
+    # `aipmo run` / `aipmo schedule` / `aipmo serve` all approve over Slack —
+    # the approval gate works even where no terminal is attached.
+    approval_config = config.get("approval") or {}
+    if "slack" in approval_config:
+        if not adapters.has("slack"):
+            raise ConfigError(
+                "config.yaml の approval.slack を使うには adapters.slack の設定も"
+                "必要です / approval.slack requires adapters.slack to also be "
+                "configured"
+            )
+        slack_cfg = dict(approval_config["slack"])
+        channel = slack_cfg.get("channel")
+        if not channel:
+            raise ConfigError(
+                "config.yaml の approval.slack.channel が必要です "
+                "/ approval.slack.channel is required"
+            )
+        from .approval import SlackApprover
+
+        approve = SlackApprover(
+            slack=cast(SlackAdapter, adapters.get("slack")),
+            channel=channel,
+            poll_seconds=float(slack_cfg.get("poll_seconds", 5.0)),
+            timeout_seconds=float(slack_cfg.get("timeout_seconds", 300.0)),
+            approver_ids=frozenset(slack_cfg.get("approver_ids") or []),
+        )
 
     llms = LLMRegistry.from_config(config.get("llm") or {"default": {"provider": "echo"}})
     prompts = PromptLibrary(resolve(config.get("prompts_dir", "prompts")))
-    return Engine(adapters, llms, prompts)
+    return Engine(adapters, llms, prompts, approve=approve)
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
@@ -211,7 +295,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     print()
     if host in ("127.0.0.1", "localhost", "::1"):
         print(f"  ! {t('serve_local_only')}")
-        print(f"    aipmo serve --host 0.0.0.0")
+        print("    aipmo serve --host 0.0.0.0")
     else:
         print(f"  ! {t('serve_exposed')}")
     print()
@@ -312,10 +396,42 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def _confirm_agent_write(tool: str, arguments: dict[str, Any]) -> bool:
+    """対話端末で承認を求める / ask for approval at an interactive terminal.
+
+    `aipmo run` の既定の承認方法。標準入力が対話端末でないとき
+    （スクリプト・CI・パイプ）はそもそも呼ばれない — `cmd_run` 側で
+    先に判定している。ここでの EOFError は、それでも対話できなかった
+    場合の保険で、承認できないのだから断る。
+
+    The default approval path for `aipmo run`. Not called at all when stdin
+    is not an interactive terminal (a script, CI, a pipe) — `cmd_run` checks
+    that first. Catching EOFError here is a fallback for the rare case where
+    it turns out not to be interactive after all: with no way to ask, the
+    write is refused.
+    """
+    print(f"\n[承認が必要 / approval needed] {tool}")
+    print(json.dumps(arguments, ensure_ascii=False, indent=2, default=str))
+    try:
+        answer = input("実行してよいですか？ / proceed? [y/N]: ").strip().lower()
+    except EOFError:
+        return False
+    return answer in ("y", "yes")
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     config_path = Path(args.config)
+    # 対話端末があるときだけ、その場で承認を求める。スケジューラや CI
+    # からの呼び出しには対話端末が無く、input() が固まるかすぐ落ちる
+    # ので渡さない — その場合、承認が要る書き込みは常に断られる。
+    #
+    # Only offer an interactive approval prompt when stdin is actually a
+    # terminal. A scheduler or CI invocation has none, and input() there
+    # would either hang or fail immediately, so none is passed — writes that
+    # require approval are simply refused in that case.
+    approve = _confirm_agent_write if sys.stdin.isatty() else None
     try:
-        engine = build_engine(load_config(config_path), config_path.parent)
+        engine = build_engine(load_config(config_path), config_path.parent, approve=approve)
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1

@@ -1,0 +1,21 @@
+# TLS を自動で取得・更新する / obtains and renews TLS automatically.
+# スマホから使う以上、平文の HTTP は選択肢にならない。
+# Plain HTTP is not an option once a phone is involved.
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# アクセスキーが漏れても被害を狭めるため、検索避けと参照元漏れ防止を入れる。
+	# Narrows the blast radius if the access key leaks.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	reverse_proxy aipmo:8765 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+}

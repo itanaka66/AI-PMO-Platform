@@ -155,8 +155,7 @@ shared with colleagues and committed to Git, so the key is kept separate.
 and reaching another organisation's data is not technically possible.
 
 **Nothing is published automatically.** A template cannot write to the public
-store. It can submit a candidate, but there is no approval step that
-publishes it yet.
+store. It can submit a candidate; that is as far as it goes.
 
 ---
 

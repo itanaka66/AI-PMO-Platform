@@ -1,0 +1,19 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: ruff check aipmo/ tests/
+      - run: mypy aipmo/
+      - run: pytest -q

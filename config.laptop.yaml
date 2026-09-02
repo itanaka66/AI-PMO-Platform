@@ -19,6 +19,9 @@ adapters:
   postgres:
     dsn: postgresql://aipmo:aipmo@localhost:5432/aipmo
     queries_file: queries.yaml
+  slack:
+    token: ${SLACK_BOT_TOKEN}
+    default_channel: "#project-updates"
   qdrant:
     url: http://localhost:6333
     public_collection: public_pmo_knowledge

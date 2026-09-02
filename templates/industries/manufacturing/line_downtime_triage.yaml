@@ -1,0 +1,97 @@
+name: manufacturing_line_downtime_triage
+version: "1"
+industry: manufacturing
+description: |
+  生産ラインの停止案件を確認し、対応が必要なものだけを報告する。
+  安全に関わる停止は単独・即時に専用チャンネルへ、資材待ちは現場ではなく
+  調達へ、内製で直せるものは現場向けに1通へまとめる。
+
+trigger: "schedule:0 8,13,17 * * *"
+
+params:
+  jira_project: MFG
+  floor_channel: "#line-a-floor"
+  safety_channel: "#safety"
+  supply_channel: "#procurement"
+
+steps:
+  - id: stoppages
+    adapter: jira
+    action: search
+    inputs:
+      jql: >-
+        project = "{{ params.jira_project }}"
+        AND statusCategory != Done
+        ORDER BY created ASC
+      limit: 50
+
+  - id: triage
+    llm:
+      profile: default
+      temperature: 0.1
+    prompt: line_downtime_ja
+    inputs:
+      today: "{{ run.date }}"
+      stoppages: "{{ steps.stoppages.output.items }}"
+    output_format: json
+    output_schema:
+      required: [headline, safety_items, supply_blocked, internal]
+
+  # 安全に関わる停止は、他の報告と混ぜない。単独で・即時に・専用チャンネルへ。
+  # ロックアウト・タグアウトのような案件を進捗報告の見出しの下に並べると、
+  # 流し読みで飛ばされる。
+  #
+  # Safety-related stoppages are never mixed with other reports: sent alone,
+  # immediately, to their own channel. A lockout/tagout item listed under a
+  # routine-progress heading gets skimmed past.
+  - id: notify_safety
+    for_each: "{{ steps.triage.output.safety_items }}"
+    as: item
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.safety_channel }}"
+      text: |
+        【安全】{{ item.line }} — {{ item.description }}
+        起票: {{ item.issue_key }} / 停止時間: {{ item.downtime_hours }} 時間
+
+  # 資材待ちは現場ではなく調達へ向ける。現場の担当者に確認しても
+  # 資材そのものは届かない。動かせるのは調達側だけなので、
+  # 同じ文面で現場へ催促すると、動かせない人を責めることになる。
+  #
+  # Parts-and-supply waits are addressed to procurement, not the floor:
+  # checking with the line operator cannot make a part arrive. Sending the
+  # same wording to the floor would blame someone with no means to act.
+  - id: notify_supply
+    when: "{{ steps.triage.output.supply_blocked }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.supply_channel }}"
+      text: |
+        資材待ちで止まっているライン ({{ run.date }})
+
+        {{ steps.triage.output.supply_blocked }}
+
+        現場は手を離れています。手配状況の確認をお願いします。
+
+  # 内製で直せるものは現場向けに1通へまとめる。件数分バラバラに送ると
+  # 埋もれて、本当に対応が必要なものが見分けられなくなる。
+  #
+  # Internally-fixable stoppages are batched into one message for the floor:
+  # sending one per ticket buries the ones that actually need attention.
+  - id: notify_floor
+    when: "{{ steps.triage.output.internal }}"
+    continue_on_error: true
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.floor_channel }}"
+      text: |
+        対応が必要な停止 ({{ run.date }})
+
+        {{ steps.triage.output.headline }}
+
+        {{ steps.triage.output.internal }}

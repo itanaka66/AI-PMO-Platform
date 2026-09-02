@@ -17,6 +17,7 @@ class StepKind(str, Enum):
     LLM = "llm"           # LLM 呼び出し
     TRANSFORM = "transform"  # 純粋なデータ変換 (LLM を使わない)
     AGENT = "agent"       # LLM が道具を選んで自分で呼ぶ / the LLM drives
+    PARALLEL = "parallel"  # 独立したステップの集まりを同時に実行する
 
 
 class OutputFormat(str, Enum):
@@ -61,6 +62,12 @@ class LLMSpec:
     temperature: float = 0.2
     max_tokens: int = 4096
 
+    # 複数の提供元に同じプロンプトを同時に投げ、比較する。
+    # 指定があれば profile より優先される。
+    # Fan out the same prompt to several providers at once for comparison.
+    # Takes priority over `profile` when non-empty.
+    profiles: list[str] = field(default_factory=list)
+
 
 @dataclass
 class AgentSpec:
@@ -84,6 +91,21 @@ class AgentSpec:
     # Whether world-changing actions are permitted. Off by default: creating
     # issues and sending messages should not rest on the model's judgement alone.
     allow_writes: bool = False
+
+    # 書き込み系の道具を呼ぶ前に、人の承認を求めるか。既定は不要。
+    # allow_writes は「この工程は書き込みをしてよい」というテンプレート
+    # 作成時の一括判断でしかない。1回ごとに人が見て判断させたい場合は
+    # こちらを立てる。承認する側（呼び出し元が run_agent に渡す関数）を
+    # 用意しないまま立てても、黙って許可されることはない — 承認が得られない
+    # ので、その書き込みは常に断られる。
+    #
+    # Whether write-tool calls need a human's approval before they run.
+    # allow_writes alone is a one-time, template-authoring-time blanket
+    # decision; this asks for a per-call human judgement on top of it.
+    # Setting it without wiring up an approver (a function the caller passes
+    # to run_agent) does not silently let writes through — with no approval
+    # available, every write is refused instead.
+    require_approval: bool = False
 
     # 往復の上限。エージェントは自分では止まらない。
     # 止め方を書いておかないと、利用者の API 残高で回り続ける。
@@ -115,6 +137,17 @@ class Step:
 
     # --- kind == AGENT ---
     agent: AgentSpec | None = None
+
+    # --- kind == PARALLEL ---
+    # 互いに依存しないステップの集まりを、同時に実行する。
+    # グループの中の工程どうしは互いの出力を参照できない
+    # （ロード時に検証される）。全員が同じ、グループ開始前の
+    # スコープを見て走る。
+    #
+    # A group of steps with no dependency between them, run at the same time.
+    # Steps inside one group cannot reference each other's output (checked at
+    # load time); every one of them sees the same pre-group scope.
+    parallel: list[Step] = field(default_factory=list)
 
     # --- 繰り返し / iteration ---
     # 値の並びに対して、同じ工程を1件ずつ実行する。

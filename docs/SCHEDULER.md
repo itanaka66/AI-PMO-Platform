@@ -124,6 +124,35 @@ Jira issues twice.
 
 ---
 
+## 同じ回に複数本が並ぶとき / Several jobs sharing one pass
+
+同じ時刻に予定された複数のテンプレートは、**それぞれ別スレッドで並行に
+走ります。** 1本が Slack 承認待ち（既定で最大300秒）のように長く塞がって
+いても、他のテンプレートはそれを待たずに走ります。
+
+Templates scheduled for the same moment **run concurrently, each in its own
+thread.** If one is stuck behind a long wait — a Slack approval can take up to
+300 seconds by default — the others do not wait for it.
+
+これは1回の tick の内側だけの並行です。次の回（前述「同時実行」）は
+これまで通り `job.running` で二重実行を防ぎます。
+
+This concurrency is scoped to a single tick. The next pass (see "Overlap"
+above) still prevents the *same* job from running twice via `job.running`,
+unchanged.
+
+Postgres・Qdrant・pgvector・Chroma・Milvus・Weaviate の各アダプタは、
+1つの接続やクライアントを複数スレッドから同時に触らないよう、アダプタ
+自身が直列化しています。複数のテンプレートが同じアダプタ・インスタンスを
+共有していても壊れません。
+
+The Postgres and vector-store adapters (Qdrant, pgvector, Chroma, Milvus,
+Weaviate) each serialize access to their single connection or client
+internally, so several templates sharing one adapter instance cannot corrupt
+it.
+
+---
+
 ## 失敗したとき / Failures
 
 **1つのテンプレートの失敗で、スケジューラ全体は止まりません。**

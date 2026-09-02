@@ -15,7 +15,7 @@ Written for people who are not comfortable with a terminal. Pick one.
 
 ## A. Windows インストーラ / Windows installer
 
-1. `AI-PMO-Setup-0.1.0.exe` をダウンロードする / download it
+1. [AI-PMO-Setup-0.1.3.exe](https://github.com/itanaka66/AI-PMO-Platform/releases/download/v0.1.2/AI-PMO-Setup-0.1.3.exe) をダウンロードする / download it
 2. ダブルクリックする / double-click it
 3. 画面の指示に従う / follow the prompts
 
@@ -51,11 +51,88 @@ must run on Windows.
 
 ```powershell
 .\installer\build.ps1
-# → dist\AI-PMO-Setup-0.1.0.exe
+# → dist\AI-PMO-Setup-0.1.1.exe
 ```
 
 タグを push すると GitHub Actions が同じものを作ります。
 Pushing a tag builds the same artifact in GitHub Actions.
+
+### コード署名 / Code signing
+
+署名する仕組み自体はすでに配線されています。証明書を用意して環境変数か
+GitHub のシークレットを設定するだけで、`aipmo.exe` 本体とインストーラの
+両方に自動で署名されます。**証明書そのものはこのリポジトリでは提供して
+いません** — 認証局から個人または組織として購入する必要があります。
+
+The wiring for signing already exists. Provide a certificate and set either
+environment variables or GitHub secrets, and both `aipmo.exe` and the
+installer are signed automatically. **This repository does not provide a
+certificate** — one has to be purchased from a certificate authority, as an
+individual or an organisation.
+
+**証明書の入手 / Getting a certificate**
+
+- 通常のコード署名証明書（OV）: DigiCert・Sectigo・SSL.com などで
+  年額 100〜400 USD 程度、組織確認が要ります。EV 証明書はさらに高額で
+  ハードウェアトークンが必要な代わり、SmartScreen の警告がすぐ収まります。
+- **OSS 向けの無料の選択肢**: このリポジトリは MIT ライセンスの無料公開
+  プロジェクトなので、[SignPath.io](https://signpath.io/) の OSS 向け無料枠
+  が使える可能性があります。その場合は署名の仕組み自体が異なる
+  （クラウド HSM 経由）ため、下記の手順ではなく SignPath 側の GitHub Action
+  を使うことになります。
+
+- A standard (OV) code-signing certificate: roughly 100-400 USD/year from
+  DigiCert, Sectigo, SSL.com and similar, and requires organisation
+  verification. An EV certificate costs more and needs a hardware token, but
+  clears the SmartScreen warning immediately instead of over time.
+- **A free option for open source**: since this repository is a free,
+  MIT-licensed project, [SignPath.io](https://signpath.io/)'s free tier for
+  open-source projects may apply. That path signs through a cloud HSM rather
+  than a local file, so it uses SignPath's own GitHub Action instead of the
+  steps below.
+
+**ローカルでビルドする場合 / Building locally**
+
+証明書ファイル（.pfx）があるなら:
+
+```powershell
+$env:AIPMO_SIGN_CERT_PATH = "C:\path\to\cert.pfx"
+$env:AIPMO_SIGN_CERT_PASSWORD = "..."
+.\installer\build.ps1
+```
+
+証明書がすでに証明書ストアにインポート済みなら、拇印（thumbprint）だけで済みます:
+
+```powershell
+$env:AIPMO_SIGN_CERT_THUMBPRINT = "..."
+.\installer\build.ps1
+```
+
+If you have a certificate file (.pfx), set `AIPMO_SIGN_CERT_PATH` and
+`AIPMO_SIGN_CERT_PASSWORD` as above. If the certificate is already imported
+into the certificate store, `AIPMO_SIGN_CERT_THUMBPRINT` alone is enough.
+
+**GitHub Actions で署名する場合 / Signing in GitHub Actions**
+
+リポジトリの Settings → Secrets and variables → Actions で次の2つを設定
+してください:
+
+- `AIPMO_SIGN_CERT_BASE64` — .pfx ファイルを base64 にしたもの
+  （`[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`）
+- `AIPMO_SIGN_CERT_PASSWORD` — その証明書のパスワード
+
+どちらも未設定なら、ビルドはこれまでどおり未署名で進みます — 既存の
+ワークフローの挙動は変わりません。
+
+Set these two repository secrets under Settings → Secrets and variables →
+Actions:
+
+- `AIPMO_SIGN_CERT_BASE64` — the .pfx file, base64-encoded
+  (`[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`)
+- `AIPMO_SIGN_CERT_PASSWORD` — that certificate's password
+
+Leaving either unset builds unsigned exactly as before — the existing
+workflow's behaviour does not change.
 
 ---
 

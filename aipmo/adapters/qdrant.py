@@ -5,61 +5,26 @@
     tenant_<company>        企業ごとの非公開ナレッジ / per-tenant private knowledge
     public_pmo_knowledge    一般化済みの公開ナレッジ / generalized public knowledge
 
-設計判断 1 — コレクション名をテンプレートに書かせない:
-  テンプレートが指定できるのは論理スコープ "private" / "public" のみ。
-  実コレクション名は接続設定で解決する。
-  配布テンプレートに tenant_company_b と書かれても、他社データには届かない。
+scope・publicability スコア・書き込み拒否といった共通の振る舞いは
+[[vector_store.py]] の `VectorStoreAdapter` にある。ここに残るのは
+Qdrant クライアントへの接続と、実際の search / upsert 呼び出しだけ。
 
-  Design decision 1 — templates never name a collection.
-  A template may only select the logical scope "private" or "public"; the
-  concrete collection is resolved from connection config. A distributed
-  template that hardcodes `tenant_company_b` cannot reach another tenant.
-
-設計判断 2 — 公開コレクションへの書き込みをアダプタが拒否する:
-  ナレッジの公開は人間承認を経た昇格フローだけが行える。
-  自動公開の経路を、そもそもテンプレートから作れないようにする。
-  テンプレートができるのは「昇格候補として提出する」ところまで。
-
-  Design decision 2 — the adapter refuses writes to the public collection.
-  Publication happens only through the reviewed promotion workflow. A
-  template can submit a candidate; it cannot publish. The automatic-
-  publication path does not exist at the adapter level, so no template —
-  including one written by a third party — can create it.
+Scope handling, publicability scoring, and the public-write refusal all live
+in `VectorStoreAdapter` (vector_store.py). What remains here is only the
+Qdrant client connection and the actual search/upsert calls.
 """
 from __future__ import annotations
 
-import uuid
 from typing import Any
 
-from ..llm.embeddings import Embedder
-from .base import Adapter, AdapterError, action
+from .base import AdapterError
+from .vector_store import PRIVATE, PUBLIC, VectorStoreAdapter
 
-PRIVATE = "private"
-PUBLIC = "public"
+__all__ = ["QdrantAdapter", "PRIVATE", "PUBLIC"]
 
 
-class QdrantAdapter(Adapter):
+class QdrantAdapter(VectorStoreAdapter):
     name = "qdrant"
-
-    def __init__(
-        self,
-        url: str | None = None,
-        tenant: str | None = None,
-        public_collection: str = "public_pmo_knowledge",
-        embedder: Embedder | None = None,
-        client: Any = None,
-        api_key: str | None = None,
-        **config: Any,
-    ) -> None:
-        super().__init__(**config)
-        self.url = url
-        self.tenant = tenant
-        self.public_collection = public_collection
-        self.embedder = embedder
-        self.api_key = api_key
-        self._client = client
-
-    # -- 接続 / connection -------------------------------------------------
 
     def _connect(self) -> Any:
         if self._client is not None:
@@ -71,57 +36,13 @@ class QdrantAdapter(Adapter):
         self._client = QdrantClient(url=self.url, api_key=self.api_key)
         return self._client
 
-    def health_check(self) -> bool:
-        try:
-            self._connect().get_collections()
-            return True
-        except Exception:
-            return False
+    def _health_backend(self, client: Any) -> None:
+        client.get_collections()
 
-    # -- 内部 / internals --------------------------------------------------
-
-    def _collection(self, scope: str) -> str:
-        if scope == PUBLIC:
-            return self.public_collection
-        if scope == PRIVATE:
-            if not self.tenant:
-                raise AdapterError(
-                    "qdrant: tenant 未設定のため private スコープを使えません "
-                    "/ private scope requires a configured tenant"
-                )
-            return f"tenant_{self.tenant}"
-        raise AdapterError(
-            f"qdrant: scope は '{PRIVATE}' か '{PUBLIC}' のみです "
-            f"/ scope must be '{PRIVATE}' or '{PUBLIC}' (受領 / got: {scope!r})"
-        )
-
-    def _vector(self, text: str | None, vector: list[float] | None) -> list[float]:
-        if vector is not None:
-            return vector
-        if text is None:
-            raise AdapterError("qdrant: text か vector のいずれかが必要です / text or vector required")
-        if self.embedder is None:
-            raise AdapterError(
-                "qdrant: embedder が未設定のため text 検索できません "
-                "/ text search requires a configured embedder"
-            )
-        return self.embedder.embed_one(text)
-
-    # -- アクション / actions ----------------------------------------------
-
-    @action()
-    def search(
-        self,
-        text: str | None = None,
-        vector: list[float] | None = None,
-        scope: str = PRIVATE,
-        limit: int = 5,
-        filters: dict[str, Any] | None = None,
-        min_score: float = 0.0,
-    ) -> dict[str, Any]:
-        collection = self._collection(scope)
-        query_vector = self._vector(text, vector)
-
+    def _search_backend(
+        self, client: Any, collection: str, query_vector: list[float],
+        limit: int, filters: dict[str, Any] | None, min_score: float,
+    ) -> list[dict[str, Any]]:
         query_filter = None
         if filters:
             from qdrant_client import models
@@ -133,79 +54,27 @@ class QdrantAdapter(Adapter):
                 ]
             )
 
-        hits = self._connect().search(
+        hits = client.search(
             collection_name=collection,
             query_vector=query_vector,
             limit=limit,
             query_filter=query_filter,
             score_threshold=min_score or None,
         )
-
-        items = [
+        return [
             {"id": str(h.id), "score": float(h.score), "payload": dict(h.payload or {})}
             for h in hits
         ]
-        return {"items": items, "count": len(items), "collection": collection}
 
-    @action(writes=True)
-    def upsert(
-        self,
-        documents: list[dict[str, Any]],
-        scope: str = PRIVATE,
-        idempotency_key: str | None = None,
-    ) -> dict[str, Any]:
-        """非公開スコープにのみ書き込める / writes are permitted to private scope only."""
-        if scope == PUBLIC:
-            raise AdapterError(
-                "qdrant: 公開コレクションへの直接書き込みは禁止です。"
-                "submit_candidate による人間承認フローを使ってください "
-                "/ direct writes to the public collection are not permitted; "
-                "use submit_candidate and the human review workflow"
-            )
-        collection = self._collection(scope)
-
+    def _upsert_backend(
+        self, client: Any, collection: str, points: list[dict[str, Any]]
+    ) -> None:
         from qdrant_client import models
 
-        points = []
-        for index, document in enumerate(documents):
-            text = document.get("text")
-            vector = document.get("vector")
-            payload = {k: v for k, v in document.items() if k not in ("vector",)}
-            payload.setdefault("tenant", self.tenant)
-            if idempotency_key:
-                payload.setdefault("source_key", f"{idempotency_key}:{index}")
-
-            point_id = document.get("id") or str(
-                uuid.uuid5(uuid.NAMESPACE_URL, payload.get("source_key") or f"{collection}:{text}")
-            )
-            points.append(
-                models.PointStruct(
-                    id=point_id,
-                    vector=self._vector(text, vector),
-                    payload=payload,
-                )
-            )
-
-        self._connect().upsert(collection_name=collection, points=points)
-        return {"upserted": len(points), "collection": collection}
-
-    @action(writes=True)
-    def submit_candidate(
-        self,
-        knowledge: dict[str, Any],
-        publicability_score: float | None = None,
-        idempotency_key: str | None = None,
-    ) -> dict[str, Any]:
-        """公開候補として提出する。これ自体は公開しない。
-
-        Submit a candidate for publication. This does not publish anything.
-        The record lands in the private collection tagged for review; a human
-        approves it in the promotion workflow, which runs outside any template.
-        """
-        payload = {
-            **knowledge,
-            "review_status": "pending",
-            "publicability_score": publicability_score,
-        }
-        result = self.upsert([payload], scope=PRIVATE, idempotency_key=idempotency_key)
-        return {**result, "review_status": "pending"}
+        client.upsert(
+            collection_name=collection,
+            points=[
+                models.PointStruct(id=p["id"], vector=p["vector"], payload=p["payload"])
+                for p in points
+            ],
+        )

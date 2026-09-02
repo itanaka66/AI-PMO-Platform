@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from typing import Any
 
 from .base import Adapter, AdapterError, action
@@ -55,6 +56,13 @@ class PostgresAdapter(Adapter):
         self.connect_backoff = connect_backoff
         self._connection = connection  # テスト時に注入 / injected in tests
         self._injected = connection is not None
+        # 並列ステップ・スケジューラの複数ジョブが同じアダプタ・インスタンスを
+        # 同時に使うことがある。1つの接続をスレッド間で共有すると壊れるため、
+        # 接続を触る区間をここで直列化する。
+        # A parallel step group or several scheduler jobs can share one adapter
+        # instance at once. One connection is not safe across threads, so
+        # access to it is serialized here.
+        self._lock = threading.Lock()
 
     # -- 接続 / connection -------------------------------------------------
 
@@ -103,9 +111,10 @@ class PostgresAdapter(Adapter):
 
     def health_check(self) -> bool:
         try:
-            with self._connect().cursor() as cur:
-                cur.execute("SELECT 1")
-                cur.fetchone()
+            with self._lock:
+                with self._connect().cursor() as cur:
+                    cur.execute("SELECT 1")
+                    cur.fetchone()
             return True
         except Exception:
             return False
@@ -119,23 +128,24 @@ class PostgresAdapter(Adapter):
         A powered-down service can accept a connection and then drop it on the
         first statement, which the connect-time retry alone does not catch.
         """
-        try:
-            return work(self._connect())
-        except Exception:
-            if self._injected:
-                raise
-            import psycopg
-
-            if self._connection is not None:
-                try:
-                    self._connection.close()
-                except Exception:
-                    pass
-            self._connection = None
+        with self._lock:
             try:
                 return work(self._connect())
-            except psycopg.OperationalError as exc:
-                raise AdapterError(f"postgres: {exc}") from exc
+            except Exception:
+                if self._injected:
+                    raise
+                import psycopg
+
+                if self._connection is not None:
+                    try:
+                        self._connection.close()
+                    except Exception:
+                        pass
+                self._connection = None
+                try:
+                    return work(self._connect())
+                except psycopg.OperationalError as exc:
+                    raise AdapterError(f"postgres: {exc}") from exc
 
     # -- 内部 / internals --------------------------------------------------
 

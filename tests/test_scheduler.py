@@ -231,7 +231,6 @@ def build(tmp_path, jobs, start, llm=None):
 
 
 def job_from(templates: str, path) -> Job:
-    from aipmo.dsl import loader
 
     (path / "j.yaml").write_text(templates, encoding="utf-8")
     jobs, _ = discover_jobs(path)
@@ -361,9 +360,93 @@ def test_a_failed_job_is_rescheduled(tmp_path):
     assert job.consecutive_failures == 1
 
 
+def test_due_jobs_in_one_tick_actually_overlap_in_time(tmp_path):
+    """1本が長く塞がっていても、他が待たされないこと。
+
+    Slack 承認待ちのような長い待ちが1本にあっても、同じ tick の他のジョブは
+    それを待たずに走る、という改善のコア部分。実際に重なって走ることを
+    タイミングで確かめる（似た趣旨のテストが並列ステップ実行にもある）。
+    """
+    import threading
+    import time
+
+    from aipmo.dsl import loader
+
+    overlapped = threading.Event()
+    entered = threading.Barrier(2, timeout=2)
+
+    class SlowEngine(Engine):
+        def run(self, template, params=None, trigger=None):
+            try:
+                entered.wait()
+                overlapped.set()
+            except threading.BrokenBarrierError:
+                pass
+            time.sleep(0.05)
+            return super().run(template, params, trigger)
+
+    slow = loader.load_dict({
+        "name": "slow_job", "trigger": "schedule:* * * * *",
+        "steps": [{"id": "ok", "adapter": "jira", "action": "find_overdue",
+                   "inputs": {"project": "PROJ"}}],
+    })
+    fast = loader.load_dict({
+        "name": "fast_job", "trigger": "schedule:* * * * *",
+        "steps": [{"id": "ok", "adapter": "jira", "action": "find_overdue",
+                   "inputs": {"project": "PROJ"}}],
+    })
+    jobs = [
+        Job(template=slow, path=tmp_path / "a.yaml",
+            cron_expression="* * * * *", timezone_name="Asia/Tokyo"),
+        Job(template=fast, path=tmp_path / "b.yaml",
+            cron_expression="* * * * *", timezone_name="Asia/Tokyo"),
+    ]
+
+    adapters = AdapterRegistry()
+    adapters.register(MockJiraAdapter())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+
+    clock = Clock(utc(2026, 8, 27, 0, 0))
+    scheduler = Scheduler(SlowEngine(adapters, llms), jobs,
+                          State(path=tmp_path / "s.json"),
+                          now=clock, sleep=clock.sleep, jitter=False)
+    clock.advance(minutes=2)
+
+    results = scheduler.tick()
+
+    assert overlapped.is_set()
+    statuses = {item["job"]: item["status"] for item in results}
+    assert statuses == {"slow_job": "success", "fast_job": "success"}
+
+
+def test_concurrent_completions_do_not_corrupt_state(tmp_path):
+    """複数ジョブが同時に終わって state を書いても、両方とも記録されること。"""
+    from aipmo.dsl import loader
+
+    jobs = []
+    for i in range(6):
+        template = loader.load_dict({
+            "name": f"job_{i}", "trigger": "schedule:* * * * *",
+            "steps": [{"id": "ok", "adapter": "jira", "action": "find_overdue",
+                       "inputs": {"project": "PROJ"}}],
+        })
+        jobs.append(Job(template=template, path=tmp_path / f"{i}.yaml",
+                        cron_expression="* * * * *", timezone_name="Asia/Tokyo"))
+
+    scheduler, clock = build(tmp_path, jobs, utc(2026, 8, 27, 0, 0))
+    clock.advance(minutes=2)
+
+    results = scheduler.tick()
+
+    assert {item["status"] for item in results} == {"success"}
+    assert len(scheduler.state.last_runs) == 6
+    reloaded = State.load(tmp_path / "state.json")
+    assert len(reloaded.last_runs) == 6
+
+
 def test_the_trigger_carries_the_scheduled_time(tmp_path, templates):
     """テンプレートから「いつの予定か」を参照できること。"""
-    from aipmo.dsl import loader
 
     seen = {}
 

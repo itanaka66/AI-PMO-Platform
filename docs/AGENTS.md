@@ -38,6 +38,50 @@ steps:
 
 ---
 
+## 中で何が起きているか / What happens inside
+
+`aipmo/engine/agent.py` の `run_agent` は、次の4段階を道具を呼ばなくなるまで
+繰り返します。
+
+`run_agent` in `aipmo/engine/agent.py` repeats four phases until the model
+stops calling tools:
+
+| 段階 | すること | コード上の名前 |
+|---|---|---|
+| ① RECOGNIZE 認識 | ここまでの会話履歴をモデルに渡す | `_recognize` |
+| ② DECIDE 判断 | 道具を呼ぶか、答えを返すかを応答から読み取る | `_decided_to_act` |
+| ③ ACT 行動 | 呼ぶと決まった道具を実際に実行する | `_act` |
+| ④ OBSERVE 観測 | 結果を会話履歴に積み、続けるか終えるかを決める | `_observe` |
+
+②で「道具を呼ばない」と判断したときだけ輪を抜け、それ以外は④の結果を
+持って①に戻ります。これは新しい仕組みではなく、以前からの動きを
+4つの名前で明示しただけです — 挙動は変わっていません。
+
+The loop is left only when ② finds no tool call; otherwise ④'s outcome
+carries back into the next ①. This is not new behaviour — it names four
+phases that were already happening, without changing what they do.
+
+③ ACT には、それを行ってよいかという判断も含まれます。書き込み系の道具で
+`require_approval: true` が立っている工程では、実行の直前に人の承認を
+求めます（後述「書き込みごとに人の承認を求める」）。
+
+③ ACT also includes the question of whether it is allowed to happen at all:
+a write-tool call on a step with `require_approval: true` asks a human right
+before it runs (see "Requiring approval per write" below).
+
+```
+ユーザー要求
+     │
+     ▼
+① RECOGNIZE ──▶ ② DECIDE ──「答えが出た」──▶ 完了・回答 ──▶ ユーザー
+     ▲                │
+     │           「道具を呼ぶ」
+     │                ▼
+     └────── ④ OBSERVE ◀── ③ ACT
+```
+
+---
+
 ## 許可の設計 / How permission works
 
 ### 道具は必ず列挙する
@@ -80,6 +124,83 @@ model decides what to say; the template decides whether it goes out.
     inputs:
       text: "{{ steps.investigate.output.answer }}"
 ```
+
+### 書き込みごとに人の承認を求める
+
+`allow_writes: true` は「この工程は書き込みをしてよい」という、
+テンプレート作成時の一括判断です。1回ごとに人が見て判断したい場合は
+`require_approval: true` を重ねます。
+
+```yaml
+- id: file_issue
+  agent:
+    tools: [jira]
+    allow_writes: true
+    require_approval: true   # 書き込みの直前に承認を求める
+  prompt_inline: 内容を確認し、必要なら課題を起票してください
+```
+
+承認する側（人に尋ねる方法）は、テンプレートではなく実行環境が決めます。
+`aipmo run` は対話端末があれば、その場でその都度尋ねます。**承認する相手を
+用意していない場合（スケジューラ・Web サーバーからの実行など）、
+その書き込みは常に断られます。** 黙って通ることはありません。
+
+Who does the approving is decided by the runtime, not the template. `aipmo
+run` asks at the terminal, each time, when one is attached. **With no
+approver configured — a scheduled or web-triggered run, say — the write is
+always refused.** It is never silently let through.
+
+読み取り系の道具はこの対象外です。`require_approval` は書き込みだけを
+対象にするので、`allow_writes: false` の工程で立てても何も起きません。
+
+Read-only tools are unaffected: `require_approval` only ever gates writes, so
+setting it on a step with `allow_writes: false` has no effect.
+
+**Slack で承認する / Approving over Slack**
+
+対話端末を使わずに承認したい場合（スケジューラや Web サーバーからの
+実行がこれに当たる）は、`config.yaml` に `approval.slack` を設定します。
+
+```yaml
+adapters:
+  slack:
+    token: ${SLACK_BOT_TOKEN}
+
+approval:
+  slack:
+    channel: "#approvals"     # 必須。承認を求めるチャンネル
+    timeout_seconds: 300      # 既定 300 秒。反応が無ければ断る
+    poll_seconds: 5           # 既定 5 秒おきに反応を確認する
+    approver_ids: []          # 空なら誰の反応でもよい。絞るなら Slack ユーザー ID を列挙する
+```
+
+書き込みが提案されるたびに、その内容（道具名と引数）が `channel` へ
+投稿されます。:white_check_mark: の反応で承認、:x: の反応で却下、
+`timeout_seconds` 以内にどちらも付かなければ、対話端末の場合と同じく
+断ります。
+
+`approval.slack` を設定すると、`aipmo run` の対話端末での確認より
+優先されます。`adapters.slack` の設定も別途必要です — 承認の投稿・
+反応の確認は、そのアダプタをそのまま使って行われます。
+
+Slack の Events API（Webhook）は使いません。ボットトークンだけで
+動くように、一定間隔で反応を確認する方式にしています。反応が届くまで
+`poll_seconds` 分の遅れが出ますが、公開エンドポイントや Slack App の
+Event Subscriptions の用意は要りません。
+
+To approve without an interactive terminal — the case for a scheduler or a
+web-triggered run — set `approval.slack` in `config.yaml` (see the example
+above). Every proposed write posts its tool name and arguments to `channel`;
+a `:white_check_mark:` reaction approves it, a `:x:` reaction declines it, and
+no reaction within `timeout_seconds` refuses it, the same as the terminal
+path. `approval.slack`, once configured, takes priority over `aipmo run`'s
+own terminal prompt. `adapters.slack` needs its own configuration too — the
+same adapter is used to post the proposal and read the reaction.
+
+This deliberately polls rather than using Slack's Events API/webhooks: it
+trades up to `poll_seconds` of latency for needing nothing beyond the bot
+token already in use elsewhere — no public endpoint or Slack App event
+configuration to stand up.
 
 ---
 
@@ -182,3 +303,20 @@ llm:
 aipmo validate templates/examples/overdue_triage.yaml
 aipmo run templates/examples/overdue_triage.yaml
 ```
+
+書き込みを許可したエージェントの例は
+`templates/examples/generalize_knowledge.yaml`。社内固有の知見を読み、
+識別情報を落として書き直し、`vector_store.submit_candidate` で提出する
+（提出は「レビュー待ちに載せる」ところまでで、公開そのものではない）。
+渡している道具はそれ1つだけで、`allow_writes: true` を明示している。
+`vector_store` は設定したベクトルストア（Qdrant・pgvector・Chroma・Milvus・
+Weaviate のいずれか）の論理名で、詳しくは
+[docs/VECTOR_STORES.md](VECTOR_STORES.md)。
+
+An example with write access allowed: `templates/examples/generalize_knowledge.yaml`.
+It reads an internal insight, rewrites it with identifying detail stripped
+out, and submits the result via `vector_store.submit_candidate` — submitting
+only means landing in the review queue, not publishing. It is handed exactly
+that one tool, with `allow_writes: true` stated explicitly. `vector_store` is
+the logical name for whichever backend is configured (Qdrant, pgvector,
+Chroma, Milvus, or Weaviate); see [docs/VECTOR_STORES.md](VECTOR_STORES.md).

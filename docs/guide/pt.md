@@ -157,8 +157,7 @@ fica separada.
 separados, e alcançar os de outra não é tecnicamente possível.
 
 **Nada é publicado automaticamente.** Um modelo não consegue gravar no
-repositório público. Pode enviar um candidato, mas ainda não há a etapa de
-aprovação que publica.
+repositório público. Pode enviar um candidato; é só até aí.
 
 ---
 

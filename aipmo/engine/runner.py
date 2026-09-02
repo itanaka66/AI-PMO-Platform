@@ -5,17 +5,21 @@
 """
 from __future__ import annotations
 
+import json
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from ..adapters.base import AdapterRegistry
 from ..dsl.expr import ResolutionError, evaluate_condition, render
-from ..dsl.schema import OutputFormat, Step, StepKind, Template
-from ..llm.base import LLMRequest
+from ..dsl.schema import LLMSpec, OutputFormat, Step, StepKind, Template
+from ..llm.base import LLMRequest, LLMResponse
 from ..llm.registry import LLMRegistry
-from .agent import run_agent
+from .agent import ApprovalCallback, run_agent
 from .context import RunContext, StepResult
 
 logger = logging.getLogger("aipmo.engine")
@@ -38,6 +42,31 @@ class StepFailure(Exception):
         super().__init__(f"ステップ '{step_id}' が失敗しました: {message}")
         self.step_id = step_id
         self.context = context
+
+
+# 実行履歴の DB は小さい前提（無料枠の 1GB など）。出力をまるごと保存すると
+# 議事録の全文だけで数週間で埋まることが実測されている
+# （docs/DEPLOY-ORACLE.md）。大きいものは要約に落として履歴には残す。
+#
+# The history database is assumed small (e.g. a free-tier 1GB). Storing whole
+# outputs has been measured to fill it within weeks on full meeting minutes
+# alone (docs/DEPLOY-ORACLE.md). Oversized ones are summarized instead of
+# dropped, so the history still records that the step ran.
+MAX_STORED_OUTPUT_BYTES = 8_000
+
+
+def _bounded_output(output: Any) -> Any:
+    try:
+        encoded = json.dumps(output, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return {"unstorable": True, "python_type": type(output).__name__}
+    if len(encoded.encode("utf-8")) <= MAX_STORED_OUTPUT_BYTES:
+        return output
+    return {
+        "truncated": True,
+        "original_size_bytes": len(encoded.encode("utf-8")),
+        "preview": encoded[:500],
+    }
 
 
 def _days_between(start: str, end: str) -> int | None:
@@ -109,6 +138,7 @@ class Engine:
         llms: LLMRegistry,
         prompts: PromptLibrary | None = None,
         transforms: dict[str, Callable[..., Any]] | None = None,
+        approve: ApprovalCallback | None = None,
     ) -> None:
         self.adapters = adapters
         self.llms = llms
@@ -116,6 +146,24 @@ class Engine:
         # 利用者定義のものを優先する。名前がぶつかったら上書きできる。
         # User-supplied transforms win, so a name can be overridden.
         self.transforms = {**BUILTIN_TRANSFORMS, **(transforms or {})}
+        # agent: require_approval を立てた工程の書き込みを、実行前に人へ
+        # 尋ねる関数。渡さなければ、そうした書き込みは常に断られる。
+        # 承認の取り方（対話端末・Slack・Web など）はここでは決めない —
+        # エンジンは呼び出し元から渡された判断をそのまま使うだけにする。
+        #
+        # A function asked, before it runs, about a write from an agent step
+        # with require_approval set. Left unset, such writes are always
+        # refused. How approval is actually obtained (a terminal prompt,
+        # Slack, a web UI) is not this engine's decision — it only uses
+        # whatever judgement the caller hands it.
+        self.approve = approve
+        # 並列グループの中のステップは同時に履歴を書こうとする。
+        # 1本の DB 接続を複数スレッドから同時に使うのは安全でないため、
+        # 履歴への書き込みだけはここで直列化する。
+        # Steps inside a parallel group can try to record history at the same
+        # time. A single DB connection is not safe to use from several threads
+        # at once, so history writes alone are serialized here.
+        self._history_lock = threading.Lock()
 
     def run(
         self,
@@ -130,21 +178,117 @@ class Engine:
             trigger=trigger or {},
         )
         logger.info("run %s start (template=%s)", ctx.run_id, template.name)
+        self._record_run_start(template, ctx)
 
-        for step in template.steps:
-            result = self._run_step(step, ctx)
-            ctx.results[step.id] = result
+        try:
+            for step in template.steps:
+                result = self._run_step(step, ctx)
+                ctx.results[step.id] = result
 
-            if result.status == "failed" and not step.continue_on_error:
-                logger.error("run %s aborted at step %s", ctx.run_id, step.id)
-                raise StepFailure(step.id, result.error or "不明なエラー", context=ctx)
+                if result.status == "failed" and not step.continue_on_error:
+                    logger.error("run %s aborted at step %s", ctx.run_id, step.id)
+                    raise StepFailure(step.id, result.error or "不明なエラー", context=ctx)
+        except StepFailure:
+            self._record_run_finish(ctx, status="failed")
+            raise
 
+        self._record_run_finish(ctx, status="success")
         logger.info("run %s finished", ctx.run_id)
         return ctx
+
+    # -- 実行履歴の永続化 / run history persistence ------------------------
+    #
+    # postgres アダプタが設定されているときだけ動く。テンプレート側は
+    # 何も書かなくてよい — これはエンジンの配線であって、DSL の機能ではない。
+    # 書き込みに失敗しても本来の業務処理は止めない。履歴が欠けることより、
+    # 通知が届かないことの方が困る。
+    #
+    # Only active when a postgres adapter is configured. Templates need not
+    # reference it at all — this is engine-side wiring, not a DSL feature. A
+    # failed history write never aborts the actual workflow: a gap in the
+    # history is a smaller problem than a notification that never went out.
+
+    def _postgres(self) -> Any | None:
+        if not self.adapters.has("postgres"):
+            return None
+        return self.adapters.get("postgres")
+
+    def _invoke_postgres(self, postgres: Any, payload: dict[str, Any]) -> None:
+        with self._history_lock:
+            postgres.invoke("execute", payload)
+
+    def _record_run_start(self, template: Template, ctx: RunContext) -> None:
+        postgres = self._postgres()
+        if postgres is None:
+            return
+        try:
+            from psycopg.types.json import Jsonb
+
+            self._invoke_postgres(postgres, {
+                "name": "record_run",
+                "params": {
+                    "id": ctx.run_id,
+                    "template": template.name,
+                    "template_version": template.version,
+                    "trigger": Jsonb(ctx.trigger),
+                    "status": "running",
+                    "started_at": ctx.started_at,
+                },
+                "idempotency_key": ctx.run_id,
+            })
+        except Exception:
+            logger.warning("run %s: 実行履歴の記録に失敗しました "
+                           "/ failed to record the run", ctx.run_id, exc_info=True)
+
+    def _record_step_result(self, ctx: RunContext, result: StepResult) -> None:
+        postgres = self._postgres()
+        if postgres is None:
+            return
+        try:
+            from psycopg.types.json import Jsonb
+
+            self._invoke_postgres(postgres, {
+                "name": "record_step_result",
+                "params": {
+                    "run_id": ctx.run_id,
+                    "step_id": result.id,
+                    "status": result.status,
+                    "output": Jsonb(_bounded_output(result.output)),
+                    "error": result.error,
+                    "attempts": result.attempts,
+                    "duration_ms": result.duration_ms,
+                },
+            })
+        except Exception:
+            logger.warning("run %s: ステップ '%s' の記録に失敗しました "
+                           "/ failed to record step '%s'",
+                           ctx.run_id, result.id, result.id, exc_info=True)
+
+    def _record_run_finish(self, ctx: RunContext, status: str) -> None:
+        postgres = self._postgres()
+        if postgres is None:
+            return
+        try:
+            self._invoke_postgres(postgres, {
+                "name": "finish_run",
+                "params": {
+                    "id": ctx.run_id,
+                    "status": status,
+                    "finished_at": datetime.now(timezone.utc),
+                },
+            })
+        except Exception:
+            logger.warning("run %s: 実行終了の記録に失敗しました "
+                           "/ failed to record run finish", ctx.run_id, exc_info=True)
 
     # ------------------------------------------------------------------
 
     def _run_step(self, step: Step, ctx: RunContext) -> StepResult:
+        result = self._execute_step(step, ctx)
+        self._record_step_result(ctx, result)
+        return result
+
+    def _execute_step(self, step: Step, ctx: RunContext) -> StepResult:
         scope = ctx.scope()
 
         if step.when is not None:
@@ -170,6 +314,9 @@ class Engine:
 
         if step.for_each is not None:
             return self._run_for_each(step, ctx, scope)
+
+        if step.kind is StepKind.PARALLEL:
+            return self._run_parallel(step, ctx)
 
         started = time.monotonic()
         last_error: str | None = None
@@ -295,6 +442,51 @@ class Engine:
             duration_ms=int((time.monotonic() - started) * 1000),
         )
 
+    def _run_parallel(self, step: Step, ctx: RunContext) -> StepResult:
+        """互いに依存しないステップを同時に実行する。
+
+        グループの中の工程は、グループが始まる前の ctx.results だけを見る。
+        誰も他人の出力を待たずに走るので、そもそも参照できてはいけない
+        （ロード時にも検証済み）。結果は全員そろってから、宣言順に
+        まとめて ctx.results へ書き込む — 走っている間は誰も書き込まない
+        ので、途中経過を別の工程が覗き見ることもない。
+
+        1件の失敗で全体を止めない。全滅したときだけこの工程自体が失敗になる。
+        for_each と同じ考え方。
+
+        Steps in the group only ever see ctx.results as it stood before the
+        group started — nobody waits on anybody else, so nobody should be able
+        to reference another's output either (checked at load time too).
+        Results are written into ctx.results together, in declared order, only
+        after everyone has finished; nothing is written while the group is
+        still running, so there is nothing mid-flight for another step to see.
+
+        One failure does not sink the group; it fails only when every nested
+        step does — the same reasoning as `for_each`.
+        """
+        started = time.monotonic()
+        nested_steps = step.parallel
+
+        with ThreadPoolExecutor(max_workers=len(nested_steps)) as pool:
+            futures = {pool.submit(self._run_step, nested, ctx): nested
+                       for nested in nested_steps}
+            results_by_id = {nested.id: future.result()
+                             for future, nested in futures.items()}
+
+        for nested in nested_steps:
+            ctx.results[nested.id] = results_by_id[nested.id]
+
+        failed = [r for r in results_by_id.values() if r.status == "failed"]
+        status = "failed" if len(failed) == len(results_by_id) else "success"
+
+        return StepResult(
+            id=step.id,
+            status=status,
+            output={"count": len(results_by_id) - len(failed), "failed": len(failed)},
+            error=f"{len(failed)} 件が失敗 / {len(failed)} failed" if failed else None,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+
     def _attempt(self, step: Step, ctx: RunContext,
                  scope: dict[str, Any]) -> tuple[bool, Any]:
         last_error = "不明なエラー"
@@ -337,13 +529,21 @@ class Engine:
     def _run_llm(self, step: Step, scope: dict[str, Any]) -> Any:
         spec = step.llm
         assert spec is not None
-        provider = self.llms.get(spec.profile)
 
         raw_prompt = step.prompt_inline or self.prompts.get(step.prompt or "")
         prompt = render(raw_prompt, {**scope, "inputs": render(step.inputs, scope)})
-
         want_json = step.output_format is OutputFormat.JSON
-        response = provider.complete(
+
+        if not spec.profiles:
+            response = self._complete(spec.profile, step, spec, prompt, want_json)
+            return self._extract(response, step, want_json)
+
+        return self._run_llm_fanout(step, spec, prompt, want_json)
+
+    def _complete(self, profile: str, step: Step, spec: LLMSpec, prompt: str,
+                  want_json: bool) -> LLMResponse:
+        provider = self.llms.get(profile)
+        return provider.complete(
             LLMRequest(
                 prompt=prompt,
                 system=step.config.get("system"),
@@ -353,13 +553,60 @@ class Engine:
             )
         )
 
+    def _extract(self, response: LLMResponse, step: Step, want_json: bool) -> Any:
         if not want_json:
             return response.text
-
         data = response.as_json()
         if step.output_schema:
             _check_schema(data, step.output_schema, step.id)
         return data
+
+    def _run_llm_fanout(self, step: Step, spec: LLMSpec, prompt: str,
+                        want_json: bool) -> Any:
+        """同じプロンプトを複数の提供元に同時に投げ、比較できる形で返す。
+
+        1件の失敗で全体を止めない。全滅したときだけ例外にして、
+        通常のリトライ・失敗経路に乗せる。for_each の失敗の扱いと同じ考え方。
+
+        One dead provider does not sink the rest: this only raises when every
+        profile fails, so the normal step retry path takes over. Same reasoning
+        as `for_each`.
+        """
+        profiles = spec.profiles
+        with ThreadPoolExecutor(max_workers=len(profiles)) as pool:
+            futures = {
+                pool.submit(self._complete, profile, step, spec, prompt, want_json): profile
+                for profile in profiles
+            }
+            by_profile: dict[str, dict[str, Any]] = {}
+            for future, profile in futures.items():
+                try:
+                    response = future.result()
+                    entry: dict[str, Any] = {
+                        "profile": profile, "model": response.model, "ok": True,
+                    }
+                    entry["data" if want_json else "text"] = self._extract(
+                        response, step, want_json
+                    )
+                except Exception as exc:
+                    entry = {
+                        "profile": profile, "ok": False,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                by_profile[profile] = entry
+
+        # 呼び出した順を保つ / preserve the order the template declared
+        results = [by_profile[profile] for profile in profiles]
+        failed = [r for r in results if not r["ok"]]
+
+        if len(failed) == len(results):
+            detail = "; ".join(f"{r['profile']}: {r['error']}" for r in failed)
+            raise RuntimeError(
+                f"すべての提供元が失敗しました / every profile failed: {detail}"
+            )
+
+        return {"results": results, "count": len(results) - len(failed),
+                "failed": len(failed)}
 
     def _run_agent(self, step: Step, scope: dict[str, Any]) -> Any:
         spec = step.agent
@@ -377,6 +624,7 @@ class Engine:
             system=step.config.get("system"),
             temperature=step.llm.temperature,
             max_tokens=step.llm.max_tokens,
+            approve=self.approve,
         )
 
         output: Any = {

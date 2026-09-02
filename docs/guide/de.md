@@ -159,8 +159,8 @@ werden getrennt abgelegt; an die einer anderen zu gelangen ist technisch nicht
 möglich.
 
 **Nichts wird automatisch veröffentlicht.** Eine Vorlage kann nicht in den
-öffentlichen Speicher schreiben. Sie kann einen Kandidaten einreichen, doch
-den Freigabeschritt, der veröffentlicht, gibt es noch nicht.
+öffentlichen Speicher schreiben. Sie kann einen Kandidaten einreichen; mehr
+nicht.
 
 ---
 

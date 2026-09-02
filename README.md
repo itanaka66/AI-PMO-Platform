@@ -1,9 +1,15 @@
 # AI-PMO Platform
 
-PMO 業務のノウハウを「実行可能なテンプレート」として記述し、LLM と外部ツール連携を
-組み合わせて自動実行する基盤。
+[![Tests](https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml/badge.svg)](https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml)
 
-A runtime that encodes PMO know-how as executable templates and runs them by
+はじめての方は [はじめてのガイド（8言語）](docs/guide/README.md) をどうぞ。
+New here? Start with the [getting-started guide (8 languages)](docs/guide/README.md) .
+
+<a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">初心者向けAI-PMO
+はじめてのガイド</a>  PMO 業務のノウハウを「実行可能なテンプレート」として記述し、LLM と外部ツール連携を
+組み合わせて自動実行する基盤。 
+
+<a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">AI-PMO Getting Started Guide for beginers</a>  A runtime that encodes PMO know-how as executable templates and runs them by
 combining LLM calls with the tools a team already uses.
 
 **すべて無料です。** 機能制限版でも試用版でもありません。MIT License なので、
@@ -12,25 +18,34 @@ combining LLM calls with the tools a team already uses.
 **All of it is free** — not a reduced edition, not a trial. MIT licensed, so
 commercial use, modification and redistribution are all permitted.
 
-はじめての方は **[はじめてのガイド](docs/guide/README.md)**（8言語）をどうぞ。
-New here? Start with the **[getting-started guide](docs/guide/README.md)**.
-
 ---
 
 ## できること / What it does
 
-| テンプレート | 内容 |
+| テンプレート / Template | 内容 / Description |
 |---|---|
-| `meeting_to_tasks` | 会議 → 議事録 → TODO → Jira 起票 → Slack 通知 |
-| `meeting_task_update` | 会議の内容から既存課題を更新（確信度で選別） |
-| `overdue_chase` | 期限超過の担当者へ個別に催促 |
-| `overdue_triage` | 遅延状況をエージェントが調査して報告 |
-| `sprint_health` | スプリントの状況確認（問題があるときだけ通知） |
-| `wbs_from_meeting` | 会議の決定事項から WBS の草案 |
-| `construction/site_meeting` | 工程会議 → 是正起票・安全指摘の即時通知 |
-| `marketing/campaign_check` | キャンペーン進行（承認待ちを分けて扱う） |
+| `meeting_to_tasks` | 会議 → 議事録 → TODO → Jira 起票 → Slack 通知 / Meeting → minutes → TODOs → Jira issues → Slack notification |
+| `meeting_task_update` | 会議の内容から既存課題を更新（確信度で選別） / Updates existing issues from meeting content, filtered by confidence |
+| `overdue_chase` | 期限超過の担当者へ個別に催促 / Individually chases overdue owners |
+| `overdue_triage` | 遅延状況をエージェントが調査して報告 / An agent investigates delays and reports back |
+| `sprint_health` | スプリントの状況確認（問題があるときだけ通知） / Sprint health check — notifies only when something is wrong |
+| `wbs_from_meeting` | 会議の決定事項から WBS の草案 / Drafts a WBS from meeting decisions |
+| `model_comparison` | 同じプロンプトを複数の AI に同時投稿し、書きぶりを比較 / Sends the same prompt to several AI providers at once and compares the results |
+| `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める / Sends independent notifications concurrently to cut run time |
+| `generalize_knowledge` | 社内知見を匿名化・一般化し、レビュー待ちの候補として提出 / Anonymizes and generalizes internal knowledge, submitting it as a candidate awaiting review |
+| `construction/site_meeting` | 工程会議 → 是正起票・安全指摘の即時通知 / Site meeting → corrective-action issues and immediate safety-flag notification |
+| `marketing/campaign_check` | キャンペーン進行（承認待ちを分けて扱う） / Campaign progress check, separating items awaiting approval |
+| `manufacturing/line_downtime_triage` | 生産ライン停止の仕分け（安全・資材待ち・内製を分けて扱う） / Triages production-line downtime — safety, material-wait, and in-house causes kept apart |
+| `legal/matter_deadline_triage` | 法務案件の期限確認（緊急・相手方待ち・秘匿特権を分けて扱う） / Legal matter deadline check — urgent, counterparty-wait, and privileged items kept apart |
+| `customer_success/account_health_triage` | 顧客アカウントの状況確認（解約リスク・顧客待ち・自社遅延を分けて扱う） / Customer account health check — churn risk, customer-wait, and internal delay kept apart |
+| `financial_audit/finding_remediation_triage` | 監査指摘の是正状況確認（重要度に応じて宛先を分ける） / Audit-finding remediation check, routed by severity |
+| `higher_education/curriculum_approval_triage` | カリキュラム審議の進行確認（段階ごとに宛先を動的に変える） / Curriculum approval progress check, routed dynamically by review stage |
+| `nonprofit/grant_compliance_triage` | 助成金事業の進行確認（報告期限・使途制限を分けて扱う） / Grant program progress check — reporting deadlines and use-of-funds restrictions kept apart |
+| `insurance/claim_sla_triage` | 保険請求の期限確認（州別規制期限・不正疑い・契約者待ちを分けて扱う） / Insurance claim SLA check — state regulatory deadlines, suspected fraud, and policyholder-wait kept apart |
+| `government_contracting/clearance_deliverable_triage` | 政府調達案件の確認（クリアランス失効・納品期限を分けて扱う） / Government contract check — clearance expiration and delivery deadlines kept apart |
 
-連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL · Qdrant
+連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL ·
+ベクトルストア（Qdrant・pgvector・Chroma・Milvus・Weaviate から選択）
 AI: OpenAI · Gemini · Groq · OpenRouter · Ollama · vLLM · LM Studio
 
 ---
@@ -53,7 +68,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 543 件
+pytest                               # 721 件
 ```
 
 ---
@@ -142,6 +157,34 @@ that fires it. Runs start from `aipmo run --trigger '{...}'`, the web UI, or a
 One failure does not stop the rest. `when` is evaluated once before the loop, so
 filtering on an element's own values needs `where`.
 
+### 並列実行 / Parallel steps
+
+互いに依存しないステップを `parallel:` にまとめると、同時に実行される。
+Jira への起票と Slack への通知のように、片方の結果をもう片方が待つ必要が
+ない工程を並べるのに使う。
+
+```yaml
+- id: notify_everyone
+  parallel:
+    - id: notify_slack
+      adapter: slack
+      action: post_message
+      inputs: { channel: "#project-updates", text: "..." }
+    - id: notify_teams
+      adapter: teams
+      action: post_message
+      inputs: { channel: "{{ params.teams_channel }}", text: "..." }
+```
+
+グループの中の工程どうしは、互いの出力を参照できない（ロード時に検証される）。
+後続のステップからは `steps.notify_slack.output` のようにそのまま参照できる。
+1件の失敗で全体を止めない。全滅したときだけこの工程自体が失敗になる。
+
+Steps inside one group cannot reference each other's output (checked when the
+template is loaded, not at run time). Later steps can reference any of them
+directly, e.g. `steps.notify_slack.output`. One failure does not stop the
+rest; the group itself only fails when every step inside it does.
+
 ### エージェント / Agents
 
 決められた工程を流すのではなく、AI が道具を選んで自分で呼ぶ。
@@ -157,6 +200,26 @@ filtering on an element's own values needs `where`.
 ```
 
 詳しくは [docs/AGENTS.md](docs/AGENTS.md)。
+
+### 複数の提供元を同時に呼ぶ / Multiple providers at once
+
+`profile` の代わりに `profiles` を並びで書くと、同じプロンプトを複数の
+LLM に同時に投げて、結果を並べて比較できる。
+
+```yaml
+- id: draft_minutes
+  llm:
+    profiles: [ollama, gemini, openai]   # ローカル + クラウド2つを同時に
+  prompt: minutes_ja
+```
+
+1つが落ちても他は止まらない。全滅したときだけステップが失敗になる。
+詳しくは [docs/PROVIDERS.md](docs/PROVIDERS.md)。
+
+Write `profiles` instead of `profile` and the same prompt is sent to several
+LLMs at once, with every answer kept for comparison. One provider going down
+does not stop the others; the step only fails when all of them do. See
+[docs/PROVIDERS.md](docs/PROVIDERS.md).
 
 ---
 
@@ -202,24 +265,96 @@ template engine would turn every distributed template into an attack surface.
 ### SQL とコレクション名をテンプレートに書かせない
 
 同じ理由。PostgreSQL は `queries.yaml` に定義された**クエリ名とパラメータのみ**、
-Qdrant は論理スコープ `private` / `public` のみ。`tenant` は接続設定から入るので、
+ベクトルストアは論理スコープ `private` / `public` のみ。`tenant` は接続設定から入るので、
 テンプレートが上書きできない。
 
 Same reasoning: a template passes a query name and bound parameters, or a
 logical scope — never raw SQL or a collection name. The tenant comes from
 connection config and cannot be overridden.
 
+### ベクトルストアは5種類のうちどれを選んでも同じ道具として渡せる
+
+Qdrant・pgvector・Chroma・Milvus・Weaviate は、共通の基底クラス
+`VectorStoreAdapter` が scope 解決・公開可能性スコア・公開拒否をまとめて
+持ち、各アダプタは接続方法と実際の検索・書き込み呼び出しだけを持つ。
+config に設定したバックエンドがちょうど1つなら、論理名 `vector_store` でも
+同じインスタンスが登録される。LLM の `profile` と同じ考え方——新しく書く
+テンプレートは `vector_store.search` を使えば、あとでバックエンドを乗り換えても
+書き換えが要らない。詳しくは [docs/VECTOR_STORES.md](docs/VECTOR_STORES.md)。
+
+Qdrant, pgvector, Chroma, Milvus, and Weaviate share a common base class,
+`VectorStoreAdapter`, which owns scope resolution, publicability scoring, and
+refusing public writes; each adapter contributes only its own connection and
+the actual search/upsert calls. Configuring exactly one backend also
+registers the same instance under the logical name `vector_store` — the same
+idea as an LLM `profile`. A newly written template that uses
+`vector_store.search` survives a later backend switch untouched. See
+[docs/VECTOR_STORES.md](docs/VECTOR_STORES.md).
+
 ### 公開コレクションへの書き込みをアダプタが拒否する
 
 テンプレートができるのは `submit_candidate` で候補として提出するところまで。
 公開コレクションへの書き込みはアダプタが拒否する。**自動公開の経路は、
-そもそもテンプレートから作れない。** 人が承認して公開する手順は未実装
-（[未着手](#未着手--not-yet-built)）。
+そもそもテンプレートから作れない。** 公開はレビュー待ちに載った候補を
+人が承認したときにだけ起きる。
 
 A template can only submit a candidate. Public writes are refused at the
-adapter, so no template can construct an automatic publication path. The
-human approval step that would promote a candidate is not built yet
-(see [Not yet built](#未着手--not-yet-built)).
+adapter, so no template can construct an automatic publication path.
+Publication happens only when a person approves a candidate in the review
+queue.
+
+### 公開可能性スコアは並び順のためだけにある
+
+`submit_candidate` は公開可能性スコアを自動で算出する。テンプレート側が
+数値を用意する必要はない。ただし、これは**レビュー待ち一覧の並び順を
+決める下書きの値**であって、承認・却下の判定ではない。判定は必ず人間が行う。
+
+数えれば決まる範囲（利用許諾レベル・宣言された一般化の度合い・メール
+アドレスや課題番号らしき文字列の有無）だけを見る。**言語モデルには頼らない**
+— 公開してよいかは誤ると取り返しがつかない判断で、間違っても
+もっともらしく見えるものに任せるべきではない。利用許諾レベル A
+（二次利用不可）は、他の要素に関わらず無条件で 0 点にする。
+
+`submit_candidate` computes a publicability score automatically; templates
+need not supply one. But it is only **a draft value that orders the review
+queue** — never an approve/reject verdict, which stays a human's call.
+
+It looks only at what is countable or matchable — consent level, the declared
+degree of generalization, whether an email address or issue-key-shaped string
+appears. **No language model is involved**: whether something is safe to
+publish cannot be undone if wrong, and that is not a call to hand to something
+that is plausible even when mistaken. Consent level A (no secondary use)
+forces a score of 0 unconditionally, regardless of anything else.
+
+### 一般化はエージェント、公開はやはり人間
+
+社内固有の知見を一般化して候補として提出するところまでは、
+`templates/examples/generalize_knowledge.yaml` がそのままエージェントとして
+動く。識別情報を落とし、構造を残すという書き換えは言語モデルの仕事に
+向くので、ここは既存の `agent` の仕組みをそのまま使っている——新しい
+エンジンの機能は要らなかった。
+
+変わらないもの: エージェントに渡す道具は `vector_store.submit_candidate` だけで、
+`allow_writes: true` を明示しないと呼べない。利用許諾レベルは
+`postgres.consent_level` から取った値をそのままプロンプトへ渡し、
+**AI 自身には判断させない。** 提出は「レビュー待ちに載せる」ところまでで、
+公開そのものは相変わらずここでは起こらない。（`vector_store` は設定した
+ベクトルストアの論理名。Qdrant を選んでも pgvector を選んでも、このテンプレートは変わらない。）
+
+Generalizing an internal insight and submitting it as a candidate is now a
+working agent, `templates/examples/generalize_knowledge.yaml`. Stripping
+identifying detail while keeping the structure is exactly the kind of
+rewriting a language model is suited for, so this reuses the existing `agent`
+mechanism as-is — no new engine capability was needed.
+
+What stays the same: the only tool handed to the agent is
+`vector_store.submit_candidate`, and it cannot be called without an explicit
+`allow_writes: true`. The consent level is fetched from
+`postgres.consent_level` and passed into the prompt as a given fact — **not
+something the model decides for itself.** Submitting only ever means landing
+in the review queue; publication still does not happen here. (`vector_store`
+is the logical name for whichever backend is configured — this template is
+unchanged whether that is Qdrant or pgvector.)
 
 ### 書き込みは読み取りより厳しく扱う
 
@@ -232,6 +367,40 @@ human approval step that would promote a candidate is not built yet
 Naming an adapter does not grant its write actions. A mistaken read can be
 retried; a mistaken write cannot. And updating is worse than creating: a
 mistaken create adds noise, a mistaken update destroys a value that was right.
+
+### 承認する側が居なければ、書き込みは通らない
+
+`allow_writes: true` は工程全体としての一括許可でしかない。1回ごとに
+人へ判断させたい書き込みには `require_approval: true` を重ねる。
+承認する関数（`run_agent` の `approve` 引数）を渡すかどうかは実行環境が
+決め、テンプレートには一切見えない。
+
+**渡さなければ、その書き込みは常に断られる。** 対話端末の無いスケジューラや
+Web サーバーからの実行がこれに当たる。黙って許可される経路は無い —
+承認を求める仕組みを立てておきながら、承認する相手が居ないときに
+素通りさせては、立てた意味が無い。
+
+`allow_writes: true` is only ever a one-time, blanket permission for a whole
+step. `require_approval: true` layers a per-call human judgement on top of
+it. Whether an approver function (`run_agent`'s `approve` argument) is
+supplied is a runtime decision, invisible to the template.
+
+**With none supplied, the write is always refused** — which is exactly what
+happens when a scheduler or web server, having no interactive terminal, runs
+the step. There is no path where it passes through unattended: a gate with no
+one to approve through it would defeat the point of having one.
+
+`config.yaml` の `approval.slack` を設定すれば、対話端末の代わりに
+Slack が承認の場になる — スケジューラや Web からの実行でも、この
+ゲートを実際に使えるようになる。Slack の Events API は使わず、
+ボットトークンだけで動くポーリングにしている。詳しくは
+[docs/AGENTS.md](docs/AGENTS.md)。
+
+Setting `approval.slack` in `config.yaml` makes Slack the approval venue
+instead of a terminal — so the gate becomes usable from a scheduled or
+web-triggered run too, not just `aipmo run`. It polls rather than using
+Slack's Events API, so it needs nothing beyond the bot token already in use
+elsewhere. See [docs/AGENTS.md](docs/AGENTS.md).
 
 ### 冪等キーはトリガー由来
 
@@ -255,13 +424,38 @@ Five days of a 9am report delivered at noon is a flood, not a report. For the
 same reason, silence is the output when nothing is wrong: a channel that says
 "all fine" every morning is not read when it matters either.
 
+### 実行履歴はテンプレートを経由せず記録する
+
+`postgres` アダプタを設定するだけで、実行の開始・各ステップ・終了が
+自動で `runs` / `step_results` に記録される。テンプレートは何も書かない
+— これはエンジン側の配線であって、DSL の機能にしない。書ける場所を
+テンプレートに与えると、書く・書かないがテンプレートごとにばらつく。
+
+履歴の書き込みが失敗しても、本来の業務処理は止めない。通知が届かない方が、
+履歴が1件欠けるより困る。ステップ出力が大きい場合は丸ごと保存せず要約に
+落とす — 無料枠クラスの小さな DB を議事録の全文だけで埋めないため
+（詳しくは [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md)）。並列グループの
+中の工程も、それぞれ個別に記録される。
+
+Configuring a `postgres` adapter is enough: a run's start, every step, and its
+finish are recorded into `runs` / `step_results` automatically. Templates
+write nothing for this — it stays engine-side wiring, not a DSL feature, so
+whether history gets recorded never varies template to template.
+
+A failed history write never aborts the actual workflow — a missing
+notification is worse than a gap in the history. An oversized step output is
+summarized rather than stored whole, so a free-tier database is not filled by
+full meeting minutes alone (see
+[docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md)). Steps inside a parallel group
+are each recorded individually.
+
 ---
 
 ## テスト / Tests
 
-543 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+721 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-543 tests, aimed at the guarantees and at the failure shapes that look like
+721 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
@@ -272,6 +466,24 @@ success:
 - エージェントが許可外の道具を呼べない、上限で必ず止まる
 - 前方参照・ID 重複・不正な cron はロード時に検出される
 - 8言語のガイドとカタログに抜けが無い
+
+push・PR のたびに GitHub Actions で自動実行される
+（[.github/workflows/tests.yml](.github/workflows/tests.yml)）。同じ場所で
+ruff によるリンティングと mypy による型チェックも行う（設定は
+`pyproject.toml` の `[tool.ruff]` / `[tool.mypy]`）。
+依存ライブラリの更新は Dependabot が週次で提案する
+（[.github/dependabot.yml](.github/dependabot.yml)）。
+コード自体の脆弱性は CodeQL が push・PR・週次で静的解析する
+（[.github/workflows/codeql.yml](.github/workflows/codeql.yml)）。
+
+Run automatically by GitHub Actions on every push and PR
+([.github/workflows/tests.yml](.github/workflows/tests.yml)), which also
+lints with ruff and type-checks with mypy (configured under `[tool.ruff]` /
+`[tool.mypy]` in `pyproject.toml`). Dependency
+updates are proposed weekly by Dependabot
+([.github/dependabot.yml](.github/dependabot.yml)). The code itself is
+statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
+([.github/workflows/codeql.yml](.github/workflows/codeql.yml)).
 
 ---
 
@@ -284,30 +496,28 @@ success:
 | [docs/MOBILE.md](docs/MOBILE.md) | スマホから使う・権限分離 / phone access and roles |
 | [docs/PROVIDERS.md](docs/PROVIDERS.md) | AI の提供元 / AI providers |
 | [docs/AGENTS.md](docs/AGENTS.md) | エージェント / agents |
+| [docs/VECTOR_STORES.md](docs/VECTOR_STORES.md) | ベクトルストアの選択肢 / vector store choices |
 | [docs/SCHEDULER.md](docs/SCHEDULER.md) | 定時実行 / scheduling |
 | [docs/TEAMS.md](docs/TEAMS.md) | Teams 連携 / Teams |
 | [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |
 | [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
 | [docs/INDUSTRIES.md](docs/INDUSTRIES.md) | 業界別テンプレート / industry templates |
-| [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md) | 無料クラウド構成 / free-tier deployment |
+| [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md) | 無料クラウド構成（Oracle）/ free-tier deployment |
+| [docs/DEPLOY-GCP.md](docs/DEPLOY-GCP.md) | 無料クラウド構成（Google Cloud）/ free-tier deployment |
+| [docs/DEPLOY-AZURE.md](docs/DEPLOY-AZURE.md) | 無料クラウド構成（Azure）/ free-tier deployment |
+| [docs/DEPLOY-AWS.md](docs/DEPLOY-AWS.md) | 無料クラウド構成（AWS EC2）/ free-tier deployment |
+| [docs/DEPLOY-VPS.md](docs/DEPLOY-VPS.md) | 有料 VPS 構成（さくらの VPS 等）/ paid VPS deployment |
+| [SECURITY.md](SECURITY.md) | 脆弱性の報告 / reporting a vulnerability |
+| [docs/DEPLOY-HETZNER.md](docs/DEPLOY-HETZNER.md) | 有料 VPS 構成（Hetzner）/ paid VPS deployment |
 | [NOTICE.md](NOTICE.md) | ライセンスと依存ライブラリ / licensing and dependencies |
 
 ---
 
 ## 未着手 / Not yet built
 
-- **コード署名 / code signing** — 未署名の `.exe` は Windows が警告を出す。
-  回避策はあるが解決ではない / there are workarounds, but they are not a fix
-- **匿名化・一般化エージェント** — `submit_candidate` は候補を受け取る器であって、
-  一般化そのものは行わない / it accepts candidates but does not generalize
-- **公開可能性スコアの算出** — 保存はできるが計算は未実装 / the field is stored,
-  the computation is not
-- **実行履歴の永続化配線** — スキーマとクエリはあるが、エンジンからの自動書き込みは未接続
 - **イベント駆動の起動** — `trigger: "event:..."` はペイロードの形を宣言するだけ。
   Graph の通知や webhook は未実装 / records payload shape; no subscription or webhook
-- **並列ステップ実行** — 現状は逐次のみ / sequential only
 - **会議議事進行（リアルタイム）** — 別プロダクトラインへ切り出し
-- **上記3業界以外のテンプレート**
 
 ---
 
