@@ -119,6 +119,7 @@ WBS-replanning AI → approval) actually running.
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） / Sprint health check — notifies only when something is wrong |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 / Drafts a WBS from meeting decisions |
 | `wbs_risk_forecast` | WBS の遅延予測とドリフト検出、承認待ち提案の記録 / Forecasts WBS drift and records an approval-pending replan proposal |
+| `portfolio_risk_forecast` | 複数 WBS を横断して遅延リスクを決定論的に採点し、危険な WBS だけ週次で報告 / Scores delay risk deterministically across several WBS, reporting weekly only on the ones at risk |
 | `wbs_replan` | WBS の遅延を踏まえ、AI が実際の再計画案（何をどう変えるか）を考え、承認待ちの提案として記録 / An agent drafts an actual replan diff from the forecast and records it as an approval-pending proposal |
 | `wbs_replan_jira` | wbs_replan と同じだが、タスク一覧を実際の Jira スプリントから取得する / Same as wbs_replan, but pulls the task list from a real Jira sprint |
 | `wbs_replan_options` | wbs_replan と同じだが、AI に依存関係・クリティカルパスを踏まえた性質の異なる2つの代替案（A/B）を考えさせ、それぞれ独立した提案として記録する / Same as wbs_replan, but has the agent draft two genuinely different alternatives informed by dependency/critical-path analysis, recording each as its own proposal |
