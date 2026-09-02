@@ -58,7 +58,7 @@ def test_local_config_uses_ollama_with_host():
         mode="local", ollama_host="http://ollama:11434", use_data_layer=True,
     ))
     assert config["llm"]["default"]["provider"] == "ollama"
-    assert config["llm"]["default"]["host"] == "http://ollama:11434"
+    assert config["llm"]["default"]["base_url"] == "http://ollama:11434/v1"
     assert config["adapters"]["qdrant"]["embedding"]["provider"] == "ollama"
 
 

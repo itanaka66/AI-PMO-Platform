@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import EchoProvider, LLMProvider, OllamaProvider, OpenAICompatibleProvider
+from .base import EchoProvider, LLMProvider, OpenAICompatibleProvider
 from .presets import PRESETS, ProviderError
 
 
@@ -58,8 +58,12 @@ def build_provider(spec: dict[str, Any] | str | None) -> LLMProvider:
     spec = dict(spec or {})
     provider = spec.pop("provider", "openai")
 
-    if provider == "ollama":
-        return OllamaProvider(**spec)
+    if provider == "ollama" and "host" in spec:
+        host = spec.pop("host")
+        if not host.endswith("/v1") and not host.endswith("/v1/"):
+            host = host.rstrip("/") + "/v1"
+        spec["base_url"] = host
+
     if provider == "echo":
         return EchoProvider(**spec)
     if provider in PRESETS:
@@ -67,5 +71,5 @@ def build_provider(spec: dict[str, Any] | str | None) -> LLMProvider:
 
     raise ProviderError(
         f"未知の提供元 / unknown provider: {provider!r}\n"
-        f"  使えるもの / available: {', '.join(sorted(PRESETS))}, ollama"
+        f"  使えるもの / available: {', '.join(sorted(PRESETS))}"
     )

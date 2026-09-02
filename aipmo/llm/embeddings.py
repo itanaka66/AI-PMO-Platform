@@ -101,36 +101,6 @@ class OpenAIEmbedder(OpenAICompatibleEmbedder):
                          api_key=api_key, base_url=base_url)
 
 
-class OllamaEmbedder(Embedder):
-    """ローカルの Ollama / local Ollama.
-
-    Ollama は埋め込みに独自エンドポイントを使うので、互換層には乗せない。
-    Ollama serves embeddings from its own endpoint, so it stays native.
-    """
-
-    name = "ollama"
-
-    def __init__(self, model: str = "bge-m3", dimension: int = 1024,
-                 host: str | None = None) -> None:
-        self.model = model
-        self.dimension = dimension
-        self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        import urllib.request
-
-        vectors = []
-        for text in texts:
-            req = urllib.request.Request(
-                f"{self.host}/api/embeddings",
-                data=json.dumps({"model": self.model, "prompt": text}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-            )
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
-            vectors.append(body["embedding"])
-        return vectors
-
 
 def build_embedder(spec: dict | None) -> Embedder:
     """設定の embedding 節から埋め込み器を作る。
@@ -144,8 +114,11 @@ def build_embedder(spec: dict | None) -> Embedder:
     spec = dict(spec or {"provider": "hash"})
     provider = spec.pop("provider", "hash")
 
-    if provider == "ollama":
-        return OllamaEmbedder(**spec)
+    if provider == "ollama" and "host" in spec:
+        host = spec.pop("host")
+        if not host.endswith("/v1") and not host.endswith("/v1/"):
+            host = host.rstrip("/") + "/v1"
+        spec["base_url"] = host
     if provider == "hash":
         return HashEmbedder(**spec)
 
