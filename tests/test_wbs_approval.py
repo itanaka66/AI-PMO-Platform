@@ -261,6 +261,81 @@ def test_viewer_cannot_approve(client: TestClient, postgres: StubPostgres):
     assert postgres.decisions == []
 
 
+def test_viewer_cannot_reject(client: TestClient, postgres: StubPostgres):
+    """approve だけでなく reject も、承認する権限が要る側の操作。
+
+    決定そのもの（承認・却下のどちらであっても）を viewer にはさせない
+    ——approve の拒否だけを見て安心すると、reject 側の分岐だけが
+    抜け落ちていても気づけない。
+    """
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    response = client.post("/api/wbs-proposals/p1/reject", headers=_auth(VIEWER))
+
+    assert response.status_code == 403
+    assert postgres.decisions == []
+
+
+# --- 権限の総当たり / permission matrix -------------------------------------
+#
+# 承認画面が叩く4つの経路（一覧・詳細・承認・却下）それぞれについて、
+# トークン無し・不正なトークン・viewer・operator の組み合わせを確かめる。
+# 一覧だけ確認して他が抜けている、という穴を作らないため。
+#
+# The four routes the approval screen calls (list, detail, approve, reject),
+# each checked against no token, a wrong token, a viewer token, and an
+# operator token — so coverage of one route (the list) is never mistaken for
+# coverage of all of them.
+
+WBS_PROPOSAL_ROUTES = [
+    ("GET", "/api/wbs-proposals"),
+    ("GET", "/api/wbs-proposals/p1"),
+    ("POST", "/api/wbs-proposals/p1/approve"),
+    ("POST", "/api/wbs-proposals/p1/reject"),
+]
+
+
+@pytest.mark.parametrize("method,path", WBS_PROPOSAL_ROUTES)
+def test_no_token_is_rejected_on_every_proposal_route(
+    client: TestClient, postgres: StubPostgres, method: str, path: str,
+):
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    response = client.request(method, path)
+
+    assert response.status_code == 401
+    assert postgres.decisions == []
+
+
+@pytest.mark.parametrize("method,path", WBS_PROPOSAL_ROUTES)
+def test_a_wrong_token_is_rejected_on_every_proposal_route(
+    client: TestClient, postgres: StubPostgres, method: str, path: str,
+):
+    """トークンが1文字でも違えば、viewer/operator のどちらの権限も持たない。"""
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
+
+    response = client.request(method, path, headers=_auth("wrong-token-entirely"))
+
+    assert response.status_code == 401
+    assert postgres.decisions == []
+
+
+def test_viewer_can_view_a_single_proposal(client: TestClient, postgres: StubPostgres):
+    """一覧だけでなく、詳細画面も viewer に開けること。"""
+    postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending",
+                              "diff": "some diff"}
+
+    response = client.get("/api/wbs-proposals/p1", headers=_auth(VIEWER))
+
+    assert response.status_code == 200
+    assert response.json()["id"] == "p1"
+
+
+def test_viewing_a_nonexistent_proposal_is_404(client: TestClient):
+    response = client.get("/api/wbs-proposals/ghost", headers=_auth(OPERATOR))
+    assert response.status_code == 404
+
+
 def test_operator_can_approve(client: TestClient, postgres: StubPostgres):
     postgres.pending["p1"] = {"id": "p1", "tier": 2, "status": "pending"}
 
