@@ -65,7 +65,6 @@ DEFAULT_FIELDS = ["summary", "status", "assignee", "duedate", "priority", "label
 # looked up before creating.
 IDEMPOTENCY_PREFIX = "aipmo-"
 
-
 def to_adf(text: str) -> dict[str, Any]:
     """素の文字列を Atlassian Document Format にする。
 
@@ -81,7 +80,6 @@ def to_adf(text: str) -> dict[str, Any]:
     if not content:
         content = [{"type": "paragraph", "content": []}]
     return {"type": "doc", "version": 1, "content": content}
-
 
 class JiraAdapter(Adapter):
     name = "jira"
@@ -528,7 +526,6 @@ class JiraAdapter(Adapter):
             "POST", f"/rest/api/3/issue/{issue_key}/comment", {"body": to_adf(text)})
         data = self._require(status, data, "コメントの追加 / adding a comment")
         return {"id": data.get("id"), "issue_key": issue_key}
-
 
 def _decode(payload: bytes | str | None) -> Any:
     if payload is None:
