@@ -1306,3 +1306,88 @@ def test_internal_tasks_are_batched():
 def test_nothing_is_said_when_no_task_needs_attention():
     _, slack = run_govcon(reply=NO_TASKS_REPLY)
     assert slack.posted == []
+
+
+# --- コンサルティング / consulting -------------------------------------------
+
+SCOPE_REPLY = json.dumps({
+    "urgent": [
+        {"issue_key": "ENGAGE-1", "summary": "改善提案書の納品",
+         "due_date": "2026-09-05", "days_until_due": 2},
+    ],
+    "scope_change_candidates": [
+        {"issue_key": "ENGAGE-2", "summary": "新システムの実装作業",
+         "why_out_of_scope": "実装作業は契約範囲外（分析・提案のみが範囲）"},
+    ],
+    "client_blocked": [
+        {"issue_key": "ENGAGE-3", "summary": "現状分析", "waiting_on": "クライアントの資料提供待ち"},
+    ],
+    "internal": [],
+}, ensure_ascii=False)
+
+NO_ISSUES_REPLY = json.dumps({
+    "urgent": [], "scope_change_candidates": [], "client_blocked": [], "internal": [],
+}, ensure_ascii=False)
+
+
+class SearchingJiraEngagement(MockJiraAdapter):
+    def search(self, jql, fields=None, limit=50):
+        return {"items": [
+            {"key": "ENGAGE-1", "summary": "改善提案書の納品"},
+            {"key": "ENGAGE-2", "summary": "新システムの実装作業"},
+            {"key": "ENGAGE-3", "summary": "現状分析"},
+        ], "count": 3}
+
+
+SearchingJiraEngagement.search = action()(SearchingJiraEngagement.search)
+
+
+def run_consulting(reply=SCOPE_REPLY):
+    adapters = AdapterRegistry()
+    jira, slack = SearchingJiraEngagement(), MockSlackAdapter()
+    adapters.register(jira)
+    adapters.register(slack)
+
+    llms = LLMRegistry()
+    llms.register("default", Scripted([reply]))
+
+    ctx = Engine(adapters, llms, PromptLibrary(ROOT / "prompts")).run(
+        loader.load_file(INDUSTRIES / "consulting" / "scope_change_triage.yaml"))
+    return ctx, slack
+
+
+def test_scope_change_candidates_go_only_to_the_scope_channel():
+    """範囲外の疑いは、通常の進捗報告に混ぜず、変更契約の確認が必要と分かる形で。"""
+    _, slack = run_consulting()
+    scope = [m for m in slack.posted if m["channel"] == "#consulting-scope-review"]
+    other_channels_text = "".join(
+        m["text"] for m in slack.posted if m["channel"] != "#consulting-scope-review")
+
+    assert scope and "ENGAGE-2" in scope[0]["text"]
+    assert "チェンジオーダー" in scope[0]["text"]
+    assert "ENGAGE-2" not in other_channels_text
+
+
+def test_deliverable_deadlines_are_sent_alone_immediately():
+    """クライアントへの約束であり、社内期日と違って信頼関係に直接影響する。"""
+    _, slack = run_consulting()
+    deliverables = [m for m in slack.posted if m["channel"] == "#consulting-deliverables"]
+
+    assert len(deliverables) == 1
+    assert "ENGAGE-1" in deliverables[0]["text"]
+    assert "残り 2 日" in deliverables[0]["text"]
+
+
+def test_client_waits_are_not_a_chase_aimed_at_the_consultant():
+    """担当コンサルタントに確認しても、クライアントは動かせない。"""
+    _, slack = run_consulting()
+    blocked = [m for m in slack.posted if "クライアントの資料提供待ち" in m["text"]]
+
+    assert blocked
+    assert blocked[0]["channel"] == "#consulting-ops"
+    assert "担当者の手を離れています" in blocked[0]["text"]
+
+
+def test_nothing_is_said_when_no_issue_needs_attention():
+    _, slack = run_consulting(reply=NO_ISSUES_REPLY)
+    assert slack.posted == []
