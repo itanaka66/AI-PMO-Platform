@@ -79,7 +79,17 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
 
     Write-Host "==> 動作確認 / Smoke test" -ForegroundColor Cyan
-    & "dist\aipmo\aipmo.exe" validate templates\examples\meeting_minutes.yaml
+    # entry.py は実行ファイル自身の場所へ作業ディレクトリを変える
+    # （ショートカット起動対策）。この時点では templates\ はまだ
+    # dist\aipmo\ にコピーされていない（Inno Setup がそれを行うのは
+    # この後）ので、相対パスでは cwd の変更後に解決できない。絶対パスを渡す。
+    #
+    # entry.py changes its working directory to the executable's own
+    # location (to support shortcut launches). At this point templates\
+    # has not yet been copied into dist\aipmo\ ― Inno Setup does that
+    # later ― so a relative path cannot resolve once the cwd has moved.
+    # An absolute path sidesteps this entirely.
+    & "dist\aipmo\aipmo.exe" validate "$root\templates\examples\meeting_minutes.yaml"
     if ($LASTEXITCODE -ne 0) { throw "Smoke test failed" }
 
     if ($signing) {
