@@ -44,3 +44,96 @@ save_candidate: |
      :publicability_score, :idempotency_key)
   ON CONFLICT (source_key) DO NOTHING
   RETURNING id
+
+# WBS 再計画の承認ワークフロー / WBS replan approval workflow.
+
+pending_wbs_proposals: |
+  SELECT id, wbs_version_from, diff, rationale, assumptions, tier,
+         confidence, option_label, created_at
+  FROM wbs_replan_proposals
+  WHERE tenant = :tenant AND status = 'pending'
+  ORDER BY tier ASC, wbs_version_from ASC, option_label ASC NULLS FIRST, created_at ASC
+
+get_wbs_proposal: |
+  SELECT id, tenant, wbs_version_from, diff, rationale, assumptions, tier,
+         confidence, option_label, status, decided_by, decided_at,
+         decision_note, created_at
+  FROM wbs_replan_proposals
+  WHERE tenant = :tenant AND id = :id
+
+# WBS再計画AIが唯一書き込めるクエリ。source_key が既存の pending 提案と
+# 一致すれば、新規行を作らず差分・根拠を上書きする（同じドリフトに対する
+# 提案の乱発を防ぐ）。pending 以外（承認/却下/失効済み）の行には触れない
+# — 一度決定された提案を後から書き換えられると、承認の意味が失われる。
+#
+# option_label が異なれば source_key も異なる（wbs_replan アダプタ側で
+# 組み立てる）ので、同じ wbs_id・tier に対する A/B の複数案がそれぞれ
+# 別行として共存できる — supersede の対象は「同じラベルの前回案」だけ。
+#
+# The only write the WBS-replanning AI can make. A source_key matching an
+# existing pending proposal overwrites its diff/rationale instead of
+# inserting a new row (preventing repeated proposals for the same drift).
+# Rows that are no longer pending are left untouched — rewriting a decided
+# proposal after the fact would make the decision meaningless.
+#
+# A different option_label produces a different source_key (built by the
+# wbs_replan adapter), so multiple A/B alternatives for the same wbs_id/tier
+# coexist as separate rows — supersede only replaces a previous proposal
+# under the *same* label.
+save_wbs_proposal: |
+  INSERT INTO wbs_replan_proposals
+    (id, tenant, wbs_version_from, diff, rationale, assumptions, tier,
+     confidence, option_label, source_key)
+  VALUES
+    (:id, :tenant, :wbs_version_from, :diff, :rationale, :assumptions, :tier,
+     :confidence, :option_label, :idempotency_key)
+  ON CONFLICT (source_key) DO UPDATE SET
+    diff = EXCLUDED.diff,
+    rationale = EXCLUDED.rationale,
+    assumptions = EXCLUDED.assumptions,
+    tier = EXCLUDED.tier,
+    confidence = EXCLUDED.confidence,
+    option_label = EXCLUDED.option_label,
+    created_at = now()
+  WHERE wbs_replan_proposals.status = 'pending'
+  RETURNING id
+
+decide_wbs_proposal: |
+  UPDATE wbs_replan_proposals
+  SET status = :status, decided_by = :decided_by, decided_at = now(),
+      decision_note = :decision_note
+  WHERE tenant = :tenant AND id = :id AND status = 'pending'
+  RETURNING id, status
+
+# pending のまま一定期間経過した提案を無効化する（バックグラウンドの
+# 定期ジョブから呼ぶ想定）。古い状況に基づく差分を今日承認させないため。
+# Invalidates proposals that have sat pending too long (meant to be called
+# from a periodic background job), so a diff based on a stale situation can
+# never be approved today.
+mark_stale_wbs_proposals: |
+  UPDATE wbs_replan_proposals
+  SET status = 'stale'
+  WHERE tenant = :tenant AND status = 'pending' AND created_at < :older_than
+  RETURNING id
+
+# Risk/Forecast の予測履歴 / forecast snapshot history.
+
+latest_forecast_snapshot: |
+  SELECT drift_days, tier, forecast, recorded_at
+  FROM wbs_forecast_snapshots
+  WHERE tenant = :tenant AND wbs_id = :wbs_id
+  UNION ALL
+  SELECT NULL, NULL, NULL, NULL
+  WHERE NOT EXISTS (
+    SELECT 1 FROM wbs_forecast_snapshots
+    WHERE tenant = :tenant AND wbs_id = :wbs_id
+  )
+
+save_forecast_snapshot: |
+  INSERT INTO wbs_forecast_snapshots (wbs_id, tenant, drift_days, tier, forecast)
+  VALUES (:wbs_id, :tenant, :drift_days, :tier, :forecast)
+  ON CONFLICT (tenant, wbs_id) DO UPDATE SET
+    drift_days = EXCLUDED.drift_days,
+    tier = EXCLUDED.tier,
+    forecast = EXCLUDED.forecast,
+    recorded_at = now()
