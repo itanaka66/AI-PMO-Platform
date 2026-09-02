@@ -17,7 +17,8 @@ resolves to is configuration, so **switching providers changes no template**.
 | `gemini` | クラウド | あり | `GEMINI_API_KEY` |
 | `groq` | クラウド | **なし** | `GROQ_API_KEY` |
 | `openrouter` | クラウド | **なし** | `OPENROUTER_API_KEY` |
-| `ollama` | ローカル | あり | 不要（エージェント工程は不可） |
+| `claude` | クラウド | **なし** | `ANTHROPIC_API_KEY` |
+| `ollama` | ローカル | あり | 不要 |
 | `vllm` | ローカル | あり | 不要 |
 | `lmstudio` | ローカル | あり | 不要 |
 | `llamacpp` | ローカル | — | 不要 |
@@ -28,6 +29,19 @@ OpenAI 互換の API を出しています。実装は1つで、違いは
 
 All of these except Ollama speak an OpenAI-compatible API. There is one
 implementation; the differences live as data in `aipmo/llm/presets.py`.
+
+**Claude だけは事情が違います。** Anthropic の Messages API は OpenAI 互換
+ではない（system が別枠、道具呼び出しの形も違う）ため、`AnthropicProvider`
+という専用の実装を別に持っています（`aipmo/llm/base.py`）。テンプレート側
+からは他の提供元と全く同じに見えます — `profile: default` としか書かず、
+違いは設定ファイルの中だけで完結します。
+
+**Claude is the exception.** Anthropic's Messages API is not
+OpenAI-compatible (system is a separate parameter, tool calls have a
+different shape), so it has its own dedicated implementation
+(`AnthropicProvider` in `aipmo/llm/base.py`). From a template's point of
+view it looks identical to every other provider — only `profile: default`
+is ever written, and the difference lives entirely in configuration.
 
 ---
 
@@ -67,6 +81,37 @@ llm:
   default:
     provider: openrouter
     model: openai/gpt-4o-mini
+```
+
+### Claude
+
+**埋め込み API を持っていません**（下記参照）。JSON 出力を求める場合は
+プロンプト側で要求します（`response_format` のような専用パラメータが
+無いため）。
+
+**It has no embeddings API** (see below). JSON output is requested in the
+prompt rather than via a dedicated parameter — none exists.
+
+```yaml
+llm:
+  default:
+    provider: claude
+    model: claude-sonnet-5
+```
+```bash
+export ANTHROPIC_API_KEY=...    # console.anthropic.com で取得
+```
+
+社内ゲートウェイなどを経由させたい場合は `base_url` を指定できます。
+
+To route through an internal gateway, set `base_url`:
+
+```yaml
+llm:
+  default:
+    provider: claude
+    model: claude-sonnet-5
+    base_url: https://internal-gateway.example/v1
 ```
 
 ### ローカル / Local
@@ -161,7 +206,7 @@ driving tools, and "several parallel answers" has no meaning there.
 
 ## 注意すべき差 / Differences that bite
 
-### Groq と OpenRouter には埋め込み API がありません
+### Groq・OpenRouter・Claude には埋め込み API がありません
 
 ベクトル検索を使う場合、埋め込みだけ別の提供元に向ける必要があります。
 設定を読む段階でエラーになるので、実行時に気づくことはありません。
@@ -172,8 +217,8 @@ rejected while the config is read, not at the moment of first use.
 ```yaml
 llm:
   default:
-    provider: groq              # チャットは Groq
-    model: openai/gpt-oss-120b
+    provider: claude             # チャットは Claude
+    model: claude-sonnet-5
 
 adapters:
   qdrant:                       # pgvector / chroma / milvus / weaviate でも同じ
@@ -232,6 +277,12 @@ are handled.
 OpenRouter は経路のモデル次第なので、既定では送りません。
 
 For OpenRouter this depends on the routed model, so it is not sent by default.
+
+Claude には `response_format` に相当する専用パラメータ自体が存在しません
+（OpenAI 互換ではないため）。常にプロンプト側で JSON を要求します。
+
+Claude has no equivalent parameter at all (it is not OpenAI-compatible);
+JSON is always requested in the prompt.
 
 ### 埋め込みの次元が変わると、既存のベクトルは使えません
 
