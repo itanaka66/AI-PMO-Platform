@@ -19,6 +19,7 @@ from ..dsl.expr import ResolutionError, evaluate_condition, render
 from ..dsl.schema import LLMSpec, OutputFormat, Step, StepKind, Template
 from ..llm.base import LLMRequest, LLMResponse
 from ..llm.registry import LLMRegistry
+from ..portfolio import portfolio_risk_forecast
 from .agent import ApprovalCallback, run_agent
 from .context import RunContext, StepResult
 
@@ -101,6 +102,7 @@ def _count(items: Any) -> int:
 BUILTIN_TRANSFORMS: dict[str, Any] = {
     "days_between": _days_between,
     "count": _count,
+    "portfolio_risk_forecast": portfolio_risk_forecast,
 }
 
 
