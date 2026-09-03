@@ -2,6 +2,9 @@
 
 [![Tests](https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml/badge.svg)](https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml)
 
+[ランディングページ](https://itanaka66.github.io/AI-PMO-Platform/) — 概要を3分で。
+/ [Landing page](https://itanaka66.github.io/AI-PMO-Platform/) — the 3-minute overview.
+
 はじめての方は [はじめてのガイド（8言語）](docs/guide/README.md) をどうぞ。
 New here? Start with the [getting-started guide (8 languages)](docs/guide/README.md) .
 

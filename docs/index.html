@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI-PMO Platform</title>
+<meta name="description" content="PMOの知見を実行可能なテンプレートとして書く、無料・MITライセンスの自律型PMO基盤。会議の議事録からWBSを起こし、遅延を予測し、再計画案を人の承認待ちにして記録する。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🖋️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --paper: #eef1ea;
+    --paper-raised: #f6f7f2;
+    --ink: #171b22;
+    --ink-soft: #454e47;
+    --muted: #6b756c;
+    --line: #c6d0c6;
+    --line-strong: #a9b6a8;
+    --accent: #b0741d;
+    --accent-ink: #7a4f10;
+    --accent-tint: #efe0c4;
+    --pass: #3f7d5c;
+    --pass-tint: #dbe9df;
+    --info: #3c5b76;
+    --info-tint: #dbe4ea;
+    --shadow: 0 1px 0 rgba(23,27,34,0.06);
+    --radius: 3px;
+  }
+
+  :root:not([data-theme="light"]){
+    @media (prefers-color-scheme: dark){
+      --paper: #14171c;
+      --paper-raised: #1b1f25;
+      --ink: #e9e6da;
+      --ink-soft: #b7bcae;
+      --muted: #838d80;
+      --line: #333b34;
+      --line-strong: #4a564a;
+      --accent: #d99a3c;
+      --accent-ink: #f0bd6f;
+      --accent-tint: #3a2f18;
+      --pass: #78bd97;
+      --pass-tint: #1e2e24;
+      --info: #8fb0cc;
+      --info-tint: #1c2a34;
+      --shadow: 0 1px 0 rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper: #14171c;
+    --paper-raised: #1b1f25;
+    --ink: #e9e6da;
+    --ink-soft: #b7bcae;
+    --muted: #838d80;
+    --line: #333b34;
+    --line-strong: #4a564a;
+    --accent: #d99a3c;
+    --accent-ink: #f0bd6f;
+    --accent-tint: #3a2f18;
+    --pass: #78bd97;
+    --pass-tint: #1e2e24;
+    --info: #8fb0cc;
+    --info-tint: #1c2a34;
+    --shadow: 0 1px 0 rgba(0,0,0,0.4);
+  }
+
+  *{ box-sizing: border-box; }
+  body{
+    margin:0;
+    background:
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0/100% 32px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/32px 100%,
+      var(--paper);
+    background-attachment: local;
+    color: var(--ink);
+    font-family: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.75;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]) body{
+      background:
+        linear-gradient(var(--line) 1px, transparent 1px) 0 0/100% 32px,
+        linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/32px 100%,
+        var(--paper);
+    }
+  }
+  :root[data-theme="dark"] body{
+    background:
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0/100% 32px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0/32px 100%,
+      var(--paper);
+  }
+
+  h1,h2,h3{ font-family:"Shippori Mincho", "Noto Serif JP", serif; font-weight:600; margin:0; text-wrap:balance; color:var(--ink); }
+  .en{ font-family:"Zen Kaku Gothic New", sans-serif; }
+  .mono{ font-family:"IBM Plex Mono", ui-monospace, monospace; }
+  a{ color:inherit; }
+  p{ margin:0; }
+
+  .eyebrow{
+    font-family:"IBM Plex Mono", monospace;
+    font-size:11.5px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color: var(--accent-ink);
+    display:flex; align-items:center; gap:8px;
+  }
+  .eyebrow::before{ content:""; width:16px; height:1px; background:var(--accent); display:inline-block; }
+
+  .wrap{ max-width:1040px; margin:0 auto; padding:0 28px; }
+  section{ padding: 64px 0; border-bottom:1px solid var(--line); }
+  section:last-of-type{ border-bottom:none; }
+
+  /* ---------- header ---------- */
+  header.site{
+    position:sticky; top:0; z-index:40;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom:1px solid var(--line);
+  }
+  .navrow{ max-width:1040px; margin:0 auto; padding:14px 28px; display:flex; align-items:center; justify-content:space-between; gap:24px; }
+  .wordmark{ display:flex; align-items:baseline; gap:8px; font-family:"Shippori Mincho",serif; font-size:19px; font-weight:700; letter-spacing:0.01em; }
+  .wordmark .seal{
+    width:22px; height:22px; border:1.5px solid var(--accent); border-radius:3px;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-family:"IBM Plex Mono",monospace; font-size:10px; color:var(--accent-ink); font-weight:700;
+    transform: rotate(-3deg);
+  }
+  nav.links{ display:flex; gap:22px; font-size:13.5px; }
+  nav.links a{ text-decoration:none; color:var(--ink-soft); border-bottom:1px solid transparent; padding-bottom:2px; transition:color .15s, border-color .15s; }
+  nav.links a:hover, nav.links a:focus-visible{ color:var(--accent-ink); border-color:var(--accent); }
+  .gh-btn{
+    font-family:"IBM Plex Mono",monospace; font-size:12.5px; text-decoration:none;
+    border:1px solid var(--line-strong); border-radius:var(--radius); padding:7px 12px;
+    color:var(--ink); display:inline-flex; align-items:center; gap:7px; white-space:nowrap;
+  }
+  .gh-btn:hover, .gh-btn:focus-visible{ border-color:var(--accent); color:var(--accent-ink); }
+  @media (max-width:720px){ nav.links{ display:none; } }
+
+  /* ---------- hero ---------- */
+  .hero{ padding-top:76px; padding-bottom:56px; }
+  .badgepill{
+    display:inline-flex; align-items:center; gap:8px;
+    border:1px solid var(--accent); background:var(--accent-tint); color:var(--accent-ink);
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; letter-spacing:.05em;
+    padding:5px 11px; border-radius:99px; margin-bottom:22px;
+  }
+  .badgepill b{ font-weight:700; }
+  h1.headline{ font-size:44px; line-height:1.42; letter-spacing:0.005em; }
+  h1.headline .en-sub{
+    display:block; font-family:"Zen Kaku Gothic New",sans-serif; font-weight:500;
+    font-size:16.5px; color:var(--ink-soft); margin-top:14px; line-height:1.65;
+  }
+  .lede{ max-width:640px; margin-top:22px; font-size:15.5px; color:var(--ink-soft); }
+  .lede .en{ display:block; font-size:13.5px; color:var(--muted); margin-top:6px; }
+  .cta-row{ display:flex; flex-wrap:wrap; gap:12px; margin-top:32px; }
+  .btn{
+    font-family:"IBM Plex Mono",monospace; font-size:13px; text-decoration:none;
+    padding:11px 18px; border-radius:var(--radius); display:inline-flex; align-items:center; gap:8px;
+    border:1px solid var(--line-strong);
+  }
+  .btn.primary{ background:var(--ink); color:var(--paper); border-color:var(--ink); }
+  .btn.primary:hover{ background:var(--accent-ink); border-color:var(--accent-ink); }
+  .btn.ghost:hover{ border-color:var(--accent); color:var(--accent-ink); }
+
+  /* ---------- loop diagram ---------- */
+  .diagram-card{
+    margin-top:40px; border:1px solid var(--line-strong); border-radius:6px; background:var(--paper-raised);
+    padding:26px 22px 18px; box-shadow:var(--shadow);
+  }
+  .diagram-card svg{ width:100%; height:auto; display:block; }
+  .diagram-caption{ font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); margin-top:10px; text-align:center; letter-spacing:.03em; }
+
+  h2{ font-size:26px; margin-bottom:6px; }
+  h2 .en-sub{ display:block; font-family:"Zen Kaku Gothic New",sans-serif; font-size:13px; font-weight:500; color:var(--muted); margin-top:6px; }
+  .section-intro{ max-width:620px; color:var(--ink-soft); font-size:14.5px; margin-top:16px; }
+  .section-intro .en{ display:block; color:var(--muted); font-size:12.5px; margin-top:5px; }
+
+  /* mapping table */
+  table.map{ width:100%; border-collapse:collapse; margin-top:30px; font-size:13.5px; }
+  table.map th{ text-align:left; font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); padding:8px 12px; border-bottom:1px solid var(--line-strong); }
+  table.map td{ padding:12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  table.map tr td:first-child{ font-weight:700; white-space:nowrap; width:220px; }
+  table.map code{ font-family:"IBM Plex Mono",monospace; font-size:12px; background:var(--accent-tint); color:var(--accent-ink); padding:1px 5px; border-radius:2px; }
+  table.map .gap{ color:var(--muted); font-style:italic; }
+  .tablewrap{ overflow-x:auto; }
+
+  /* ---------- template grid ---------- */
+  .tmpl-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); margin-top:32px; border-radius:4px; overflow:hidden; }
+  .tmpl-card{ background:var(--paper-raised); padding:18px 18px 20px; position:relative; }
+  .tmpl-card .num{ position:absolute; top:14px; right:16px; font-family:"IBM Plex Mono",monospace; font-size:10px; color:var(--line-strong); }
+  .tmpl-card code.name{ font-family:"IBM Plex Mono",monospace; font-size:13px; color:var(--accent-ink); display:block; margin-bottom:9px; }
+  .tmpl-card p{ font-size:13px; color:var(--ink-soft); line-height:1.6; }
+  .tmpl-card p.en{ font-size:11.5px; color:var(--muted); margin-top:7px; }
+  .tmpl-more{ background:var(--paper-raised); padding:18px; display:flex; flex-direction:column; justify-content:center; align-items:flex-start; }
+  .tmpl-more .count{ font-family:"Shippori Mincho",serif; font-size:30px; color:var(--accent-ink); }
+  .tmpl-more p{ font-size:12.5px; color:var(--muted); margin-top:6px; }
+
+  .integrations{ margin-top:26px; font-size:13px; color:var(--ink-soft); }
+  .integrations .mono{ color:var(--muted); }
+
+  /* ---------- quickstart ---------- */
+  .term{
+    margin-top:30px; background:#1b1f25; border-radius:6px; overflow:hidden; border:1px solid var(--line-strong);
+    box-shadow:var(--shadow);
+  }
+  .term .bar{ background:#22262d; padding:9px 14px; display:flex; align-items:center; gap:7px; }
+  .term .dot{ width:9px; height:9px; border-radius:50%; background:#4a5058; }
+  .term .titlebar{ margin-left:8px; font-family:"IBM Plex Mono",monospace; font-size:11px; color:#8b93a0; }
+  .term pre{ margin:0; padding:20px 22px 24px; overflow-x:auto; font-family:"IBM Plex Mono",monospace; font-size:12.5px; line-height:1.85; color:#dfe3e8; }
+  .term .c{ color:#7d8794; }
+  .term .k{ color:#e0af6c; }
+  .term .s{ color:#8fbfa0; }
+
+  /* ---------- dsl ---------- */
+  .dsl-layout{ display:grid; grid-template-columns: 1.1fr 0.9fr; gap:28px; margin-top:32px; align-items:start; }
+  @media (max-width:860px){ .dsl-layout{ grid-template-columns:1fr; } }
+  .code-card{ background:var(--paper-raised); border:1px solid var(--line-strong); border-radius:6px; overflow:hidden; box-shadow:var(--shadow); }
+  .code-card .head{ font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); padding:9px 14px; border-bottom:1px solid var(--line); letter-spacing:.04em; }
+  .code-card pre{ margin:0; padding:16px 16px 18px; font-family:"IBM Plex Mono",monospace; font-size:12px; line-height:1.8; overflow-x:auto; color:var(--ink); }
+  .code-card .y-key{ color:var(--accent-ink); }
+  .code-card .y-str{ color:var(--pass); }
+  .code-card .y-com{ color:var(--muted); }
+
+  .ns-table{ margin-top:16px; width:100%; border-collapse:collapse; font-size:12.5px; }
+  .ns-table td{ padding:6px 0; border-bottom:1px solid var(--line); }
+  .ns-table td:first-child{ font-family:"IBM Plex Mono",monospace; color:var(--accent-ink); width:150px; }
+  .ns-table td:last-child{ color:var(--ink-soft); }
+
+  .feature-list{ margin-top:20px; display:flex; flex-direction:column; gap:20px; }
+  .feature-list .item{ padding-left:16px; border-left:2px solid var(--line-strong); }
+  .feature-list .item h4{ margin:0 0 5px; font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--ink); letter-spacing:.02em; }
+  .feature-list .item p{ font-size:12.5px; color:var(--ink-soft); line-height:1.65; }
+
+  /* ---------- principles ---------- */
+  .principle-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); margin-top:32px; }
+  .principle{ background:var(--paper-raised); padding:22px 20px; }
+  .principle h4{ font-family:"Shippori Mincho",serif; font-size:16px; font-weight:600; margin:0 0 10px; }
+  .principle p{ font-size:13px; color:var(--ink-soft); line-height:1.7; }
+  .principle p.en{ font-size:11.5px; color:var(--muted); margin-top:8px; }
+
+  /* ---------- tests ---------- */
+  .stat-row{ display:flex; flex-wrap:wrap; gap:0; margin-top:32px; border:1px solid var(--line-strong); border-radius:6px; overflow:hidden; }
+  .stat{ flex:1 1 150px; padding:20px 22px; border-right:1px solid var(--line); background:var(--paper-raised); }
+  .stat:last-child{ border-right:none; }
+  .stat .n{ font-family:"Shippori Mincho",serif; font-size:30px; color:var(--accent-ink); line-height:1; }
+  .stat .l{ font-family:"IBM Plex Mono",monospace; font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin-top:8px; }
+
+  .checklist{ margin-top:28px; display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px 24px; }
+  .checklist .row{ display:flex; gap:10px; font-size:13px; color:var(--ink-soft); align-items:flex-start; }
+  .checklist .row::before{ content:"✓"; color:var(--pass); font-weight:700; flex-shrink:0; }
+  .checklist .row .mono{ font-size:12px; }
+
+  .ci-row{ margin-top:26px; display:flex; flex-wrap:wrap; gap:10px; font-size:12px; }
+  .ci-chip{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line-strong); border-radius:99px; padding:5px 12px; font-family:"IBM Plex Mono",monospace; color:var(--ink-soft); }
+  .ci-chip .dot2{ width:6px; height:6px; border-radius:50%; background:var(--pass); }
+
+  /* ---------- docs ---------- */
+  .doc-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:1px; background:var(--line); border:1px solid var(--line); margin-top:32px; border-radius:4px; overflow:hidden; }
+  .doc-item{ background:var(--paper-raised); padding:15px 16px; text-decoration:none; display:block; }
+  .doc-item:hover{ background:var(--accent-tint); }
+  .doc-item .path{ font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--accent-ink); display:block; margin-bottom:5px; }
+  .doc-item .desc{ font-size:12px; color:var(--ink-soft); line-height:1.5; }
+
+  /* ---------- footer ---------- */
+  footer{ padding:56px 0 70px; }
+  .foot-grid{ display:flex; justify-content:space-between; flex-wrap:wrap; gap:28px; }
+  .foot-note{ max-width:480px; }
+  .foot-note h3{ font-size:20px; }
+  .foot-note p{ font-size:13px; color:var(--ink-soft); margin-top:12px; }
+  .foot-note p.en{ font-size:12px; color:var(--muted); margin-top:6px; }
+  .foot-links{ display:flex; flex-direction:column; gap:8px; font-size:13px; }
+  .foot-links a{ text-decoration:none; color:var(--ink-soft); }
+  .foot-links a:hover{ color:var(--accent-ink); }
+  .foot-bottom{ margin-top:44px; padding-top:20px; border-top:1px solid var(--line); display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted); }
+
+  ::selection{ background:var(--accent-tint); color:var(--accent-ink); }
+  a:focus-visible, button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  @media (prefers-reduced-motion: reduce){ *{ transition:none !important; animation:none !important; } }
+</style>
+</head>
+<body>
+<header class="site">
+  <div class="navrow">
+    <div class="wordmark"><span class="seal">印</span>AI-PMO</div>
+    <nav class="links">
+      <a href="#loop">全体像</a>
+      <a href="#templates">できること</a>
+      <a href="#quickstart">Quick start</a>
+      <a href="#dsl">DSL</a>
+      <a href="#principles">設計判断</a>
+      <a href="#tests">テスト</a>
+      <a href="#docs">ドキュメント</a>
+    </nav>
+    <a class="gh-btn" href="https://github.com/itanaka66/AI-PMO-Platform" target="_blank" rel="noopener">
+      GitHub ↗
+    </a>
+  </div>
+</header>
+
+<main>
+  <section class="hero wrap">
+    <span class="badgepill"><b>MIT License</b> — すべて無料・機能制限なし</span>
+    <h1 class="headline">
+      PMOの知見を、実行可能なテンプレートとして書く。
+      <span class="en-sub">A runtime that encodes PMO know-how as executable templates, run by combining LLM calls with the tools a team already uses.</span>
+    </h1>
+    <p class="lede">
+      会議の議事録から WBS を起こし、遅延を予測し、再計画案を人の承認待ちにして記録する——
+      定例業務の一つひとつを YAML のテンプレートとして書き、Jira・Slack・Teams・PostgreSQL と
+      つないで自律的に回す基盤です。
+      <span class="en">Drafts a WBS from meeting minutes, forecasts drift, and records a replan proposal pending human approval — one template per routine, wired to Jira, Slack, Teams, and PostgreSQL.</span>
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="#quickstart">Quick start を見る</a>
+      <a class="btn ghost" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/guide/README.md" target="_blank" rel="noopener">はじめてのガイド（8言語）</a>
+      <a class="btn ghost" href="https://github.com/itanaka66/AI-PMO-Platform" target="_blank" rel="noopener">ソースを読む</a>
+    </div>
+  </section>
+
+  <section id="loop" class="wrap">
+    <div class="eyebrow">Architecture / 構想</div>
+    <h2>経営者の承認を挟みながら回すループ<span class="en-sub">The autonomous PMO cycle, gated by the executive/PM's approval</span></h2>
+    <p class="section-intro">
+      右半分（進捗収集 → 遅延予測 → 再計画AI → 承認）は今日すでに動いている。左半分の WBS 生成・
+      リスクAI・PMO Core・実行層の一部は、個別のテンプレートとしては存在するが、単一の常駐エンジンには
+      まだ統合されていない。
+      <span class="en">The right half — progress collection → forecast → replan AI → approval — runs today. The left half exists as individual templates but not yet as one standing engine.</span>
+    </p>
+
+    <div class="diagram-card">
+      <svg viewBox="0 0 980 380" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PMO自律ループの模式図">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-soft)"></path>
+          </marker>
+          <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--accent)"></path>
+          </marker>
+        </defs>
+        <style>
+          .node rect{ fill:var(--paper-raised); stroke:var(--line-strong); stroke-width:1.2; }
+          .node.done rect{ stroke:var(--pass); }
+          .node.gate rect{ fill:var(--accent-tint); stroke:var(--accent); stroke-width:1.5; }
+          .node.todo rect{ stroke-dasharray:3 3; }
+          .node text{ font-family:"IBM Plex Mono",monospace; fill:var(--ink); }
+          .node .ja{ font-size:12.5px; font-weight:600; }
+          .node .en{ font-size:8.5px; fill:var(--muted); }
+          .edge{ stroke:var(--ink-soft); stroke-width:1.2; fill:none; marker-end:url(#arrow); }
+          .edge.accent{ stroke:var(--accent); marker-end:url(#arrow-accent); }
+          .edge.dashed{ stroke-dasharray:4 3; }
+          .lbl{ font-family:"IBM Plex Mono",monospace; font-size:9px; fill:var(--muted); }
+        </style>
+
+        <!-- exec -->
+        <g class="node done" transform="translate(20,20)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">経営者 / PM</text>
+          <text x="12" y="35" class="en">Executive / PM</text>
+        </g>
+
+        <!-- planning row (todo) -->
+        <g class="node todo" transform="translate(230,20)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">WBS生成AI</text>
+          <text x="12" y="35" class="en">wbs_from_meeting</text>
+        </g>
+        <g class="node todo" transform="translate(230,88)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">リスクAI</text>
+          <text x="12" y="35" class="en">risk_forecast adapter</text>
+        </g>
+
+        <!-- task engine (todo) -->
+        <g class="node todo" transform="translate(440,54)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">Task Engine</text>
+          <text x="12" y="35" class="en">未実装 / not built</text>
+        </g>
+
+        <!-- execution -->
+        <g class="node done" transform="translate(650,20)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">実行層</text>
+          <text x="12" y="35" class="en">Agent / Human</text>
+        </g>
+
+        <!-- progress -->
+        <g class="node done" transform="translate(650,140)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">Progress AI</text>
+          <text x="12" y="35" class="en">sprint_health</text>
+        </g>
+
+        <!-- forecast -->
+        <g class="node done" transform="translate(440,180)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">遅延予測</text>
+          <text x="12" y="35" class="en">wbs_risk_forecast</text>
+        </g>
+
+        <!-- replan -->
+        <g class="node done" transform="translate(230,220)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">WBS再計画AI</text>
+          <text x="12" y="35" class="en">wbs_replan</text>
+        </g>
+
+        <!-- approval gate -->
+        <g class="node gate" transform="translate(20,220)">
+          <rect width="150" height="46" rx="3"></rect>
+          <text x="12" y="20" class="ja">承認ゲート</text>
+          <text x="12" y="35" class="en">operator approve</text>
+        </g>
+
+        <!-- edges -->
+        <path class="edge" d="M170,43 H230"></path>
+        <path class="edge" d="M170,60 V111 H230"></path>
+        <path class="edge dashed" d="M380,43 Q410,43 410,60 T440,77"></path>
+        <path class="edge dashed" d="M380,111 Q410,111 410,95 T440,80"></path>
+        <path class="edge dashed" d="M590,77 H650"></path>
+        <path class="edge" d="M725,66 V140"></path>
+        <path class="edge" d="M650,163 H590 Q515,163 515,180"></path>
+        <path class="edge" d="M440,203 H380"></path>
+        <path class="edge accent" d="M230,243 H170"></path>
+        <path class="edge dashed" d="M95,220 V266 Q95,290 230,290 H650 Q725,290 725,270 V133" transform="translate(0,0)"></path>
+
+        <text x="95" y="315" text-anchor="middle" class="lbl" fill="var(--accent-ink)">承認後、実行層へ反映 / approved, fed back to execution</text>
+      </svg>
+      <p class="diagram-caption">実線=稼働中 / solid = running today　破線=未実装または部分実装 / dashed = not yet built or partial　オレンジ=人の承認ゲート / amber = the human approval gate</p>
+    </div>
+
+    <div class="tablewrap">
+      <table class="map">
+        <thead><tr><th>図の要素</th><th>対応する実装</th></tr></thead>
+        <tbody>
+          <tr><td>WBS生成AI</td><td><code>wbs_from_meeting</code> テンプレート</td></tr>
+          <tr><td>リスクAI・Forecast</td><td><code>risk_forecast</code> アダプタ（<code>forecast</code> / <code>classify_drift</code>、閾値ヒステリシス付き）</td></tr>
+          <tr><td>WBS再計画AI</td><td><code>wbs_replan</code> / <code>wbs_replan_jira</code>（<code>agent</code> ステップ、<code>wbs_replan.propose</code> のみ書き込み可）</td></tr>
+          <tr><td>承認ゲート</td><td>Web UI の Proposals 画面、<code>/api/wbs-proposals/{id}/approve|reject</code>（operator ロールのみ）</td></tr>
+          <tr><td>Progress AI</td><td><code>sprint_health</code> / <code>agile.sprint_issues</code>（進捗率・完了ポイントはアダプタ側で計算）</td></tr>
+          <tr><td>Task Engine・PMO Core</td><td class="gap">未実装 — 個別テンプレートの集合を <code>aipmo schedule</code> が定時実行。横断的な優先順位付けを行う常駐エンジンはまだ無い</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="templates" class="wrap">
+    <div class="eyebrow">Templates / できること</div>
+    <h2>PMOの定例業務を、そのままテンプレートに<span class="en-sub">A template per routine — meeting to minutes, sprint checks, WBS replanning, and more</span></h2>
+
+    <div class="tmpl-grid">
+      <div class="tmpl-card"><span class="num">01</span><code class="name">meeting_to_tasks</code>
+        <p>会議 → 議事録 → TODO → Jira 起票 → Slack 通知</p>
+        <p class="en">Meeting → minutes → TODOs → Jira issues → Slack</p></div>
+      <div class="tmpl-card"><span class="num">02</span><code class="name">sprint_health</code>
+        <p>スプリントの状況確認。問題があるときだけ通知する</p>
+        <p class="en">Sprint health check — notifies only when something is wrong</p></div>
+      <div class="tmpl-card"><span class="num">03</span><code class="name">wbs_risk_forecast</code>
+        <p>WBS の遅延予測とドリフト検出、承認待ち提案の記録</p>
+        <p class="en">Forecasts drift and records an approval-pending proposal</p></div>
+      <div class="tmpl-card"><span class="num">04</span><code class="name">portfolio_risk_forecast</code>
+        <p>複数 WBS を横断して遅延リスクを決定論的に採点、週次で報告</p>
+        <p class="en">Scores delay risk deterministically across several WBS</p></div>
+      <div class="tmpl-card"><span class="num">05</span><code class="name">wbs_replan_options</code>
+        <p>依存関係・クリティカルパスを踏まえた代替案A/Bを提案</p>
+        <p class="en">Drafts two genuinely different replan alternatives</p></div>
+      <div class="tmpl-card"><span class="num">06</span><code class="name">digital_twin_sync / diagnose</code>
+        <p>プロジェクトの全状態を毎日同期し、5軸で健康診断</p>
+        <p class="en">Daily-syncs full project state, scores health across 5 axes</p></div>
+      <div class="tmpl-card"><span class="num">07</span><code class="name">overdue_triage</code>
+        <p>遅延状況をエージェントが自分で調査して報告する</p>
+        <p class="en">An agent investigates delays and reports back</p></div>
+      <div class="tmpl-card"><span class="num">08</span><code class="name">generalize_knowledge</code>
+        <p>社内知見を匿名化・一般化し、レビュー待ちの候補として提出</p>
+        <p class="en">Anonymizes internal knowledge into a review-pending candidate</p></div>
+      <div class="tmpl-more">
+        <span class="count">30+</span>
+        <p>建設・製造・法務・保険・高等教育など<br>12業界向けテンプレートを含む全カタログ<br class="en">30+ templates total, including 12 industry-specific ones</p>
+      </div>
+    </div>
+
+    <div class="integrations">
+      <span class="mono">連携先 —</span>&nbsp; Teams・Jira・Jira Agile・Slack・PostgreSQL・ベクトルストア（Qdrant / pgvector / Chroma / Milvus / Weaviate）
+      <br><span class="mono">AI —</span>&nbsp; OpenAI・Gemini・Groq・OpenRouter・Claude・Ollama・vLLM・LM Studio
+    </div>
+  </section>
+
+  <section id="quickstart" class="wrap">
+    <div class="eyebrow">Quick start</div>
+    <h2>5行で最初のテンプレートを動かす<span class="en-sub">Five lines to your first run</span></h2>
+    <div class="term">
+      <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="titlebar">zsh — aipmo</span></div>
+      <pre><span class="c"># インストーラ / installers</span>
+./scripts/install.sh          <span class="c">macOS / Linux</span>
+scripts\install.bat           <span class="c">Windows</span>
+./scripts/install-docker.sh   <span class="c">Docker (local AI)</span>
+
+<span class="c"># 開発者向け / from source</span>
+pip install -e <span class="s">".[dev]"</span>
+pip install -e <span class="s">".[cloud,data,web]"</span>   <span class="c"># 全部入り</span>
+
+<span class="k">aipmo</span> setup                          <span class="c"># 初回設定</span>
+<span class="k">aipmo</span> validate templates/examples/meeting_to_tasks.yaml
+<span class="k">aipmo</span> run templates/examples/overdue_triage.yaml
+<span class="k">aipmo</span> serve --host 0.0.0.0           <span class="c"># スマホ向け画面</span>
+<span class="k">aipmo</span> schedule                       <span class="c"># 定時実行</span>
+<span class="k">aipmo</span> doctor                         <span class="c"># 接続確認</span>
+pytest                               <span class="c"># 946 件</span></pre>
+    </div>
+  </section>
+
+  <section id="dsl" class="wrap">
+    <div class="eyebrow">Template DSL</div>
+    <h2>テンプレートは YAML、ロジックは持たせない<span class="en-sub">Templates are YAML — deliberately without a general-purpose logic engine</span></h2>
+
+    <div class="dsl-layout">
+      <div class="code-card">
+        <div class="head">templates/examples/meeting_minutes.yaml</div>
+        <pre><span class="y-key">name:</span> meeting_minutes
+<span class="y-key">trigger:</span> <span class="y-str">"event:teams:meeting_ended"</span>
+
+<span class="y-key">params:</span>
+  <span class="y-key">jira_project:</span> PROJ
+
+<span class="y-key">steps:</span>
+  - <span class="y-key">id:</span> fetch_transcript
+    <span class="y-key">adapter:</span> teams
+    <span class="y-key">action:</span> get_transcript
+    <span class="y-key">inputs:</span>
+      <span class="y-key">meeting_id:</span> <span class="y-str">"{{ trigger.meeting_id }}"</span>
+    <span class="y-key">retry:</span> { max_attempts: 3, backoff_seconds: 5 }
+
+  - <span class="y-key">id:</span> minutes
+    <span class="y-key">llm:</span> { profile: default, temperature: 0.1 }
+    <span class="y-key">prompt:</span> minutes_ja
+    <span class="y-key">inputs:</span>
+      <span class="y-key">transcript:</span> <span class="y-str">"{{ steps.fetch_transcript.output.text }}"</span>
+    <span class="y-key">output_format:</span> json
+    <span class="y-key">output_schema:</span>
+      <span class="y-key">required:</span> [title, decisions, action_items]
+
+  - <span class="y-key">id:</span> register_jira
+    <span class="y-key">adapter:</span> jira
+    <span class="y-key">action:</span> create_issues
+    <span class="y-key">when:</span> <span class="y-str">"{{ steps.todos.output.items }}"</span></pre>
+      </div>
+
+      <div>
+        <table class="ns-table">
+          <tr><td>params.*</td><td>実行時パラメータ / runtime parameters</td></tr>
+          <tr><td>trigger.*</td><td>起動イベントのペイロード / trigger payload</td></tr>
+          <tr><td>run.*</td><td>id / template / started_at / date</td></tr>
+          <tr><td>steps.&lt;id&gt;.output</td><td>先行ステップの出力 / a prior step's output</td></tr>
+        </table>
+
+        <div class="feature-list">
+          <div class="item">
+            <h4>for_each — 繰り返し</h4>
+            <p>担当者ごとに1通ずつ送る、といった処理。1件の失敗で全体を止めない。要素ごとの絞り込みは <span class="mono">where</span>（<span class="mono">when</span> はループ前に一度だけ評価される）。</p>
+          </div>
+          <div class="item">
+            <h4>parallel — 並列実行</h4>
+            <p>互いに依存しないステップを同時に実行。グループ内は互いの出力を参照できず、ロード時に検証される。全滅したときだけ工程自体が失敗になる。</p>
+          </div>
+          <div class="item">
+            <h4>agent — エージェント</h4>
+            <p>決められた工程ではなく、AIが道具を選んで自分で呼ぶ。<span class="mono">allow_writes: false</span> が既定で、外の世界は変えさせない。</p>
+          </div>
+          <div class="item">
+            <h4>profiles — 複数プロバイダ同時</h4>
+            <p><span class="mono">profile</span> の代わりに配列で書くと、同じプロンプトを複数のLLMに同時投稿し比較できる。1つが落ちても他は止まらない。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="principles" class="wrap">
+    <div class="eyebrow">Design decisions / 設計上の判断</div>
+    <h2>なぜこの形にしたか<span class="en-sub">A handful of the decisions this runtime is built on</span></h2>
+
+    <div class="principle-grid">
+      <div class="principle">
+        <h4>数えれば決まる値を、モデルに数えさせない</h4>
+        <p>完了率・残り日数はアダプタか組み込み変換で計算する。言語モデルに数えさせると間違えるし、<b>間違えても正しそうに見える。</b></p>
+        <p class="en">Countable facts are computed before the model sees them — a language model miscounts, and does so plausibly.</p>
+      </div>
+      <div class="principle">
+        <h4>式評価を意図的に制限した</h4>
+        <p>テンプレートは第三者が書いて配布される想定。値の参照と単純な二項比較しか許さず、汎用テンプレートエンジンを配布物の攻撃面にしない。</p>
+        <p class="en">Templates are authored and distributed by third parties — a general-purpose engine would turn every one into an attack surface.</p>
+      </div>
+      <div class="principle">
+        <h4>書き込みは読み取りより厳しく扱う</h4>
+        <p>読み違いはやり直せるが、書いた誤りはやり直せない。エージェントに道具を渡しても、<span class="mono">allow_writes: true</span> が無ければ何も変わらない。</p>
+        <p class="en">A mistaken read can be retried; a mistaken write cannot. Naming an adapter does not grant its write actions.</p>
+      </div>
+      <div class="principle">
+        <h4>承認する側が居なければ、書き込みは通らない</h4>
+        <p><span class="mono">require_approval: true</span> は承認者が渡されて初めて機能する。渡さなければ、対話端末の無いスケジューラからの書き込みは常に断られる。</p>
+        <p class="en">With no approver supplied, the write is always refused — exactly what happens on an unattended scheduled run.</p>
+      </div>
+      <div class="principle">
+        <h4>逃した実行は流さない</h4>
+        <p>正午に5日分まとめて送るのは通知の洪水であって報告ではない。同じ理由で、<b>問題が無ければ何も送らない。</b></p>
+        <p class="en">A flood of catch-up notifications is not a report. For the same reason, silence is the output when nothing is wrong.</p>
+      </div>
+      <div class="principle">
+        <h4>公開可能性スコアはモデルに頼らない</h4>
+        <p>知見の公開判定は必ず人間が行う。スコアは利用許諾レベルなど数えれば決まる範囲だけを見る、並び順のための下書きの値。</p>
+        <p class="en">Whether something is safe to publish stays a human's call — the score only orders the review queue.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="tests" class="wrap">
+    <div class="eyebrow">Tests & CI</div>
+    <h2>境界の保証と、黙って壊れる形を潰す<span class="en-sub">Aimed at guarantees and at failure shapes that look like success</span></h2>
+
+    <div class="stat-row">
+      <div class="stat"><div class="n">946</div><div class="l">tests passing</div></div>
+      <div class="stat"><div class="n">30+</div><div class="l">templates</div></div>
+      <div class="stat"><div class="n">8</div><div class="l">guide languages</div></div>
+      <div class="stat"><div class="n">¥0</div><div class="l">cost, always</div></div>
+    </div>
+
+    <div class="checklist">
+      <div class="row">テンプレートから生 SQL を渡せない</div>
+      <div class="row">テンプレートが <span class="mono">tenant</span> やコレクション名を上書きできない</div>
+      <div class="row">公開コレクションへの直接書き込みが拒否される</div>
+      <div class="row">閲覧用トークンでは実行できない（サーバー側が拒否する）</div>
+      <div class="row">Slack の <span class="mono">200 + ok:false</span> を成功として扱わない</div>
+      <div class="row">エージェントが許可外の道具を呼べない、上限で必ず止まる</div>
+      <div class="row">前方参照・ID重複・不正な cron はロード時に検出される</div>
+      <div class="row">8言語のガイドとカタログに抜けが無い</div>
+    </div>
+
+    <div class="ci-row">
+      <span class="ci-chip"><span class="dot2"></span>GitHub Actions — push・PR ごとに自動実行</span>
+      <span class="ci-chip"><span class="dot2"></span>ruff — lint</span>
+      <span class="ci-chip"><span class="dot2"></span>mypy — 型チェック</span>
+      <span class="ci-chip"><span class="dot2"></span>CodeQL — 週次の静的解析</span>
+      <span class="ci-chip"><span class="dot2"></span>Dependabot — 週次の依存更新</span>
+    </div>
+  </section>
+
+  <section id="docs" class="wrap">
+    <div class="eyebrow">Documentation</div>
+    <h2>読み進める順路<span class="en-sub">Where to go next</span></h2>
+
+    <div class="doc-grid">
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/guide/README.md" target="_blank"><span class="path">docs/guide/</span><span class="desc">入門ガイド（8言語）</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/INSTALL.md" target="_blank"><span class="path">INSTALL.md</span><span class="desc">インストール</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/AGENTS.md" target="_blank"><span class="path">docs/AGENTS.md</span><span class="desc">エージェントと承認フロー</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/PROVIDERS.md" target="_blank"><span class="path">docs/PROVIDERS.md</span><span class="desc">AI の提供元</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/VECTOR_STORES.md" target="_blank"><span class="path">docs/VECTOR_STORES.md</span><span class="desc">ベクトルストアの選択肢</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/SCHEDULER.md" target="_blank"><span class="path">docs/SCHEDULER.md</span><span class="desc">定時実行</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/JIRA-SLACK.md" target="_blank"><span class="path">docs/JIRA-SLACK.md</span><span class="desc">Jira と Slack</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/PROJECT-DIGITAL-TWIN.md" target="_blank"><span class="path">docs/PROJECT-DIGITAL-TWIN.md</span><span class="desc">プロジェクトの全状態管理</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/INDUSTRIES.md" target="_blank"><span class="path">docs/INDUSTRIES.md</span><span class="desc">業界別テンプレート</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/docs/DEPLOY-ORACLE.md" target="_blank"><span class="path">docs/DEPLOY-*.md</span><span class="desc">無料クラウド / 有料VPS構成</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/SECURITY.md" target="_blank"><span class="path">SECURITY.md</span><span class="desc">脆弱性の報告</span></a>
+      <a class="doc-item" href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/NOTICE.md" target="_blank"><span class="path">NOTICE.md</span><span class="desc">ライセンスと依存ライブラリ</span></a>
+    </div>
+  </section>
+</main>
+
+<footer class="wrap">
+  <div class="foot-grid">
+    <div class="foot-note">
+      <h3>すべて無料です。</h3>
+      <p>機能制限版でも試用版でもありません。MIT License なので、商用利用も改変も再配布も自由です。テンプレートもプロンプトも同じ条件で、使うために支払うものはありません。</p>
+      <p class="en">Not a reduced edition, not a trial. MIT licensed — commercial use, modification, and redistribution are all permitted, templates and prompts included.</p>
+    </div>
+    <div class="foot-links">
+      <a href="https://github.com/itanaka66/AI-PMO-Platform" target="_blank" rel="noopener">GitHub リポジトリ</a>
+      <a href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/LICENSE" target="_blank" rel="noopener">LICENSE</a>
+      <a href="https://github.com/itanaka66/AI-PMO-Platform/blob/main/NOTICE.md" target="_blank" rel="noopener">NOTICE.md</a>
+      <a href="https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml" target="_blank" rel="noopener">Tests — GitHub Actions</a>
+    </div>
+  </div>
+  <div class="foot-bottom">
+    <span>MIT License — © 2026 株式会社エージーネディア / agNedia Inc.</span>
+    <span>AI-PMO Platform</span>
+  </div>
+</footer>
+</body>
+</html>
