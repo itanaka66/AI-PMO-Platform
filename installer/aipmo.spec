@@ -16,6 +16,7 @@ hidden = [
     "psycopg",
     "qdrant_client",
     "openai",
+    "anthropic",
     "aipmo.adapters.postgres",
     "aipmo.adapters.qdrant",
     "aipmo.adapters.mock",
