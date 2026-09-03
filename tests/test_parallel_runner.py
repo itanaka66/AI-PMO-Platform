@@ -1,7 +1,6 @@
 """並列ステップ実行エンジンのテスト"""
 import pytest
-import time
-from aipmo.dsl.schema import Step, StepKind, Template, OutputFormat
+from aipmo.dsl.schema import Step, StepKind, Template
 from aipmo.engine.parallel import DAGAnalyzer, ParallelExecutor, ExecutionLevel
 
 
@@ -15,9 +14,9 @@ class TestDAGAnalyzer:
             Step(id="b", kind=StepKind.TRANSFORM, expression="2+2", depends_on=["a"]),
             Step(id="c", kind=StepKind.TRANSFORM, expression="3+3", depends_on=["b"]),
         ]
-        
+
         analyzer = DAGAnalyzer(steps)
-        
+
         assert analyzer.graph["a"] == set()
         assert analyzer.graph["b"] == {"a"}
         assert analyzer.graph["c"] == {"b"}
@@ -29,9 +28,9 @@ class TestDAGAnalyzer:
             Step(id="b", kind=StepKind.TRANSFORM, expression="2"),  # depends_on なし
             Step(id="c", kind=StepKind.TRANSFORM, expression="3"),  # depends_on なし
         ]
-        
+
         analyzer = DAGAnalyzer(steps)
-        
+
         assert analyzer.graph["a"] == set()
         assert analyzer.graph["b"] == {"a"}
         assert analyzer.graph["c"] == {"b"}
@@ -43,9 +42,9 @@ class TestDAGAnalyzer:
             Step(id="b", kind=StepKind.TRANSFORM, expression="2", depends_on=[]),
             Step(id="c", kind=StepKind.TRANSFORM, expression="3", depends_on=["a"]),
         ]
-        
+
         analyzer = DAGAnalyzer(steps)
-        
+
         assert analyzer.graph["a"] == set()
         assert analyzer.graph["b"] == set()  # 依存なし → 並列実行可能
         assert analyzer.graph["c"] == {"a"}
@@ -57,9 +56,9 @@ class TestDAGAnalyzer:
             Step(id="b", kind=StepKind.TRANSFORM, expression="2", depends_on=[]),
             Step(id="c", kind=StepKind.TRANSFORM, expression="3", depends_on=["a", "b"]),
         ]
-        
+
         analyzer = DAGAnalyzer(steps)
-        
+
         assert analyzer.graph["a"] == set()
         assert analyzer.graph["b"] == set()
         assert analyzer.graph["c"] == {"a", "b"}
@@ -70,7 +69,7 @@ class TestDAGAnalyzer:
             Step(id="a", kind=StepKind.TRANSFORM, expression="1"),
             Step(id="b", kind=StepKind.TRANSFORM, expression="2", depends_on=["x"]),
         ]
-        
+
         with pytest.raises(ValueError, match="存在しないステップ"):
             DAGAnalyzer(steps)
 
@@ -81,7 +80,7 @@ class TestDAGAnalyzer:
             Step(id="b", kind=StepKind.TRANSFORM, expression="2", depends_on=["a"]),
             Step(id="c", kind=StepKind.TRANSFORM, expression="3", depends_on=["b"]),
         ]
-        
+
         analyzer = DAGAnalyzer(steps)
         with pytest.raises(ValueError, match="循環依存"):
             analyzer.detect_cycles()
@@ -93,10 +92,10 @@ class TestDAGAnalyzer:
             Step(id="b", kind=StepKind.TRANSFORM, expression="2", depends_on=["a"]),
             Step(id="c", kind=StepKind.TRANSFORM, expression="3", depends_on=["b"]),
         ]
-        
+
         analyzer = DAGAnalyzer(steps)
         levels = analyzer.topological_levels()
-        
+
         # 線形依存なので各レベルに1つずつ
         assert len(levels) == 3
         assert levels[0].step_ids == ["a"]
@@ -111,10 +110,10 @@ class TestDAGAnalyzer:
             Step(id="c", kind=StepKind.TRANSFORM, expression="3", depends_on=[]),
             Step(id="d", kind=StepKind.TRANSFORM, expression="4", depends_on=["a", "b", "c"]),
         ]
-        
+
         analyzer = DAGAnalyzer(steps)
         levels = analyzer.topological_levels()
-        
+
         # 最初の3つが並列実行
         assert len(levels) == 2
         assert set(levels[0].step_ids) == {"a", "b", "c"}
@@ -129,10 +128,10 @@ class TestDAGAnalyzer:
             Step(id="analyze_c", kind=StepKind.LLM, llm=None, depends_on=["fetch"]),
             Step(id="merge", kind=StepKind.TRANSFORM, expression="merge", depends_on=["analyze_a", "analyze_b", "analyze_c"]),
         ]
-        
+
         analyzer = DAGAnalyzer(steps)
         levels = analyzer.topological_levels()
-        
+
         assert len(levels) == 3
         assert levels[0].step_ids == ["fetch"]
         assert set(levels[1].step_ids) == {"analyze_a", "analyze_b", "analyze_c"}
@@ -141,7 +140,7 @@ class TestDAGAnalyzer:
     def test_level_structure(self):
         """ExecutionLevel の構造"""
         level = ExecutionLevel(step_ids=["a", "b", "c"], level=1)
-        
+
         assert level.level == 1
         assert len(level.step_ids) == 3
 
@@ -159,10 +158,10 @@ class TestParallelExecutor:
                 Step(id="c", kind=StepKind.TRANSFORM, expression="3", depends_on=["a"]),
             ]
         )
-        
+
         executor = ParallelExecutor(max_workers=2)
         plan = executor.plan(template)
-        
+
         assert len(plan) == 2
         assert set(plan[0].step_ids) == {"a", "b"}  # a と b は並列
         assert plan[1].step_ids == ["c"]
@@ -177,9 +176,9 @@ class TestParallelExecutor:
                 Step(id="c", kind=StepKind.TRANSFORM, expression="3", depends_on=["a", "b"]),
             ]
         )
-        
+
         executor = ParallelExecutor()
-        
+
         assert executor.get_dependencies("a", template) == set()
         assert executor.get_dependencies("b", template) == {"a"}
         assert executor.get_dependencies("c", template) == {"a", "b"}
@@ -195,9 +194,9 @@ class TestParallelExecutor:
                 Step(id="d", kind=StepKind.TRANSFORM, expression="4", depends_on=["b", "c"]),
             ]
         )
-        
+
         executor = ParallelExecutor()
-        
+
         assert executor.get_dependents("a", template) == {"b", "c"}
         assert executor.get_dependents("b", template) == {"d"}
         assert executor.get_dependents("c", template) == {"d"}
@@ -207,7 +206,7 @@ class TestParallelExecutor:
         """max_workers の設定"""
         executor = ParallelExecutor(max_workers=8)
         assert executor.max_workers == 8
-        
+
         executor2 = ParallelExecutor()
         assert executor2.max_workers == 4  # デフォルト
 
@@ -226,10 +225,10 @@ class TestBackwardCompatibility:
                 Step(id="step3", kind=StepKind.ADAPTER, adapter="slack", action="post"),  # depends_on なし
             ]
         )
-        
+
         executor = ParallelExecutor()
         plan = executor.plan(template)
-        
+
         # 逐次実行（各レベルに 1 つずつ）
         assert len(plan) == 3
         assert plan[0].step_ids == ["step1"]
@@ -247,10 +246,10 @@ class TestBackwardCompatibility:
                 Step(id="d", kind=StepKind.ADAPTER, adapter="slack", action="post", depends_on=["b", "c"]),
             ]
         )
-        
+
         executor = ParallelExecutor()
         plan = executor.plan(template)
-        
+
         assert len(plan) == 3
         assert set(plan[0].step_ids) == {"a", "c"}  # a は依存なし、c は独立 → 並列実行
         assert plan[1].step_ids == ["b"]  # b は a に依存
@@ -268,20 +267,20 @@ class TestEdgeCases:
                 Step(id="only", kind=StepKind.ADAPTER, adapter="teams", action="get"),
             ]
         )
-        
+
         executor = ParallelExecutor()
         plan = executor.plan(template)
-        
+
         assert len(plan) == 1
         assert plan[0].step_ids == ["only"]
 
     def test_empty_template(self):
         """ステップなしテンプレート"""
         template = Template(name="empty", steps=[])
-        
+
         executor = ParallelExecutor()
         plan = executor.plan(template)
-        
+
         assert len(plan) == 0
 
     def test_all_parallel_no_deps(self):
@@ -293,10 +292,10 @@ class TestEdgeCases:
                 for i in range(5)
             ]
         )
-        
+
         executor = ParallelExecutor()
         plan = executor.plan(template)
-        
+
         assert len(plan) == 1
         assert len(plan[0].step_ids) == 5
 
@@ -321,18 +320,18 @@ class TestIntegration:
                 Step(id="notify_todos", kind=StepKind.ADAPTER, adapter="slack", action="post_message", depends_on=["register_jira"]),
             ]
         )
-        
+
         executor = ParallelExecutor()
         plan = executor.plan(template)
-        
+
         # Level 0: Transcript 取得
         assert plan[0].step_ids == ["fetch_transcript"]
-        
+
         # Level 1: 3 つの LLM 並列
         assert set(plan[1].step_ids) == {"generate_minutes", "extract_todos", "extract_decisions"}
-        
+
         # Level 2: Jira + 2 つの Slack 通知（Jira と notify_pmo / notify_decisions は独立）
         assert set(plan[2].step_ids) == {"register_jira", "notify_pmo", "notify_decisions"}
-        
+
         # Level 3: 最後の Slack 通知
         assert plan[3].step_ids == ["notify_todos"]

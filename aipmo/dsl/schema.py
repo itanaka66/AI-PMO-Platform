@@ -185,6 +185,19 @@ class Step:
     retry: RetrySpec = field(default_factory=RetrySpec)
     continue_on_error: bool = False
 
+    # 並列実行計画（aipmo/engine/parallel.py の DAGAnalyzer）が使う依存関係。
+    # None = 省略。直前のステップに依存するものとして扱う（既存テンプレートとの
+    # 互換性維持）。[] = 明示的に依存無し。それ以外はステップ id の並び。
+    # まだ Engine.run() 本体には配線されていない — 計画のみを組み立てる段階。
+    #
+    # The dependency list the parallel execution plan (DAGAnalyzer in
+    # aipmo/engine/parallel.py) uses. None means omitted, treated as
+    # depending on the previous step (keeps existing templates working
+    # unchanged); [] means explicitly no dependency; anything else is a list
+    # of step ids. Not yet wired into Engine.run() itself — this only feeds
+    # the planning step so far.
+    depends_on: list[str] | None = None
+
 
 @dataclass
 class Template:

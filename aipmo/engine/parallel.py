@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from ..dsl.schema import Step, Template
 
@@ -32,19 +31,19 @@ class DAGAnalyzer:
     def _build_graph(self) -> None:
         """ステップ → 依存ステップのマッピングを構築"""
         step_list = [s for s in self.steps.values()]
-        
+
         for i, step in enumerate(step_list):
             if step.depends_on is not None:
                 # 明示的に depends_on が指定されている場合
                 depends = set(step.depends_on)
-                
+
                 # 存在しないステップ参照を検出
                 for dep in depends:
                     if dep not in self.steps:
                         raise ValueError(
                             f"ステップ '{step.id}' が存在しないステップ '{dep}' に依存しています"
                         )
-                
+
                 self.graph[step.id] = depends
             elif step.depends_on == []:
                 # 空配列 = 依存なし
@@ -64,14 +63,14 @@ class DAGAnalyzer:
         def has_cycle(node: str) -> bool:
             visited.add(node)
             rec_stack.add(node)
-            
+
             for neighbor in self.graph.get(node, []):
                 if neighbor not in visited:
                     if has_cycle(neighbor):
                         return True
                 elif neighbor in rec_stack:
                     return True
-            
+
             rec_stack.remove(node)
             return False
 
@@ -85,32 +84,32 @@ class DAGAnalyzer:
     def topological_levels(self) -> list[ExecutionLevel]:
         """トポロジカルソート → 実行レベルを決定"""
         self.detect_cycles()
-        
+
         # 入次数を計算
         in_degree = {step_id: len(deps) for step_id, deps in self.graph.items()}
-        levels = []
-        processed = set()
-        
+        levels: list[ExecutionLevel] = []
+        processed: set[str] = set()
+
         while len(processed) < len(self.steps):
             # 入次数が 0 のノード（依存が全て完了したノード）を取得
             current_level = [
                 sid for sid, d in in_degree.items()
                 if d == 0 and sid not in processed
             ]
-            
+
             if not current_level:
                 # ここに到達することは理論上ない（循環依存チェック済み）
                 raise ValueError("不可能な状態: 入次数が 0 のノードが無い")
-            
+
             levels.append(ExecutionLevel(step_ids=current_level, level=len(levels)))
             processed.update(current_level)
-            
+
             # 次レベルのために入次数を更新
             for step_id in current_level:
                 for dependent, deps in self.graph.items():
                     if step_id in deps:
                         in_degree[dependent] -= 1
-        
+
         return levels
 
     def get_graph(self) -> dict[str, set[str]]:
@@ -120,10 +119,10 @@ class DAGAnalyzer:
 
 class ParallelExecutor:
     """並列実行計画を実行"""
-    
+
     def __init__(self, max_workers: int = 4):
         self.max_workers = max_workers
-    
+
     def plan(self, template: Template) -> list[ExecutionLevel]:
         """テンプレートから実行計画（実行レベルのリスト）を生成"""
         analyzer = DAGAnalyzer(template.steps)
