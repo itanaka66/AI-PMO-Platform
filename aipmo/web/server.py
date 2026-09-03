@@ -556,6 +556,45 @@ def create_app(
         note = (payload or {}).get("note")
         return _decide_wbs_proposal(request, proposal_id, "rejected", role, note)
 
+    # -- Project Digital Twin（読み取り専用） -------------------------------
+    #
+    # 同期・診断そのものはテンプレート実行（既存の /api/runs）から行う。
+    # ここは結果を見るためだけの、読み取り専用の2エンドポイント。
+    #
+    # Syncing and diagnosing happen through template runs (the existing
+    # /api/runs), not here. These two routes only let you look at the result.
+
+    @app.get("/api/v1/projects/{project_id}/state", dependencies=[guard])
+    def get_project_state(project_id: str) -> dict[str, Any]:
+        pg = _postgres_or_503()
+        project = pg.query("dt_get_project", {"tenant": tenant, "project_id": project_id})
+        if not project["rows"]:
+            raise HTTPException(status_code=404, detail="no such project")
+        params = {"tenant": tenant, "project_id": project_id}
+        return {
+            "project": project["rows"][0],
+            "wbs_nodes": pg.query("dt_list_wbs_nodes", params)["rows"],
+            "tasks": pg.query("dt_list_tasks", params)["rows"],
+            "schedule_forecast": pg.query("dt_latest_schedule_forecast", params)["rows"][0],
+            "resources": pg.query("dt_list_resources", params)["rows"],
+            "risks": pg.query("dt_list_risks", params)["rows"],
+            "issues": pg.query("dt_list_issues", params)["rows"],
+            "dependencies": pg.query("dt_list_dependencies", params)["rows"],
+            "budget": pg.query("dt_get_budget", params)["rows"][0],
+            "decisions": pg.query("dt_list_decisions", params)["rows"],
+            "documents": pg.query("dt_list_documents", params)["rows"],
+        }
+
+    @app.get("/api/v1/projects/{project_id}/diagnose", dependencies=[guard])
+    def get_project_diagnosis(project_id: str) -> Any:
+        pg = _postgres_or_503()
+        result = pg.query(
+            "dt_latest_health_diagnostic", {"tenant": tenant, "project_id": project_id},
+        )
+        if not result["rows"]:
+            raise HTTPException(status_code=404, detail="no diagnosis recorded yet")
+        return result["rows"][0]
+
     return app
 
 def generate_token() -> str:

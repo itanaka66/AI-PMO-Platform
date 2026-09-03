@@ -125,6 +125,8 @@ WBS-replanning AI → approval) actually running.
 | `wbs_replan_jira` | wbs_replan と同じだが、タスク一覧を実際の Jira スプリントから取得する / Same as wbs_replan, but pulls the task list from a real Jira sprint |
 | `wbs_replan_options` | wbs_replan と同じだが、AI に依存関係・クリティカルパスを踏まえた性質の異なる2つの代替案（A/B）を考えさせ、それぞれ独立した提案として記録する / Same as wbs_replan, but has the agent draft two genuinely different alternatives informed by dependency/critical-path analysis, recording each as its own proposal |
 | `wbs_proposal_cleanup` | 承認待ちのまま放置された WBS 再計画提案を定期的に無効化する / Periodically invalidates WBS replan proposals left pending too long |
+| `digital_twin_sync` | Jira から Project Digital Twin（プロジェクト・WBS・タスク）を毎日同期 / Daily-syncs the Project Digital Twin (project, WBS, tasks) from Jira |
+| `digital_twin_diagnose` | 5軸を決定論的に採点し、AI が所見と推奨アクションを記述して記録 / Deterministically scores five dimensions, then has the AI write findings and recommendations |
 | `model_comparison` | 同じプロンプトを複数の AI に同時投稿し、書きぶりを比較 / Sends the same prompt to several AI providers at once and compares the results |
 | `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める / Sends independent notifications concurrently to cut run time |
 | `generalize_knowledge` | 社内知見を匿名化・一般化し、レビュー待ちの候補として提出 / Anonymizes and generalizes internal knowledge, submitting it as a candidate awaiting review |
@@ -164,7 +166,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 903 件
+pytest                               # 946 件
 ```
 
 ---
@@ -538,9 +540,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-903 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+946 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-903 tests, aimed at the guarantees and at the failure shapes that look like
+946 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
@@ -587,6 +589,7 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 | [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |
 | [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
 | [docs/PARALLEL-STEPS-DESIGN.md](docs/PARALLEL-STEPS-DESIGN.md) | 依存関係ベースの並列実行 — 設計中、Engine への配線は未着手 / dependency-based parallel execution — design doc; not yet wired into the Engine |
+| [docs/PROJECT-DIGITAL-TWIN.md](docs/PROJECT-DIGITAL-TWIN.md) | プロジェクトの全状態管理とハイブリッド健康診断 / full project state and hybrid health diagnosis |
 | [docs/INDUSTRIES.md](docs/INDUSTRIES.md) | 業界別テンプレート / industry templates |
 | [docs/DEPLOY-ORACLE.md](docs/DEPLOY-ORACLE.md) | 無料クラウド構成（Oracle）/ free-tier deployment |
 | [docs/DEPLOY-GCP.md](docs/DEPLOY-GCP.md) | 無料クラウド構成（Google Cloud）/ free-tier deployment |
