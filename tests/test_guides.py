@@ -219,7 +219,7 @@ def test_dependency_licensing_is_documented():
     psycopg is LGPL; nobody should redistribute without knowing that.
     """
     notice = (ROOT / "NOTICE.md").read_text(encoding="utf-8")
-    for library in ("PyYAML", "openai", "psycopg", "qdrant-client", "FastAPI"):
+    for library in ("PyYAML", "openai", "anthropic", "psycopg", "qdrant-client", "FastAPI"):
         assert library in notice, f"NOTICE に記載がありません: {library}"
     assert "LGPL" in notice
 

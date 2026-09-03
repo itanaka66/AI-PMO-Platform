@@ -52,6 +52,7 @@ them.
 |---|---|---|
 | PyYAML | MIT | テンプレートの読み込み |
 | openai | Apache-2.0 | クラウド AI（`[cloud]`） |
+| anthropic | MIT | クラウド AI・Claude（`[cloud]`） |
 | psycopg | LGPL-3.0 | PostgreSQL（`[data]`） |
 | qdrant-client | Apache-2.0 | ベクトル検索・Qdrant（`[data]`） |
 | pgvector | MIT | ベクトル検索・pgvector（`[vector-pgvector]`） |
