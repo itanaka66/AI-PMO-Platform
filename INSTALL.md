@@ -15,7 +15,7 @@ Written for people who are not comfortable with a terminal. Pick one.
 
 ## A. Windows インストーラ / Windows installer
 
-1. [AI-PMO-Setup-0.1.4.exe](https://github.com/itanaka66/AI-PMO-Platform/releases/download/v0.1.2/AI-PMO-Setup-0.1.4.exe) をダウンロードする / download it
+1. [AI-PMO-Setup-0.1.5.exe](https://github.com/itanaka66/AI-PMO-Platform/releases/download/v0.1.5/AI-PMO-Setup-0.1.5.exe) をダウンロードする / download it
 2. ダブルクリックする / double-click it
 3. 画面の指示に従う / follow the prompts
 
@@ -52,7 +52,7 @@ must run on Windows.
 
 ```powershell
 .\installer\build.ps1
-# → dist\AI-PMO-Setup-0.1.4.exe
+# → dist\AI-PMO-Setup-0.1.5.exe
 ```
 
 タグを push すると GitHub Actions が同じものを作ります。
