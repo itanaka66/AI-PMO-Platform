@@ -145,7 +145,8 @@ WBS-replanning AI → approval) actually running.
 | `insurance/claim_sla_triage` | 保険請求の期限確認（州別規制期限・不正疑い・契約者待ちを分けて扱う） / Insurance claim SLA check — state regulatory deadlines, suspected fraud, and policyholder-wait kept apart |
 | `government_contracting/clearance_deliverable_triage` | 政府調達案件の確認（クリアランス失効・納品期限を分けて扱う） / Government contract check — clearance expiration and delivery deadlines kept apart |
 
-連携先 / Integrations: Teams · Jira · Jira Agile · Slack · PostgreSQL ·
+連携先 / Integrations: Teams · Jira · Jira Agile · GitHub Projects · Plane ·
+OpenProject · Azure DevOps · Slack · PostgreSQL ·
 ベクトルストア（Qdrant・pgvector・Chroma・Milvus・Weaviate から選択）
 AI: OpenAI · Gemini · Groq · OpenRouter · Claude · Ollama · vLLM · LM Studio
 
@@ -169,7 +170,7 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 946 件
+pytest                               # 1005 件
 ```
 
 ---
@@ -543,9 +544,9 @@ are each recorded individually.
 
 ## テスト / Tests
 
-946 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+1005 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-946 tests, aimed at the guarantees and at the failure shapes that look like
+1005 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
@@ -590,6 +591,7 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 | [docs/SCHEDULER.md](docs/SCHEDULER.md) | 定時実行 / scheduling |
 | [docs/TEAMS.md](docs/TEAMS.md) | Teams 連携 / Teams |
 | [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |
+| [docs/TICKET-TRACKERS.md](docs/TICKET-TRACKERS.md) | GitHub Projects・Plane・OpenProject・Azure DevOps |
 | [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
 | [docs/PARALLEL-STEPS-DESIGN.md](docs/PARALLEL-STEPS-DESIGN.md) | 依存関係ベースの並列実行 — 設計中、Engine への配線は未着手 / dependency-based parallel execution — design doc; not yet wired into the Engine |
 | [docs/PROJECT-DIGITAL-TWIN.md](docs/PROJECT-DIGITAL-TWIN.md) | プロジェクトの全状態管理とハイブリッド健康診断 / full project state and hybrid health diagnosis |

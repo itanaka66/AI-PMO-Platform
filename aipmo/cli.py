@@ -157,6 +157,27 @@ def build_engine(
         if "slack" in adapter_config:
             adapters.register(SlackAdapter(**dict(adapter_config["slack"])))
 
+        if "github_projects" in adapter_config:
+            from .adapters.github_projects import GitHubProjectsAdapter
+
+            adapters.register(
+                GitHubProjectsAdapter(**dict(adapter_config["github_projects"])))
+
+        if "plane" in adapter_config:
+            from .adapters.plane import PlaneAdapter
+
+            adapters.register(PlaneAdapter(**dict(adapter_config["plane"])))
+
+        if "openproject" in adapter_config:
+            from .adapters.openproject import OpenProjectAdapter
+
+            adapters.register(OpenProjectAdapter(**dict(adapter_config["openproject"])))
+
+        if "azure_devops" in adapter_config:
+            from .adapters.azure_devops import AzureDevOpsAdapter
+
+            adapters.register(AzureDevOpsAdapter(**dict(adapter_config["azure_devops"])))
+
     if "postgres" in adapter_config:
         spec = dict(adapter_config["postgres"])
         queries_file = spec.pop("queries_file", None)
