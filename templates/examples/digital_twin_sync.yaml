@@ -1,0 +1,112 @@
+name: digital_twin_sync
+version: "1"
+industry: software
+description: |
+  Project Digital Twin の基礎同期。Jira の Epic を WBS ノードへ、
+  それ以外の課題をタスクへ、毎日取り込む。
+
+  この版で同期するのは、プロジェクト・WBS（Epic）・タスクの3つだけ。
+  リソース・リスク・依存関係・予算・課題（ブロッカー）の各テーブルは
+  スキーマだけ用意されていて、まだこのテンプレートからは書き込まない
+  ——jira.search の出力に含まれない項目（担当者以外の詳細、カスタム
+  フィールド、課題リンク）が要るため。詳しくは
+  docs/PROJECT-DIGITAL-TWIN.md の「今回やらないこと」を参照。
+
+  This first version only syncs three tables: the project, WBS nodes
+  (from Epics), and tasks. Resources, risks, dependencies, budget, and
+  issues (blockers) all have their tables ready but nothing writes to
+  them yet from this template — that needs fields jira.search does not
+  currently expose (assignee-level detail beyond a name, custom fields,
+  issue links). See "What this does not do yet" in
+  docs/PROJECT-DIGITAL-TWIN.md.
+
+trigger: "schedule:0 9 * * *"
+
+params:
+  jira_project: PROJ
+  project_name: "PROJ プロジェクト"
+  project_description: ""
+
+steps:
+  - id: upsert_project
+    adapter: postgres
+    action: execute
+    inputs:
+      name: dt_upsert_project
+      params:
+        name: "{{ params.project_name }}"
+        description: "{{ params.project_description }}"
+        jira_project_key: "{{ params.jira_project }}"
+
+  - id: epics
+    adapter: jira
+    action: search
+    inputs:
+      jql: project = "{{ params.jira_project }}" AND issuetype = Epic
+      limit: 100
+
+  # Epic を WBS ノードとして取り込む。フェーズ分け（レベル）は今のところ
+  # 一律 1 — Jira の Epic どうしの親子関係を読む手段がまだ無い。
+  # 完了率は同期していない（0 のまま）。実績の追跡は次の段階。
+  #
+  # Epics become WBS nodes. Every one lands at level 1 for now — there is
+  # no way yet to read parent/child relationships between Epics.
+  # Completion percentage is not synced (stays 0); tracking actuals is a
+  # later step.
+  - id: sync_wbs_nodes
+    when: "{{ steps.epics.output.count }} > 0"
+    for_each: "{{ steps.epics.output.items }}"
+    as: epic
+    continue_on_error: true
+    adapter: postgres
+    action: execute
+    inputs:
+      name: dt_upsert_wbs_node
+      params:
+        project_id: "{{ steps.upsert_project.output.rows[0].id }}"
+        parent_id: null
+        name: "{{ epic.summary }}"
+        description: null
+        level: 1
+        jira_epic_key: "{{ epic.key }}"
+        planned_start: null
+        planned_end: "{{ epic.due_date }}"
+        actual_completion: 0
+
+  - id: tasks
+    adapter: jira
+    action: search
+    inputs:
+      jql: project = "{{ params.jira_project }}" AND issuetype != Epic
+      limit: 100
+
+  # 個々の課題をタスクとして取り込む。どの WBS ノード（Epic）に属するかは
+  # 今のところ紐付けていない（jira.search の出力に親 Epic の情報が無い）。
+  # 見積もり・優先度・報告者も同じ理由で同期していない。
+  #
+  # Issues become tasks. Which WBS node (Epic) each belongs to is not
+  # linked yet — jira.search's output carries no parent-Epic information.
+  # Estimates, priority, and reporter are unsynced for the same reason.
+  - id: sync_tasks
+    when: "{{ steps.tasks.output.count }} > 0"
+    for_each: "{{ steps.tasks.output.items }}"
+    as: task
+    continue_on_error: true
+    adapter: postgres
+    action: execute
+    inputs:
+      name: dt_upsert_task
+      params:
+        project_id: "{{ steps.upsert_project.output.rows[0].id }}"
+        wbs_node_id: null
+        jira_issue_key: "{{ task.key }}"
+        jira_issue_type: null
+        title: "{{ task.summary }}"
+        description: null
+        status: "{{ task.status }}"
+        assignee: "{{ task.assignee }}"
+        reporter: null
+        priority: null
+        story_points: null
+        planned_end: "{{ task.due_date }}"
+        actual_end: null

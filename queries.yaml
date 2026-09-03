@@ -137,3 +137,235 @@ save_forecast_snapshot: |
     tier = EXCLUDED.tier,
     forecast = EXCLUDED.forecast,
     recorded_at = now()
+
+# Project Digital Twin / プロジェクトの状態横断保持。
+# 各 upsert は Jira 側のキー（jira_project_key・jira_epic_key・
+# jira_issue_key）を冪等キーとして使う。同期テンプレートを毎日走らせても
+# 行が増え続けない。詳しくは docs/PROJECT-DIGITAL-TWIN.md。
+#
+# Each upsert uses the Jira-side key (jira_project_key / jira_epic_key /
+# jira_issue_key) as its idempotency key, so running the sync template
+# daily does not keep adding rows. See docs/PROJECT-DIGITAL-TWIN.md.
+
+# id は渡さない — DEFAULT gen_random_uuid() に任せる（sql/schema.sql の
+# dt_ テーブル群のコメントを参照）。ON CONFLICT の一致は自然キーで行う。
+#
+# id is never supplied — left to DEFAULT gen_random_uuid() (see the comment
+# above the dt_ tables in sql/schema.sql). ON CONFLICT matches on each
+# table's natural key instead.
+
+dt_upsert_project: |
+  INSERT INTO dt_projects (tenant, name, description, jira_project_key)
+  VALUES (:tenant, :name, :description, :jira_project_key)
+  ON CONFLICT (tenant, jira_project_key) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    last_synced = now(),
+    updated_at = now()
+  RETURNING id
+
+dt_upsert_wbs_node: |
+  INSERT INTO dt_wbs_nodes
+    (tenant, project_id, parent_id, name, description, level,
+     jira_epic_key, planned_start, planned_end, actual_completion)
+  VALUES
+    (:tenant, :project_id, :parent_id, :name, :description, :level,
+     :jira_epic_key, :planned_start, :planned_end, :actual_completion)
+  ON CONFLICT (tenant, project_id, jira_epic_key) DO UPDATE SET
+    name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    planned_start = EXCLUDED.planned_start,
+    planned_end = EXCLUDED.planned_end,
+    actual_completion = EXCLUDED.actual_completion,
+    updated_at = now()
+  RETURNING id
+
+dt_upsert_task: |
+  INSERT INTO dt_tasks
+    (tenant, project_id, wbs_node_id, jira_issue_key, jira_issue_type,
+     title, description, status, assignee, reporter, priority,
+     story_points, planned_end, actual_end)
+  VALUES
+    (:tenant, :project_id, :wbs_node_id, :jira_issue_key, :jira_issue_type,
+     :title, :description, :status, :assignee, :reporter, :priority,
+     :story_points, :planned_end, :actual_end)
+  ON CONFLICT (tenant, jira_issue_key) DO UPDATE SET
+    wbs_node_id = EXCLUDED.wbs_node_id,
+    title = EXCLUDED.title,
+    description = EXCLUDED.description,
+    status = EXCLUDED.status,
+    assignee = EXCLUDED.assignee,
+    reporter = EXCLUDED.reporter,
+    priority = EXCLUDED.priority,
+    story_points = EXCLUDED.story_points,
+    planned_end = EXCLUDED.planned_end,
+    actual_end = EXCLUDED.actual_end,
+    last_synced = now(),
+    updated_at = now()
+  RETURNING id
+
+# スケジュール予測は現在値の上書きではなく履歴として積む（as_of_date ごとに
+# 1行）。精度を後から評価する（過去の予測がどれだけ当たったか）には、
+# 上書きしてしまうと材料が残らない。
+#
+# Schedule forecasts accumulate as history rather than being overwritten —
+# one row per as_of_date. Evaluating forecast accuracy later (how close a
+# past prediction actually was) needs that history; overwriting would
+# throw the material away.
+dt_record_schedule_forecast: |
+  INSERT INTO dt_schedule_forecast
+    (tenant, project_id, planned_start, planned_end, current_forecast,
+     as_of_date, variance_days, variance_percent, confidence, reason)
+  VALUES
+    (:tenant, :project_id, :planned_start, :planned_end, :current_forecast,
+     :as_of_date, :variance_days, :variance_percent, :confidence, :reason)
+  RETURNING id
+
+dt_upsert_budget: |
+  INSERT INTO dt_budget
+    (tenant, project_id, planned_amount, actual_amount, forecast_amount, as_of_date)
+  VALUES
+    (:tenant, :project_id, :planned_amount, :actual_amount, :forecast_amount, :as_of_date)
+  ON CONFLICT (tenant, project_id) DO UPDATE SET
+    planned_amount = EXCLUDED.planned_amount,
+    actual_amount = EXCLUDED.actual_amount,
+    forecast_amount = EXCLUDED.forecast_amount,
+    as_of_date = EXCLUDED.as_of_date,
+    updated_at = now()
+  RETURNING id
+
+dt_get_project: |
+  SELECT id, name, description, jira_project_key, status, health_score,
+         health_status, created_at, last_analyzed, last_synced
+  FROM dt_projects
+  WHERE tenant = :tenant AND id = :project_id
+
+dt_list_wbs_nodes: |
+  SELECT id, parent_id, name, description, level, jira_epic_key,
+         planned_start, planned_end, actual_completion
+  FROM dt_wbs_nodes
+  WHERE tenant = :tenant AND project_id = :project_id
+  ORDER BY level ASC, planned_start ASC NULLS LAST
+
+dt_list_tasks: |
+  SELECT id, wbs_node_id, jira_issue_key, jira_issue_type, title, status,
+         assignee, reporter, priority, story_points, planned_end, actual_end
+  FROM dt_tasks
+  WHERE tenant = :tenant AND project_id = :project_id
+  ORDER BY planned_end ASC NULLS LAST
+
+dt_latest_schedule_forecast: |
+  -- latest_forecast_snapshot と同じパターン：行が無いときも NULL 埋めの
+  -- 1行を必ず返す（呼び出し側は rows[0] をそのまま参照できる）。
+  (SELECT planned_start, planned_end, current_forecast, as_of_date,
+          variance_days, variance_percent, confidence, reason
+   FROM dt_schedule_forecast
+   WHERE tenant = :tenant AND project_id = :project_id
+   ORDER BY as_of_date DESC
+   LIMIT 1)
+  UNION ALL
+  SELECT NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+  WHERE NOT EXISTS (
+    SELECT 1 FROM dt_schedule_forecast
+    WHERE tenant = :tenant AND project_id = :project_id
+  )
+
+dt_list_resources: |
+  SELECT id, name, email, slack_id, role, allocation_percent, start_date,
+         end_date, status
+  FROM dt_resources
+  WHERE tenant = :tenant AND project_id = :project_id
+  ORDER BY name ASC
+
+dt_list_risks: |
+  SELECT id, name, description, category, probability, impact, exposure,
+         status, mitigation_strategy, mitigation_owner, identified_date
+  FROM dt_risks
+  WHERE tenant = :tenant AND project_id = :project_id
+  ORDER BY exposure DESC NULLS LAST
+
+dt_list_issues: |
+  SELECT id, jira_issue_key, title, severity, status, is_blocker,
+         blocks_tasks, assignee, owner, opened_date, resolved_date
+  FROM dt_issues
+  WHERE tenant = :tenant AND project_id = :project_id
+  ORDER BY is_blocker DESC, severity ASC NULLS LAST
+
+dt_list_dependencies: |
+  SELECT id, from_task_id, to_task_id, dep_type, lag_days
+  FROM dt_dependencies
+  WHERE tenant = :tenant AND project_id = :project_id
+
+dt_get_budget: |
+  -- 同じく、予算行が無いプロジェクトでも rows[0] を安全に参照できるように
+  -- NULL 埋めの1行を保証する。
+  (SELECT planned_amount, actual_amount, forecast_amount, variance,
+          variance_percent, as_of_date
+   FROM dt_budget
+   WHERE tenant = :tenant AND project_id = :project_id)
+  UNION ALL
+  SELECT NULL, NULL, NULL, NULL, NULL, NULL
+  WHERE NOT EXISTS (
+    SELECT 1 FROM dt_budget
+    WHERE tenant = :tenant AND project_id = :project_id
+  )
+
+dt_risk_exposure_total: |
+  -- diagnose テンプレートの採点入力用。Active なリスクの露出度合計だけを
+  -- 1行1列で返す（一覧は dt_list_risks の方でLLMに渡す）。
+  SELECT COALESCE(SUM(exposure), 0) AS total_exposure
+  FROM dt_risks
+  WHERE tenant = :tenant AND project_id = :project_id AND status = 'Active'
+
+dt_critical_blocker_count: |
+  -- 同じく採点入力用。未解決かつ Critical のブロッカー件数。
+  SELECT COUNT(*) AS count
+  FROM dt_issues
+  WHERE tenant = :tenant AND project_id = :project_id
+    AND is_blocker = true AND severity = 'Critical' AND status != 'Closed'
+
+dt_open_task_count: |
+  -- diagnose テンプレートのプロンプト用（未完了タスク件数）。
+  -- status は Jira のワークフロー名をそのまま保持しており固定の enum が
+  -- 無いため、代表的な完了ステータス名だけを除外する簡易的な判定。
+  SELECT COUNT(*) AS count
+  FROM dt_tasks
+  WHERE tenant = :tenant AND project_id = :project_id
+    AND status NOT IN ('Done','Closed','Cancelled','Resolved')
+
+dt_resource_avg_allocation: |
+  -- 同じく採点入力用。稼働中メンバーの平均アサイン率
+  -- （100超は複数プロジェクト掛け持ちによる過負荷を示す）。
+  SELECT COALESCE(AVG(allocation_percent), 0) AS avg_allocation
+  FROM dt_resources
+  WHERE tenant = :tenant AND project_id = :project_id AND status = 'Active'
+
+dt_list_decisions: |
+  SELECT id, title, context, decision_text, rationale, decision_date,
+         decided_by, status, impact_areas
+  FROM dt_decisions
+  WHERE tenant = :tenant AND project_id = :project_id
+  ORDER BY decision_date DESC
+
+dt_list_documents: |
+  SELECT id, title, url, doc_type, doc_status, content_summary
+  FROM dt_documents
+  WHERE tenant = :tenant AND project_id = :project_id
+  ORDER BY updated_at DESC
+
+dt_record_health_diagnostic: |
+  INSERT INTO dt_health_diagnostics
+    (tenant, project_id, health_score, health_status, rule_scores,
+     blockers, recommendations, confidence, analysis_summary)
+  VALUES
+    (:tenant, :project_id, :health_score, :health_status, :rule_scores,
+     :blockers, :recommendations, :confidence, :analysis_summary)
+  RETURNING id
+
+dt_latest_health_diagnostic: |
+  SELECT id, diagnosed_at, health_score, health_status, rule_scores,
+         blockers, recommendations, confidence, analysis_summary
+  FROM dt_health_diagnostics
+  WHERE tenant = :tenant AND project_id = :project_id
+  ORDER BY diagnosed_at DESC
+  LIMIT 1

@@ -1,0 +1,133 @@
+name: digital_twin_diagnose
+version: "1"
+industry: software
+description: |
+  Project Digital Twin の健康診断。ルールベースで5軸を採点し
+  （aipmo.health.project_health、決定論的・再現可能）、その結果を
+  LLM に渡して所見と推奨アクションを日本語で書かせる（LLM はスコアを
+  計算し直さない）。結果は dt_health_diagnostics に保存する。
+
+  リソース・リスク・予算はまだ digital_twin_sync が書き込まないため、
+  この診断でもそれらの軸は「データ無し」として満点扱いになる
+  （aipmo/health.py の各 *_score 関数は None/0 のとき減点しない）。
+  詳しくは docs/PROJECT-DIGITAL-TWIN.md を参照。
+
+params:
+  project_id: ""
+
+steps:
+  - id: project
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_get_project
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: wbs_nodes
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_list_wbs_nodes
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: tasks
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_list_tasks
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: schedule
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_latest_schedule_forecast
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: budget
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_get_budget
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: risk_exposure
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_risk_exposure_total
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: blocker_count
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_critical_blocker_count
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: open_tasks
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_open_task_count
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: resource_allocation
+    adapter: postgres
+    action: query
+    inputs:
+      name: dt_resource_avg_allocation
+      params:
+        project_id: "{{ params.project_id }}"
+
+  - id: assessment
+    expression: project_health
+    inputs:
+      schedule_variance_percent: "{{ steps.schedule.output.rows[0].variance_percent }}"
+      resource_utilization_percent: "{{ steps.resource_allocation.output.rows[0].avg_allocation }}"
+      risk_total_exposure: "{{ steps.risk_exposure.output.rows[0].total_exposure }}"
+      budget_variance_percent: "{{ steps.budget.output.rows[0].variance_percent }}"
+      critical_blocker_count: "{{ steps.blocker_count.output.rows[0].count }}"
+
+  - id: narrative
+    llm:
+      profile: agent
+      temperature: 0.1
+    prompt: digital_twin_diagnosis_ja
+    inputs:
+      today: "{{ run.date }}"
+      project:
+        name: "{{ steps.project.output.rows[0].name }}"
+        jira_project_key: "{{ steps.project.output.rows[0].jira_project_key }}"
+      assessment: "{{ steps.assessment.output }}"
+      wbs_count: "{{ steps.wbs_nodes.output.count }}"
+      wbs_nodes: "{{ steps.wbs_nodes.output.rows }}"
+      task_count: "{{ steps.tasks.output.count }}"
+      open_task_count: "{{ steps.open_tasks.output.rows[0].count }}"
+      tasks: "{{ steps.tasks.output.rows }}"
+    output_format: json
+    output_schema:
+      required: [primary_concern, recommendations, analysis_summary, confidence]
+
+  - id: record
+    adapter: postgres
+    action: execute
+    inputs:
+      name: dt_record_health_diagnostic
+      params:
+        project_id: "{{ params.project_id }}"
+        health_score: "{{ steps.assessment.output.health_score }}"
+        health_status: "{{ steps.assessment.output.health_status }}"
+        rule_scores: "{{ steps.assessment.output.rule_scores }}"
+        blockers: "{{ steps.assessment.output.reasons }}"
+        recommendations: "{{ steps.narrative.output.recommendations }}"
+        confidence: "{{ steps.narrative.output.confidence }}"
+        analysis_summary: "{{ steps.narrative.output.analysis_summary }}"
