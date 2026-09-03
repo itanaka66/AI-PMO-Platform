@@ -107,6 +107,7 @@ def _parse_step(raw: Any, where: str) -> Step:
         output_schema=raw.get("output_schema"),
         when=raw.get("when"),
         continue_on_error=bool(raw.get("continue_on_error", False)),
+        depends_on=raw.get("depends_on"),
     )
 
     fmt = raw.get("output_format", "text")
