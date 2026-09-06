@@ -22,10 +22,20 @@ adapters:
     token: ${SLACK_BOT_TOKEN}
     default_channel: "#project-updates"
   postgres:
-    dsn: postgresql://aipmo:aipmo@postgres:5432/aipmo
+    # ./scripts/install-docker.sh が対話的に決め、.env に書く。自前でも
+    # 外部でも、この行自体は書き換えない。
+    # Decided interactively by ./scripts/install-docker.sh and written to
+    # .env — self-hosted or external, this line does not change either way.
+    dsn: ${AIPMO_PG_DSN}
     queries_file: queries.yaml
   qdrant:
-    url: http://qdrant:6333
+    # 同じく .env から。「使わない」を選んだ場合は空文字になり、実際に
+    # ナレッジ機能を呼んだときだけエラーになる（他の機能には影響しない）。
+    # Also from .env. Choosing "don't use it" leaves this empty — it only
+    # errors if a knowledge/vector-search feature is actually invoked,
+    # nothing else is affected.
+    url: ${QDRANT_URL}
+    api_key: ${QDRANT_API_KEY}
     public_collection: public_pmo_knowledge
     embedding:
       provider: ollama

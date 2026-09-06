@@ -1,14 +1,33 @@
 # AI-PMO Platform — Docker 構成 / Docker deployment
 #
-#   docker compose up -d
-#   docker compose run --rm aipmo setup
+#   ./scripts/install-docker.sh
+#     PostgreSQL・Ollama・Qdrant をそれぞれ自前で立てるか外部に接続するか
+#     対話的に選べる。選ばなかったものはコンテナも volume も作られない。
+#     Interactively choose, for each of PostgreSQL/Ollama/Qdrant, whether
+#     to run it here or connect to an external one. Whichever you skip
+#     gets neither a container nor a volume.
 #
-# ローカル LLM を使う構成。会議 Transcript を外部に出さない。
-# Runs everything locally, so meeting transcripts never leave the network.
+# スクリプトを使わず直接動かす場合、自前で立てたいものだけ profile で
+# 指定する。指定しなかったものは .env の値（既定は空、または compose 内の
+# コンテナ名）に向く:
+#
+#   docker compose --profile postgres --profile ollama --profile qdrant up -d
+#     # 全部自前 / everything self-hosted
+#   docker compose --profile postgres up -d
+#     # PostgreSQL だけ自前、Ollama・Qdrant は .env の外部接続先へ
+#     # / only PostgreSQL self-hosted; Ollama and Qdrant go wherever .env points
+#
+# Running this directly instead of the script: request a profile for each
+# of PostgreSQL/Ollama/Qdrant you want to self-host. Skipping a profile
+# means that service's connection comes from .env instead (external URL,
+# or left unset if you are not using it — see .env.example).
+#
+#   docker compose run --rm aipmo setup
 
 services:
   postgres:
     image: postgres:16-alpine
+    profiles: ["postgres"]
     environment:
       POSTGRES_USER: aipmo
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aipmo}
@@ -25,6 +44,7 @@ services:
 
   qdrant:
     image: qdrant/qdrant:latest
+    profiles: ["qdrant"]
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
@@ -36,6 +56,7 @@ services:
 
   ollama:
     image: ollama/ollama:latest
+    profiles: ["ollama"]
     volumes:
       - ollama_models:/root/.ollama
     restart: unless-stopped
@@ -50,16 +71,20 @@ services:
 
   aipmo:
     build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      ollama:
-        condition: service_started
+    # postgres・ollama・qdrant はどれも外部かもしれず、depends_on では
+    # 条件付きにできないため持たない。接続の待ち合わせはアプリ側の
+    # リトライ（postgres アダプタの connect_attempts など）に任せる。
+    #
+    # No depends_on: postgres/ollama/qdrant may each be external, and
+    # Compose cannot make a dependency conditional. Waiting for them to be
+    # ready is left to the application's own retry logic (e.g. the
+    # postgres adapter's connect_attempts).
     environment:
       AIPMO_CONFIG: /app/config.docker.yaml
-      OLLAMA_HOST: http://ollama:11434
+      AIPMO_PG_DSN: ${AIPMO_PG_DSN:-postgresql://aipmo:aipmo@postgres:5432/aipmo}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
     volumes:
       - ./prompts:/app/prompts:ro
       - ./templates:/app/templates:ro

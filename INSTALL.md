@@ -172,10 +172,15 @@ the installer builds an isolated virtual environment.
 ## C. Docker（ローカル AI）/ Docker (local AI)
 
 会議の記録を外部の AI サービスに送りたくない場合はこちらです。
-PostgreSQL・Qdrant・ローカル LLM がまとめて起動します。
+PostgreSQL・Qdrant・ローカル LLM（Ollama）は、それぞれ独立に**このマシンに
+自前で立てるか、外部のものに接続するか**を対話的に選べます。自前で
+立てない、と選んだものはコンテナも Docker の volume も一切作られません。
 
 Use this when meeting transcripts must not go to an external AI service.
-It brings up PostgreSQL, Qdrant and a local LLM together.
+For each of PostgreSQL, Qdrant, and the local LLM (Ollama), you
+interactively choose whether to **run it here or connect to an external
+one.** Whichever you choose not to self-host gets neither a container nor
+a Docker volume.
 
 **必要なもの / Requirements**
 - [Docker Desktop](https://docs.docker.com/get-docker/)
