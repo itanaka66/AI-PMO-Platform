@@ -30,13 +30,19 @@ from the perpetual e2-micro allowance.
 ### RAM 1GB では Qdrant を同居させる余地がほぼ無い
 
 Oracle 版の 12GB と違い、e2-micro の 1GB では Caddy + aipmo +
-scheduler だけでほぼ埋まります。**この構成では Qdrant を既定で外しています。**
-ベクトル検索・ナレッジ機能が要る場合は、有料の e2-small（2GB）以上に
-上げてください。
+scheduler だけでほぼ埋まります。**この構成では自前 Qdrant コンテナを
+既定で外しています。** ベクトル検索・ナレッジ機能が要る場合は、有料の
+e2-small（2GB）以上に上げるか、**外部の Qdrant Cloud 無料プラン**を
+使ってください——こちらなら 1GB のままで足ります
+（`.env` に `QDRANT_URL` / `QDRANT_API_KEY` を書くだけ。
+`deploy/generic/config.yaml.example` 参照）。
 
 Unlike Oracle's 12GB, e2-micro's 1GB is largely spent just on Caddy + aipmo +
-scheduler. **Qdrant is left out by default here.** If you need vector search
-or the knowledge features, move up to a paid e2-small (2GB) or larger.
+scheduler. **A self-hosted Qdrant container is left out by default here.**
+If you need vector search or the knowledge features, either move up to a
+paid e2-small (2GB) or larger, or use an **external Qdrant Cloud free
+plan** instead — that works fine at 1GB (just set `QDRANT_URL` /
+`QDRANT_API_KEY` in `.env`; see `deploy/generic/config.yaml.example`).
 
 ### この構成にローカル LLM は入れていません
 
@@ -205,13 +211,16 @@ page for the current regions and specs.
 - **本番の業務データ** — 単一インスタンス・単一 DB でバックアップも
   可用性の保証もありません
 - **機微な会議記録** — AI はクラウドに出ます
-- **ベクトル検索が要る用途** — 1GB では Qdrant が同居できません。
-  有料の e2-small 以上か、[Oracle 版](DEPLOY-ORACLE.md) を検討してください
+- **ベクトル検索が要る用途で、外部の Qdrant Cloud も使いたくない場合** —
+  1GB では自前 Qdrant が同居できません。有料の e2-small 以上か、
+  [Oracle 版](DEPLOY-ORACLE.md) を検討してください（外部 Qdrant Cloud
+  でよければ 1GB のままで足ります — 上の「RAM 1GB では」を参照）
 - **多人数の同時利用** — 共有 vCPU 1つでは数人が上限です
 
-Not for production data, sensitive transcripts, workloads needing vector
-search (upgrade to a paid e2-small or use the Oracle guide instead), or many
-concurrent users.
+Not for production data, sensitive transcripts, or many concurrent users.
+Vector search needing a self-hosted Qdrant does not fit at 1GB either
+(upgrade to a paid e2-small or use the Oracle guide) — but an external
+Qdrant Cloud plan works fine at 1GB (see "RAM 1GB" above).
 
 **試す・小さく回す・型を作る**にはよく機能します。
 It works well for trying things, running small, and building the templates.

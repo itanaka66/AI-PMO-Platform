@@ -36,10 +36,15 @@ elsewhere, or shut it down.
 
 ### B1S は 1GB RAM。Qdrant を同居させる余地がほぼ無い
 
-GCP の e2-micro と同じ制約です。**この構成では Qdrant を既定で外して
-います。**
+GCP の e2-micro と同じ制約です。**この構成では自前 Qdrant コンテナを
+既定で外しています。** ベクトル検索が要る場合は、外部の Qdrant Cloud
+無料プランを使えば 1GB のままで足ります（`.env` に `QDRANT_URL` /
+`QDRANT_API_KEY` を書くだけ。`deploy/generic/config.yaml.example` 参照）。
 
-Same constraint as GCP's e2-micro. **Qdrant is left out by default here.**
+Same constraint as GCP's e2-micro. **A self-hosted Qdrant container is
+left out by default here.** If you need vector search, an external Qdrant
+Cloud free plan works fine at 1GB (just set `QDRANT_URL` /
+`QDRANT_API_KEY` in `.env`; see `deploy/generic/config.yaml.example`).
 
 ### この構成にローカル LLM は入れていません
 

@@ -3,14 +3,18 @@
 # 既定（プロファイル無し）は caddy + aipmo + scheduler の3つだけ。
 # 1GB RAM クラスの無料枠（GCP e2-micro・Azure B1S・AWS t2/t3.micro）を
 # 想定した最小構成で、PostgreSQL は Aiven や RDS など外部の無料プランに置く
-# 前提です。ベクトル検索 (Qdrant) はここには含めません — 1GB では同時に
-# 走らせる余地がほぼ無いためです。
+# 前提です。ベクトル検索 (Qdrant) は自前コンテナとしてはここには含めません
+# — 1GB では同時に走らせる余地がほぼ無いためです。ただし .env に
+# QDRANT_URL（+ QDRANT_API_KEY）を書けば、外部の Qdrant Cloud 無料プランは
+# 1GB のままでも使えます — こちらはこの compose の RAM を消費しません。
 #
 # The default (no profile) starts only caddy + aipmo + scheduler — a minimal
 # footprint sized for 1GB-class free tiers (GCP e2-micro, Azure B1S, AWS
-# t2/t3.micro), assuming PostgreSQL lives externally (Aiven, RDS, etc.).
-# Vector search (Qdrant) is left out by default: there is little room left
-# for it at 1GB.
+# t2/t3.micro), assuming PostgreSQL lives externally (Aiven, RDS, etc.). A
+# self-hosted Qdrant container is left out by default: there is little room
+# left for it at 1GB. An external Qdrant Cloud free plan works fine even at
+# 1GB, though — set QDRANT_URL (+ QDRANT_API_KEY) in .env; it costs this
+# compose no RAM at all.
 #
 # 有料 VPS のように RAM に余裕がある場合は、プロファイルで足せます。
 # Postgres と Ollama は互いに独立したプロファイルなので、
@@ -42,13 +46,25 @@
 # llm profile in config.yaml to ollama (config.yaml.example shows both):
 #   OLLAMA_HOST=http://ollama:11434
 #
-# どちらのプロファイルも指定しなければ、対応するサービスもその名前付き
-# volume も一切作られません — 外部サービスを使う場合、ローカルにデータは
-# 残りません。
+# full を自前 Qdrant として使う場合、.env の QDRANT_URL をこのコンテナへ
+# 向けてください（API key は不要）:
+#   QDRANT_URL=http://qdrant:6333
+# 外部の Qdrant Cloud を使う場合は full を付けず、.env にその URL と
+# API key だけを書いてください。
 #
-# Leaving a profile out means its service — and its named volume — is never
-# created at all: pointing at an external service leaves no local data
-# behind.
+# Using full for a self-hosted Qdrant: point .env's QDRANT_URL at this
+# container (no API key needed):
+#   QDRANT_URL=http://qdrant:6333
+# Using an external Qdrant Cloud instead: skip full and just set its URL
+# and API key in .env.
+#
+# selfhosted・ollama・full のいずれも指定しなければ、対応するサービスも
+# その名前付き volume も一切作られません — 外部サービスを使う場合、
+# ローカルにデータは残りません。
+#
+# Leaving a profile out (selfhosted, ollama, or full) means its service —
+# and its named volume — is never created at all: pointing at an external
+# service leaves no local data behind.
 
 services:
   caddy:
@@ -87,6 +103,13 @@ services:
       # Left unset, config.yaml is expected to use a cloud LLM. Only point
       # this at the container name below when adding --profile ollama.
       OLLAMA_HOST: ${OLLAMA_HOST:-}
+      # 両方未設定ならナレッジ機能は使わない想定。外部 Qdrant Cloud か、
+      # --profile full のこのコンテナ名のどちらかを .env で指定する。
+      # With both unset, the knowledge features are expected to be unused.
+      # Set either an external Qdrant Cloud URL or this container's name
+      # (with --profile full) in .env.
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
     volumes:
       - ../../templates:/app/templates:ro
       - ../../prompts:/app/prompts:ro
@@ -123,6 +146,8 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
       OLLAMA_HOST: ${OLLAMA_HOST:-}
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
     volumes:
       - ../../templates:/app/templates:ro
       - ../../prompts:/app/prompts:ro
@@ -139,10 +164,12 @@ services:
       resources:
         limits: { memory: 512M }
 
-  # ベクトル検索。1GB クラスの無料枠には基本的に乗らないので既定では
-  # 外す。--profile full で足す。
-  # Vector search. Left out by default since it rarely fits a 1GB-class free
-  # tier; add it with --profile full.
+  # 自前のベクトル検索。1GB クラスの無料枠には基本的に乗らないので既定
+  # では外す。--profile full で足す。外部の Qdrant Cloud を使うなら
+  # このコンテナ自体が要らない — .env にその URL を書くだけでよい。
+  # Your own vector search. Left out by default since it rarely fits a
+  # 1GB-class free tier; add it with --profile full. Using an external
+  # Qdrant Cloud instead needs no container at all — just its URL in .env.
   qdrant:
     image: qdrant/qdrant:latest
     profiles: ["full"]

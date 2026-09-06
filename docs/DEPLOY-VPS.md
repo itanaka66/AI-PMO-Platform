@@ -158,6 +158,14 @@ external AI service), add `--profile ollama` too, fill in `.env`'s
 to the ollama one (commented out in `config.yaml.example`). 4GB has
 headroom for Postgres, Qdrant, and a self-hosted LLM together.
 
+**外部の Qdrant Cloud を使いたい場合**は `--profile full` を外し、`.env` に
+その URL と API key を書くだけで構いません——マネージドサービスの方が
+気楽なら、RAM に余裕があってもこちらを選べます。
+
+**To use an external Qdrant Cloud instead**, skip `--profile full` and
+just set its URL and API key in `.env` — even with RAM to spare, a managed
+service is a valid choice if it is less to look after.
+
 ### 6. スマホで開く / Open it on your phone
 
 ```
