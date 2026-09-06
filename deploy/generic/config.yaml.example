@@ -1,0 +1,83 @@
+# deploy/generic/config.yaml にコピーして編集する / copy to
+# deploy/generic/config.yaml and edit.
+#
+# PostgreSQL・LLM の接続先は、それぞれ独立に「外部」か「同じ compose 内の
+# 自前サービス」かを選べる。選び方は .env（AIPMO_PG_DSN・OLLAMA_HOST）と
+# docker-compose.yml のプロファイル（--profile selfhosted・--profile
+# ollama）が対応しており、ここではどちらを選んでも書き方は変わらない
+# ——資格情報も接続先も環境変数から来るので、config.yaml 自体は同じまま
+# 使い回せる。
+#
+# Postgres and the LLM can each independently be "external" or "your own
+# service in this same compose file" — the choice lives in .env
+# (AIPMO_PG_DSN, OLLAMA_HOST) and the docker-compose.yml profiles
+# (--profile selfhosted, --profile ollama). This file does not need to
+# change either way: credentials and endpoints both come from environment
+# variables, so the same config.yaml works regardless of which you pick.
+
+tenant: my_company
+lang: ja
+
+llm:
+  # 既定: クラウド LLM（OpenAI）。会議録などがそのまま外部に送られる。
+  # Default: cloud LLM (OpenAI). Transcripts go to an external service.
+  default:
+    provider: openai
+    model: gpt-4o-mini
+  fast:
+    provider: openai
+    model: gpt-4o-mini
+
+  # 自前 LLM を使う場合は、上のブロックをコメントアウトしてこちらを使う。
+  # host は省略してよい — 省略すると .env の OLLAMA_HOST をそのまま使う
+  # （外部の Ollama サーバーでも、--profile ollama の自前コンテナでも、
+  # config.yaml 側の書き換えはこの2行の切り替えだけで済む）。
+  #
+  # Using your own LLM instead: comment out the block above and use this
+  # one. `host` can be omitted — it then falls back to .env's OLLAMA_HOST
+  # as-is, whether that points at an external Ollama server or the
+  # --profile ollama container in this compose. Switching between cloud
+  # and self-hosted is just swapping these two blocks.
+  # default:
+  #   provider: ollama
+  #   model: qwen2.5:14b
+  # fast:
+  #   provider: ollama
+  #   model: qwen2.5:7b
+
+prompts_dir: prompts
+
+# スケジューラの記録。再起動で同じ実行を繰り返さないために要る。
+# The scheduler's record, so a restart does not repeat work.
+state_file: /app/state/scheduler-state.json
+
+web:
+  # Caddy が前段にいるので、待ち受けはコンテナ内部だけでよい。
+  # Caddy sits in front, so this only needs to listen inside the container.
+  host: 0.0.0.0
+  port: 8765
+  templates_dir: templates
+
+adapters:
+  mode: mock
+  postgres:
+    # DSN は .env から環境変数で渡す。外部（Aiven・RDS）でも、
+    # --profile selfhosted の自前コンテナでも、ここは書き換えない。
+    # The DSN arrives from .env — external (Aiven, RDS) or the
+    # --profile selfhosted container, this line does not change either way.
+    dsn: ${AIPMO_PG_DSN}
+    queries_file: queries.yaml
+    # 外部の無料プランはアイドル停止から復帰するまで数秒かかることがある。
+    # An external free plan can take a few seconds to wake from an idle stop.
+    connect_attempts: 4
+    connect_backoff: 3.0
+
+  # --profile full で Qdrant を足した場合だけ有効になる。
+  # Only takes effect once Qdrant is added with --profile full.
+  # qdrant:
+  #   url: http://qdrant:6333
+  #   public_collection: public_pmo_knowledge
+  #   embedding:
+  #     provider: openai
+  #     model: text-embedding-3-small
+  #     dimension: 1536

@@ -130,6 +130,7 @@ Locks ufw down to 22/80/443, doubling up with the Cloud Firewall from step 2.
 
 ```bash
 cp deploy/generic/.env.example deploy/generic/.env
+cp deploy/generic/config.yaml.example deploy/generic/config.yaml
 python3 -c "import secrets;print(secrets.token_urlsafe(24))"
 vi deploy/generic/.env
 # AIPMO_PG_DSN=postgresql://aipmo:aipmo@postgres:5432/aipmo にする
@@ -139,6 +140,16 @@ cd deploy/generic && docker compose --profile full --profile selfhosted up -d --
 ```
 
 スキーマは Postgres コンテナの初回起動時に自動で読み込まれます。
+
+**LLM も自前にしたい場合**は、`--profile ollama` を足し、`.env` の
+`OLLAMA_HOST=http://ollama:11434` を埋め、`config.yaml` の `llm` ブロックを
+ollama 側に切り替えてください（`config.yaml.example` 参照）。CX22 相当の
+4GB でも Postgres・Qdrant・自前 LLM を同居させる余裕があります。
+
+**To also self-host the LLM**, add `--profile ollama`, fill in `.env`'s
+`OLLAMA_HOST=http://ollama:11434`, and switch `config.yaml`'s `llm` block
+to the ollama one (see `config.yaml.example`). Even the CX22-class 4GB has
+room for Postgres, Qdrant, and a self-hosted LLM together.
 
 ### 6. スマホで開く / Open it on your phone
 
@@ -182,14 +193,18 @@ docker compose exec qdrant tar czf - /qdrant/storage > qdrant-$(date +%F).tgz
 
 ## この構成が向かないもの / What this is not for
 
-- **機微な会議記録** — AI 呼び出し自体はクラウドに出ます
+- **機微な会議記録** — 既定では AI 呼び出しがクラウドに出ます。
+  `--profile ollama` で自前 LLM に切り替えれば無くなります
+  （上の「LLM も自前にしたい場合」を参照）
 - **高可用性が要る用途** — 単一サーバー構成です
 - **ファイアウォール設定を後回しにしてよい用途** — 既定で全ポート開放
   なので、これだけは他のガイドより優先度が高い作業です
 
-Not for sensitive transcripts, not for anything needing high availability —
-and the firewall step is not optional here the way it might feel elsewhere,
-since the default is wide open rather than closed.
+Not for sensitive transcripts by default, unless you also add
+`--profile ollama` (see "To also self-host the LLM" above). Not for
+anything needing high availability — and the firewall step is not
+optional here the way it might feel elsewhere, since the default is wide
+open rather than closed.
 
 **社内の小規模チームで、無料枠の制約無しに常用する**構成としてよく
 機能します。[一般的な VPS 版](DEPLOY-VPS.md) と同じ立ち位置です。

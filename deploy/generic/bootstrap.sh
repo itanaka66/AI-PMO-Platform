@@ -91,9 +91,15 @@ fi
 step "次の作業 / What to do next"
 cat <<'NEXT'
 
-    1. .env を作る / create .env
+    1. .env と config.yaml を作る / create .env and config.yaml
          cp deploy/generic/.env.example deploy/generic/.env
+         cp deploy/generic/config.yaml.example deploy/generic/config.yaml
          # DOMAIN / AIPMO_WEB_TOKEN / AIPMO_PG_DSN / OPENAI_API_KEY を埋める
+         # Postgres・LLM を自前にする場合は OLLAMA_HOST も埋め、
+         # config.yaml の llm ブロックを切り替える（config.yaml.example 参照）
+         # Fill DOMAIN / AIPMO_WEB_TOKEN / AIPMO_PG_DSN / OPENAI_API_KEY.
+         # Self-hosting Postgres/the LLM: also fill OLLAMA_HOST and switch
+         # config.yaml's llm block (see config.yaml.example).
 
     2. DB の証明書（外部の Aiven / RDS などを使う場合）
        CA cert (only if using an external DB such as Aiven or RDS):
@@ -109,8 +115,12 @@ cat <<'NEXT'
 
     4. 起動する / start
          cd deploy/generic && docker compose up -d --build
-       RAM に余裕があれば / with RAM to spare:
+       RAM に余裕があれば（Postgres・LLM を自前にする分だけプロファイルを
+       足す。片方だけ自前にすることもできる）:
+       With RAM to spare, add only the profiles you actually need — you can
+       self-host just one of Postgres/the LLM and keep the other external:
          docker compose --profile full --profile selfhosted up -d --build
+         docker compose --profile full --profile selfhosted --profile ollama up -d --build
 
     5. スマホで開く / open on your phone
          https://<DOMAIN>/?token=<AIPMO_WEB_TOKEN>

@@ -12,18 +12,43 @@
 # Vector search (Qdrant) is left out by default: there is little room left
 # for it at 1GB.
 #
-# 有料 VPS のように RAM に余裕がある場合は、プロファイルで足せます:
-# With more RAM (a paid VPS), add services back with profiles:
+# 有料 VPS のように RAM に余裕がある場合は、プロファイルで足せます。
+# Postgres と Ollama は互いに独立したプロファイルなので、
+# 「Postgres は外部、LLM だけ自前」のような組み合わせも選べます。
 #
-#   docker compose --profile full up -d              # + Qdrant
+# With more RAM (a paid VPS), add services back with profiles. Postgres and
+# Ollama are independent profiles, so "external Postgres, self-hosted LLM
+# only" (or the reverse) is a valid combination too.
+#
+#   docker compose --profile full up -d
+#     # + Qdrant
 #   docker compose --profile full --profile selfhosted up -d
-#                                                      # + Qdrant + 自前 Postgres
-#                                                      # + Qdrant + your own Postgres
+#     # + Qdrant + 自前 Postgres / + Qdrant + your own Postgres
+#   docker compose --profile full --profile selfhosted --profile ollama up -d
+#     # + Qdrant + 自前 Postgres + 自前 Ollama（会議録を外に出さない構成）
+#     # + Qdrant + your own Postgres + your own Ollama (transcripts never
+#     #   leave the network)
 #
 # selfhosted を使う場合、.env の AIPMO_PG_DSN をこのコンテナ (postgres) へ
 # 向けてください: postgresql://aipmo:aipmo@postgres:5432/aipmo
 # With selfhosted, point .env's AIPMO_PG_DSN at this container instead:
 #   postgresql://aipmo:aipmo@postgres:5432/aipmo
+#
+# ollama を使う場合、.env の OLLAMA_HOST をこのコンテナへ向け、
+# config.yaml の llm プロファイルを ollama に切り替えてください
+# （config.yaml.example にどちらの例も書いてあります）:
+#   OLLAMA_HOST=http://ollama:11434
+# With ollama, point .env's OLLAMA_HOST at this container and switch the
+# llm profile in config.yaml to ollama (config.yaml.example shows both):
+#   OLLAMA_HOST=http://ollama:11434
+#
+# どちらのプロファイルも指定しなければ、対応するサービスもその名前付き
+# volume も一切作られません — 外部サービスを使う場合、ローカルにデータは
+# 残りません。
+#
+# Leaving a profile out means its service — and its named volume — is never
+# created at all: pointing at an external service leaves no local data
+# behind.
 
 services:
   caddy:
@@ -57,6 +82,11 @@ services:
       AIPMO_VIEWER_TOKEN: ${AIPMO_VIEWER_TOKEN:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
+      # 未設定なら config.yaml はクラウド LLM を使う想定。--profile ollama
+      # で自前 Ollama を足す場合だけ、.env で下のコンテナ名に向ける。
+      # Left unset, config.yaml is expected to use a cloud LLM. Only point
+      # this at the container name below when adding --profile ollama.
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
     volumes:
       - ../../templates:/app/templates:ro
       - ../../prompts:/app/prompts:ro
@@ -92,6 +122,7 @@ services:
       AIPMO_CONFIG: /app/config.yaml
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AIPMO_PG_DSN: ${AIPMO_PG_DSN:?set AIPMO_PG_DSN in .env}
+      OLLAMA_HOST: ${OLLAMA_HOST:-}
     volumes:
       - ../../templates:/app/templates:ro
       - ../../prompts:/app/prompts:ro
@@ -151,9 +182,38 @@ services:
       resources:
         limits: { memory: 512M }
 
+  # 自前の Ollama。RAM に余裕があり、会議録などを外部 LLM に出したくない
+  # 場合向け。GPU が無いと推論は遅い — CPU だけで動く小さいモデルを選ぶこと。
+  # Your own Ollama, for a machine with RAM to spare that should not send
+  # transcripts to an external LLM. Inference is slow without a GPU — pick a
+  # small model that runs acceptably on CPU alone.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ollama"]
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/11434'"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits: { memory: 2G }
+    # GPU がある場合はコメントを外す / uncomment if a GPU is available
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
 volumes:
   scheduler_state:
   caddy_data:
   caddy_config:
   qdrant_data:
   postgres_data:
+  ollama_models:
