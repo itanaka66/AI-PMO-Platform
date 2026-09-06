@@ -131,6 +131,7 @@ service in this same compose file.
 
 ```bash
 cp deploy/generic/.env.example deploy/generic/.env
+cp deploy/generic/config.yaml.example deploy/generic/config.yaml
 python3 -c "import secrets;print(secrets.token_urlsafe(24))"
 vi deploy/generic/.env
 # AIPMO_PG_DSN=postgresql://aipmo:aipmo@postgres:5432/aipmo にする
@@ -144,6 +145,18 @@ cd deploy/generic && docker compose --profile full --profile selfhosted up -d --
 
 The schema loads automatically the first time the Postgres container
 starts — no manual `psql` step needed.
+
+**LLM も自前にしたい場合**（会議録を外部 AI に送りたくない場合）は、
+`--profile ollama` も足し、`.env` の `OLLAMA_HOST=http://ollama:11434` を
+埋め、`config.yaml` の `llm` ブロックを ollama 側に切り替えてください
+（`config.yaml.example` にコメントアウトした例があります）。4GB あれば
+Postgres・Qdrant・自前 LLM を同居させても余裕があります。
+
+**To also self-host the LLM** (so meeting transcripts never reach an
+external AI service), add `--profile ollama` too, fill in `.env`'s
+`OLLAMA_HOST=http://ollama:11434`, and switch `config.yaml`'s `llm` block
+to the ollama one (commented out in `config.yaml.example`). 4GB has
+headroom for Postgres, Qdrant, and a self-hosted LLM together.
 
 ### 6. スマホで開く / Open it on your phone
 
@@ -190,15 +203,18 @@ onto its own machine.
 
 ## この構成が向かないもの / What this is not for
 
-- **機微な会議記録** — AI 呼び出し自体はクラウドに出ます（自前推論
-  サーバーに切り替えれば別）
+- **機微な会議記録** — 既定では AI 呼び出しがクラウドに出ます。
+  `--profile ollama` で自前 LLM に切り替えれば、この制約は無くなります
+  （上の「LLM も自前にしたい場合」を参照）
 - **高可用性が要る用途** — 単一サーバー構成なので、落ちれば全部止まります
 - **急な負荷増** — VPS は無料枠と違って上限が緩いですが、無制限ではありません
 
-Not for sensitive transcripts unless you also switch the LLM call to your
-own inference server, not for anything needing high availability (one
-server, one point of failure), and not built to absorb a sudden spike —
-a VPS has more headroom than a free tier, not unlimited headroom.
+Not for sensitive transcripts by default — the LLM call goes to the cloud
+unless you also add `--profile ollama` (see "To also self-host the LLM"
+above), which removes that constraint entirely. Not for anything needing
+high availability (one server, one point of failure), and not built to
+absorb a sudden spike — a VPS has more headroom than a free tier, not
+unlimited headroom.
 
 **社内の小規模チームで、無料枠の制約無しに常用する**構成としてよく
 機能します。
