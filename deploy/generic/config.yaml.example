@@ -72,10 +72,20 @@ adapters:
     connect_attempts: 4
     connect_backoff: 3.0
 
-  # --profile full で Qdrant を足した場合だけ有効になる。
-  # Only takes effect once Qdrant is added with --profile full.
+  # ナレッジ機能（ベクトル検索）を使う場合だけコメントを外す。url は
+  # 外部の Qdrant Cloud でも、--profile full のこのコンテナでもよい
+  # ——.env の QDRANT_URL・QDRANT_API_KEY を切り替えるだけで、ここは
+  # 書き換えなくてよい（API key が要らない自前 Qdrant では空文字列に
+  # なるだけで、qdrant-client はそれを「無し」として扱う）。
+  #
+  # Uncomment only if using the knowledge features (vector search). `url`
+  # works for an external Qdrant Cloud or the --profile full container —
+  # this line does not change either way, only .env's QDRANT_URL /
+  # QDRANT_API_KEY do (a self-hosted Qdrant needs no key; the empty string
+  # it gets instead is treated by qdrant-client as "none given").
   # qdrant:
-  #   url: http://qdrant:6333
+  #   url: ${QDRANT_URL}
+  #   api_key: ${QDRANT_API_KEY}
   #   public_collection: public_pmo_knowledge
   #   embedding:
   #     provider: openai

@@ -151,6 +151,12 @@ ollama 側に切り替えてください（`config.yaml.example` 参照）。CX2
 to the ollama one (see `config.yaml.example`). Even the CX22-class 4GB has
 room for Postgres, Qdrant, and a self-hosted LLM together.
 
+**外部の Qdrant Cloud を使いたい場合**は `--profile full` を外し、`.env` に
+その URL と API key を書くだけで構いません。
+
+**To use an external Qdrant Cloud instead**, skip `--profile full` and
+just set its URL and API key in `.env`.
+
 ### 6. スマホで開く / Open it on your phone
 
 ```

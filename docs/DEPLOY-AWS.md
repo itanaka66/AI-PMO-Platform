@@ -52,9 +52,15 @@ notes where RDS differs at each step.
 
 ### t2/t3.micro は 1GB RAM。Qdrant を同居させる余地がほぼ無い
 
-GCP・Azure と同じ制約です。**この構成では Qdrant を既定で外しています。**
+GCP・Azure と同じ制約です。**この構成では自前 Qdrant コンテナを既定で
+外しています。** ベクトル検索が要る場合は、外部の Qdrant Cloud 無料
+プランを使えば 1GB のままで足ります（`.env` に `QDRANT_URL` /
+`QDRANT_API_KEY` を書くだけ。`deploy/generic/config.yaml.example` 参照）。
 
-Same constraint as GCP and Azure. **Qdrant is left out by default here.**
+Same constraint as GCP and Azure. **A self-hosted Qdrant container is
+left out by default here.** If you need vector search, an external Qdrant
+Cloud free plan works fine at 1GB (just set `QDRANT_URL` /
+`QDRANT_API_KEY` in `.env`; see `deploy/generic/config.yaml.example`).
 
 ---
 
