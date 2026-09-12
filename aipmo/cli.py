@@ -304,6 +304,26 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0 if written else 1
 
 
+def resolve_cors_origins(web_config: dict[str, Any],
+                          env_value: str | None) -> list[str]:
+    """web.cors_origins の実効値を決める / resolve the effective CORS origins.
+
+    環境変数はカンマ区切りで、config.yaml の web.cors_origins（リスト）より
+    優先する——コンテナ経由の展開では、資格情報と同じ経路（環境変数）で
+    渡す方が一貫するため。環境変数が設定されていれば（空文字列でも）、
+    config 側の値は完全に無視する。
+
+    The env var is comma-separated and takes priority over config.yaml's
+    web.cors_origins (a list) — in a container deployment, this travels the
+    same path (environment variables) as everything else that isn't checked
+    in. When the env var is set at all (even to an empty string), it fully
+    overrides config, rather than merging with it.
+    """
+    if env_value is not None:
+        return [origin.strip() for origin in env_value.split(",") if origin.strip()]
+    return list(web_config.get("cors_origins") or [])
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     """スマホ向け Web 画面を起動する / start the mobile web interface."""
     try:
@@ -333,10 +353,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     # has already been handed out by then.
     viewer_token = os.environ.get("AIPMO_VIEWER_TOKEN") or generate_token()
 
+    cors_origins = resolve_cors_origins(web, os.environ.get("AIPMO_CORS_ORIGINS"))
+
     engine = build_engine(config)
     template_root = Path(web.get("templates_dir", "templates")).resolve()
     app = create_app(engine, template_root, token, viewer_token=viewer_token,
-                     tenant=config.get("tenant", ""), lang=config.get("lang"))
+                     tenant=config.get("tenant", ""), lang=config.get("lang"),
+                     cors_origins=cors_origins or None)
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()

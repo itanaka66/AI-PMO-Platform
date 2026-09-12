@@ -25,7 +25,7 @@ A template-driven runtime for automating PMO work.
 | `scripts/` `installer/` | インストーラ（Windows / Mac / Linux / Docker） |
 | `deploy/oracle/` | Oracle Cloud Always Free + Aiven 構成 |
 | `deploy/generic/` | GCP / Azure / AWS / VPS 共通のデプロイ構成 |
-| `tests/` | テスト 1005件 |
+| `tests/` | テスト 1015件 |
 
 ## 対応している PMO 業務 / What it automates
 
@@ -50,7 +50,7 @@ A template-driven runtime for automating PMO work.
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 1005件
+pytest                                   # 1015件
 aipmo setup                              # 初回設定
 aipmo validate templates/examples/meeting_to_tasks.yaml
 aipmo serve --host 0.0.0.0               # スマホ向け画面

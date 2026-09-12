@@ -62,6 +62,7 @@ from typing import Any
 # import leaves Request unresolvable and it gets treated as a query parameter.
 # Hence these imports live at module level.
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -159,6 +160,7 @@ def create_app(
     tenant: str = "",
     lang: str | None = None,
     store: RunStore | None = None,
+    cors_origins: list[str] | None = None,
 ):
     runs = store or RunStore()
     ui_lang = normalize(lang) if lang else detect()
@@ -198,6 +200,36 @@ def create_app(
 
     app = FastAPI(title="AI-PMO", docs_url=None, redoc_url=None,
                   openapi_url=None)
+
+    # -- CORS -----------------------------------------------------------
+    #
+    # 既定では何も付けない。この画面はトークンをクエリ文字列やクッキーで
+    # 運ぶため、任意のオリジンからの読み取りを許すと、認証だけでは防げない
+    # 経路が生まれる。別オリジンの画面・アプリから叩く場合だけ、
+    # 許可するオリジンを明示させる。
+    #
+    # No CORS headers by default. This screen carries its token in a query
+    # string or cookie; allowing any origin to read responses would open a
+    # path that authentication alone does not close. Only set up CORS when
+    # an operator explicitly names the origins that should be allowed to
+    # call this from elsewhere.
+    if cors_origins:
+        # ワイルドカードは資格情報つき（Cookie）の応答と両立しない
+        # ——ブラウザ側が拒否する。ワイルドカードを渡された場合は
+        # allow_credentials を落とし、クエリ文字列トークンでの利用に限る。
+        #
+        # A wildcard origin cannot be combined with credentialed (cookie)
+        # responses — browsers refuse it. Given a wildcard, credentials are
+        # dropped instead, limiting cross-origin use to the query-string
+        # token.
+        allow_credentials = "*" not in cors_origins
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=cors_origins,
+            allow_credentials=allow_credentials,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # -- 認証 / authentication --------------------------------------------
 
