@@ -196,6 +196,18 @@ a Docker volume.
 初回はモデルのダウンロードで数 GB あります。時間がかかります。
 The first run downloads several GB of model weights. It takes a while.
 
+対話質問なしで自動化したい場合は、CLI 引数で指定できます
+（`--help` で一覧表示）:
+
+To automate this without interactive prompts, pass CLI flags instead
+(see `--help` for the full list):
+
+```bash
+./scripts/install-docker.sh --postgres external \
+  --postgres-dsn postgresql://user:pw@host:5432/db \
+  --ollama local --qdrant skip
+```
+
 GPU を使う場合は `docker-compose.yml` の `deploy:` のコメントを外してください。
 To use a GPU, uncomment the `deploy:` block in `docker-compose.yml`.
 

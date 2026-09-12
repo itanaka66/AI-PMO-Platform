@@ -2,12 +2,41 @@
 # Docker 構成のインストーラ / Docker deployment installer
 #
 # PostgreSQL・Ollama・Qdrant はそれぞれ独立に、このマシンに自前で立てるか
-# 外部のものに接続するかを対話的に選べる。自前で立てない、と選んだものは
-# コンテナも Docker の volume も一切作られない。
+# 外部のものに接続するかを選べる。自前で立てない、と選んだものはコンテナも
+# Docker の volume も一切作られない。CLI 引数で指定すれば非対話で実行でき、
+# 引数を渡さなければ対話端末で質問する（従来どおり）。
 #
 # For each of PostgreSQL, Ollama, and Qdrant, independently choose whether
-# to run it here or connect to an external one. Whichever you choose not
-# to self-host gets neither a container nor a Docker volume.
+# to run it here or connect to an external one. Whichever you choose not to
+# self-host gets neither a container nor a Docker volume. Pass CLI flags to
+# run non-interactively; omit them to be asked interactively (as before).
+#
+# 使い方 / Usage:
+#   ./scripts/install-docker.sh [options]
+#
+#   --postgres local|external          既定 local / default local
+#   --postgres-dsn DSN                 --postgres external のとき必須
+#                                       required with --postgres external
+#   --ollama local|external            既定 local / default local
+#   --ollama-host URL                  --ollama external のとき必須
+#                                       required with --ollama external
+#   --qdrant local|external|skip       既定 local / default local
+#   --qdrant-url URL                   --qdrant external のとき必須
+#                                       required with --qdrant external
+#   --qdrant-api-key KEY               任意（--qdrant external のみ）
+#                                       optional (--qdrant external only)
+#   -h, --help                         このヘルプを表示 / show this help
+#
+# 例 / Examples:
+#   ./scripts/install-docker.sh
+#     # 対話的に質問される（対話端末が無ければ全部自前が既定）
+#     # asked interactively (defaults to self-hosting everything with no TTY)
+#
+#   ./scripts/install-docker.sh --postgres external \
+#     --postgres-dsn postgresql://user:pw@host:5432/db \
+#     --ollama local --qdrant skip
+#     # 質問されない。PostgreSQL だけ外部、Ollama は自前、Qdrant は使わない
+#     # no prompts: external PostgreSQL, self-hosted Ollama, no Qdrant
 
 set -euo pipefail
 
@@ -20,6 +49,81 @@ step() { printf '\n==> %s\n' "$1"; }
 note() { printf '    %s\n' "$1"; }
 warn() { printf '\n[!] %s\n' "$1"; }
 fail() { printf '\nエラー / Error: %s\n\n' "$1" >&2; exit 1; }
+
+usage() {
+  sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+# --- CLI 引数の解析 / parsing CLI arguments -----------------------------------
+
+POSTGRES_MODE=""
+OLLAMA_MODE=""
+QDRANT_MODE=""
+PG_DSN_VALUE=""
+OLLAMA_HOST_VALUE=""
+QDRANT_URL_VALUE=""
+QDRANT_API_KEY_VALUE=""
+CLI_SELECTION_GIVEN=0
+
+require_value() {
+  # $1 = フラグ名 / flag name, $2 = 次の引数があるか / whether a next arg exists
+  if [ "$2" -eq 0 ]; then
+    fail "$1 には値が要ります / $1 requires a value"
+  fi
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --postgres)
+      require_value "--postgres" $(( $# > 1 ? 1 : 0 ))
+      POSTGRES_MODE="$2"; CLI_SELECTION_GIVEN=1; shift 2 ;;
+    --postgres-dsn)
+      require_value "--postgres-dsn" $(( $# > 1 ? 1 : 0 ))
+      PG_DSN_VALUE="$2"; shift 2 ;;
+    --ollama)
+      require_value "--ollama" $(( $# > 1 ? 1 : 0 ))
+      OLLAMA_MODE="$2"; CLI_SELECTION_GIVEN=1; shift 2 ;;
+    --ollama-host)
+      require_value "--ollama-host" $(( $# > 1 ? 1 : 0 ))
+      OLLAMA_HOST_VALUE="$2"; shift 2 ;;
+    --qdrant)
+      require_value "--qdrant" $(( $# > 1 ? 1 : 0 ))
+      QDRANT_MODE="$2"; CLI_SELECTION_GIVEN=1; shift 2 ;;
+    --qdrant-url)
+      require_value "--qdrant-url" $(( $# > 1 ? 1 : 0 ))
+      QDRANT_URL_VALUE="$2"; shift 2 ;;
+    --qdrant-api-key)
+      require_value "--qdrant-api-key" $(( $# > 1 ? 1 : 0 ))
+      QDRANT_API_KEY_VALUE="$2"; shift 2 ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      fail "不明な引数です / unknown argument: $1 (--help を参照 / see --help)" ;;
+  esac
+done
+
+for name_value in "--postgres:$POSTGRES_MODE" "--ollama:$OLLAMA_MODE"; do
+  mode="${name_value#*:}"
+  flag="${name_value%%:*}"
+  case "$mode" in
+    ""|local|external) ;;
+    *) fail "${flag} は local か external のどちらかです / must be local or external: $mode" ;;
+  esac
+done
+case "$QDRANT_MODE" in
+  ""|local|external|skip) ;;
+  *) fail "--qdrant は local・external・skip のどれかです / must be local, external, or skip: $QDRANT_MODE" ;;
+esac
+
+if [ "$POSTGRES_MODE" = external ] && [ -z "$PG_DSN_VALUE" ]; then
+  fail "--postgres external には --postgres-dsn が必要です / --postgres external requires --postgres-dsn"
+fi
+if [ "$OLLAMA_MODE" = external ] && [ -z "$OLLAMA_HOST_VALUE" ]; then
+  fail "--ollama external には --ollama-host が必要です / --ollama external requires --ollama-host"
+fi
+if [ "$QDRANT_MODE" = external ] && [ -z "$QDRANT_URL_VALUE" ]; then
+  fail "--qdrant external には --qdrant-url が必要です / --qdrant external requires --qdrant-url"
+fi
 
 printf '\n  AI-PMO Platform — Docker\n'
 printf '  ---------------------------------------------\n'
@@ -35,21 +139,23 @@ printf '    OK  %s\n' "$(docker --version)"
 
 # --- 接続先の選択 / choosing each target -------------------------------------
 #
-# 対話端末が無ければ（CI・スクリプト経由の実行など）、全部自前という
-# 従来どおりの既定に倒す。
+# CLI 引数で1つでも指定されていれば、対話質問は一切行わない
+# （指定しなかったものは既定の local を使う）。CLI 引数が無く、かつ
+# 対話端末があれば質問する。対話端末も無ければ（CI・スクリプト経由の
+# 実行など）、全部自前という従来どおりの既定に倒す。
 #
-# With no interactive terminal (CI, scripted runs), fall back to the
+# If any CLI flag was given, no interactive questions are asked at all —
+# anything not specified falls back to its default (local). With no CLI
+# flags and an interactive terminal, ask. With neither, fall back to the
 # previous default of self-hosting everything.
 
-POSTGRES_MODE=local
-OLLAMA_MODE=local
-QDRANT_MODE=local
-PG_DSN_VALUE=""
-OLLAMA_HOST_VALUE=""
-QDRANT_URL_VALUE=""
-QDRANT_API_KEY_VALUE=""
-
-if [ -t 0 ]; then
+if [ "$CLI_SELECTION_GIVEN" -eq 1 ]; then
+  note "CLI 引数が指定されているため、対話質問はスキップします "
+  note "/ CLI flags were given: skipping interactive prompts"
+  [ -n "$POSTGRES_MODE" ] || POSTGRES_MODE=local
+  [ -n "$OLLAMA_MODE" ]   || OLLAMA_MODE=local
+  [ -n "$QDRANT_MODE" ]   || QDRANT_MODE=local
+elif [ -t 0 ]; then
   step "PostgreSQL の接続先 / PostgreSQL target"
   note "1) このマシンに自前で立てる（既定）/ run it on this machine (default)"
   note "2) 外部の PostgreSQL に接続する / connect to an external PostgreSQL"
@@ -58,6 +164,8 @@ if [ -t 0 ]; then
     POSTGRES_MODE=external
     read -r -p "    接続文字列 / connection string (postgresql://...): " PG_DSN_VALUE
     [ -n "$PG_DSN_VALUE" ] || fail "接続文字列が空です / connection string cannot be empty"
+  else
+    POSTGRES_MODE=local
   fi
 
   step "Ollama の接続先 / Ollama target"
@@ -68,6 +176,8 @@ if [ -t 0 ]; then
     OLLAMA_MODE=external
     read -r -p "    URL（例 / e.g. http://your-host:11434）: " OLLAMA_HOST_VALUE
     [ -n "$OLLAMA_HOST_VALUE" ] || fail "URL が空です / URL cannot be empty"
+  else
+    OLLAMA_MODE=local
   fi
 
   step "Qdrant の接続先 / Qdrant target（ナレッジ機能・任意 / knowledge features, optional）"
@@ -85,11 +195,17 @@ if [ -t 0 ]; then
     3)
       QDRANT_MODE=skip
       ;;
+    *)
+      QDRANT_MODE=local
+      ;;
   esac
 else
   note "非対話環境のため既定値を使います（PostgreSQL・Ollama・Qdrant を"
   note "すべて自前で立てる）/ non-interactive: using defaults (self-hosting"
   note "PostgreSQL, Ollama, and Qdrant all)"
+  POSTGRES_MODE=local
+  OLLAMA_MODE=local
+  QDRANT_MODE=local
 fi
 
 # --- .env の生成 / writing .env ----------------------------------------------
