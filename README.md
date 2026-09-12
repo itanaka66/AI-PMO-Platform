@@ -152,6 +152,41 @@ AI: OpenAI · Gemini · Groq · OpenRouter · Claude · Ollama · vLLM · LM Stu
 
 ---
 
+## 動作要件 / Requirements
+
+### ソフトウェア / Software
+
+| 項目 / What | 要件 / Requirement |
+|---|---|
+| Python（ソースから実行する場合 / running from source） | 3.10 以上 / 3.10 or later |
+| Mac・Linux スクリプト / Mac/Linux script | bash、Python 3.10+（無ければ `install.sh` が案内 / `install.sh` guides you through it if missing） |
+| Windows インストーラ / Windows installer | 追加要件なし・管理者権限不要 / none — no admin rights needed |
+| Docker 版 / Docker deployment | Docker Desktop または Docker Engine + **Docker Compose v2** |
+| クラウド展開 / Cloud deployment | Ubuntu 22.04/24.04（`bootstrap.sh` が Docker を自動導入 / `bootstrap.sh` installs Docker for you） |
+
+### ハードウェア / Hardware
+
+| 構成 / Setup | ディスク / Disk | メモリ / RAM | 備考 / Notes |
+|---|---|---|---|
+| クラウド AI 利用（Windows/Mac/Linux）/ Using a cloud AI provider | 数百MB / a few hundred MB | 指定なし / no particular requirement | 推論はクラウド側 / inference runs elsewhere |
+| **Docker 版（ローカル LLM = Ollama）** / **Docker (local LLM via Ollama)** | **約20GB空き / ~20GB free** | **16GB 以上推奨 / 16GB+ recommended** | GPU があれば実用速度、無くても動作 / a GPU makes it fast, works without one |
+
+クラウド展開（GCP・Azure・AWS・VPS・Hetzner・Oracle）のインスタンス種別・
+費用・Qdrant/Ollama を同居させられるかどうかは
+[docs/DEPLOY-TARGETS.md](docs/DEPLOY-TARGETS.md) の早見表と各ガイドを
+参照してください——1GB クラスの無料枠は PostgreSQL・Ollama を外部前提と
+する設計だが、Qdrant だけは外部の Qdrant Cloud を使えば無料枠のままでも
+足りる。
+
+For cloud deployment (GCP, Azure, AWS, a VPS, Hetzner, Oracle) — instance
+sizes, cost, and whether Qdrant/Ollama fit alongside everything else — see
+the cheat sheet and individual guides in
+[docs/DEPLOY-TARGETS.md](docs/DEPLOY-TARGETS.md). The 1GB-class free tiers
+assume external PostgreSQL and Ollama; Qdrant alone still fits even there,
+via an external Qdrant Cloud plan.
+
+---
+
 ## Quick start
 
 ```bash
