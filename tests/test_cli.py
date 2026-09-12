@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from aipmo.approval import SlackApprover
-from aipmo.cli import ConfigError, _confirm_agent_write, build_engine
+from aipmo.cli import ConfigError, _confirm_agent_write, build_engine, resolve_cors_origins
 
 
 def test_confirm_agent_write_accepts_y(monkeypatch):
@@ -99,3 +99,35 @@ def test_approval_slack_requires_a_channel():
     }
     with pytest.raises(ConfigError, match="channel"):
         build_engine(config)
+
+
+# --- CORS origins ------------------------------------------------------------
+
+def test_resolve_cors_origins_defaults_to_empty():
+    assert resolve_cors_origins({}, None) == []
+
+
+def test_resolve_cors_origins_reads_the_config_list():
+    web = {"cors_origins": ["https://app.example.com", "https://other.example.com"]}
+    assert resolve_cors_origins(web, None) == [
+        "https://app.example.com", "https://other.example.com",
+    ]
+
+
+def test_resolve_cors_origins_env_var_overrides_config():
+    web = {"cors_origins": ["https://ignored.example.com"]}
+    assert resolve_cors_origins(web, "https://app.example.com") == [
+        "https://app.example.com",
+    ]
+
+
+def test_resolve_cors_origins_env_var_splits_on_comma_and_trims_space():
+    result = resolve_cors_origins({}, "https://a.example.com, https://b.example.com")
+    assert result == ["https://a.example.com", "https://b.example.com"]
+
+
+def test_resolve_cors_origins_empty_env_var_overrides_config_to_empty():
+    """環境変数が空文字列でも「設定されている」扱い——config にはフォール
+    バックしない。意図して CORS を無効化したい場合に使える。"""
+    web = {"cors_origins": ["https://ignored.example.com"]}
+    assert resolve_cors_origins(web, "") == []

@@ -292,6 +292,63 @@ def test_run_detail_by_id(client, templates):
 def test_unknown_run_id_is_404(client):
     assert client.get("/api/runs/nope", headers=auth(client)).status_code == 404
 
+# --- CORS -------------------------------------------------------------------
+
+def test_no_cors_headers_by_default(client):
+    """既定では何も付けない — 別オリジンからの読み取りを許さない。"""
+    response = client.get("/api/session", headers={
+        **auth(client), "Origin": "https://example.com",
+    })
+    assert "access-control-allow-origin" not in response.headers
+
+def test_cors_allows_a_configured_origin(templates):
+    adapters = AdapterRegistry()
+    adapters.register(MockSlackAdapter())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+    app = create_app(Engine(adapters, llms), templates, TOKEN,
+                     cors_origins=["https://app.example.com"])
+    client = TestClient(app)
+
+    response = client.get("/api/session", headers={
+        "x-aipmo-token": TOKEN, "Origin": "https://app.example.com",
+    })
+
+    assert response.headers["access-control-allow-origin"] == "https://app.example.com"
+    assert response.headers["access-control-allow-credentials"] == "true"
+
+def test_cors_rejects_an_unlisted_origin(templates):
+    adapters = AdapterRegistry()
+    adapters.register(MockSlackAdapter())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+    app = create_app(Engine(adapters, llms), templates, TOKEN,
+                     cors_origins=["https://app.example.com"])
+    client = TestClient(app)
+
+    response = client.get("/api/session", headers={
+        "x-aipmo-token": TOKEN, "Origin": "https://evil.example.com",
+    })
+
+    assert "access-control-allow-origin" not in response.headers
+
+def test_cors_wildcard_drops_credentials(templates):
+    """ワイルドカードは Cookie つきの応答と両立しない。credentials を落とす。"""
+    adapters = AdapterRegistry()
+    adapters.register(MockSlackAdapter())
+    llms = LLMRegistry()
+    llms.register("default", EchoProvider())
+    app = create_app(Engine(adapters, llms), templates, TOKEN,
+                     cors_origins=["*"])
+    client = TestClient(app)
+
+    response = client.get("/api/session", headers={
+        "x-aipmo-token": TOKEN, "Origin": "https://anything.example.com",
+    })
+
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in response.headers
+
 # --- セッション / session --------------------------------------------------
 
 def test_session_carries_tenant_and_strings(client):

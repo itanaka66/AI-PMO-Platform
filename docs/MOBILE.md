@@ -169,6 +169,43 @@ web:
   templates_dir: templates
 ```
 
+### 別オリジンから呼ぶ場合（CORS）/ Calling from another origin (CORS)
+
+**既定では CORS ヘッダを一切付けません。** この画面はトークンをクエリ文字列
+やクッキーで運ぶため、任意のオリジンからの読み取りを許すと認証だけでは
+防げない経路が生まれます。別ドメインの画面や自作アプリからこの API を
+直接呼ぶ場合だけ、許可するオリジンを明示してください。
+
+**No CORS headers are sent by default.** This screen carries its token in a
+query string or cookie, so allowing any origin to read responses would open
+a path authentication alone does not close. Only set this up when a
+separate-domain screen or your own app calls this API directly.
+
+```yaml
+web:
+  cors_origins:
+    - https://app.example.com
+```
+
+Docker やクラウド展開では、`config.yaml` を書き換える代わりに環境変数
+`AIPMO_CORS_ORIGINS`（カンマ区切り）で渡せます。設定してあれば
+`config.yaml` の `web.cors_origins` より優先されます:
+
+In a Docker or cloud deployment, pass this via the `AIPMO_CORS_ORIGINS`
+environment variable (comma-separated) instead of editing `config.yaml`.
+When set, it takes priority over `config.yaml`'s `web.cors_origins`:
+
+```bash
+AIPMO_CORS_ORIGINS=https://app.example.com,https://admin.example.com
+```
+
+`*` を指定すると全オリジンを許可しますが、その場合ブラウザの仕様上
+Cookie による認証は使えなくなり、クエリ文字列のトークンだけが機能します。
+
+Specifying `*` allows every origin, but browsers then refuse to combine a
+wildcard with cookie-based credentials — only the query-string token still
+works in that case.
+
 ### AI サーバーを自分で用意する / Pointing at your own AI server
 
 OpenAI 互換のエンドポイントなら何でも指せます。vLLM、LM Studio、llama.cpp、
