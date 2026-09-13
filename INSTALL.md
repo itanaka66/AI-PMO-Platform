@@ -5,6 +5,40 @@ PC の操作に不慣れでも入れられるようにしています。
 
 Written for people who are not comfortable with a terminal. Pick one.
 
+---
+
+## WebUI は要る？ / Do you need the WebUI?
+
+**CLI だけで完結します。WebUI は追加機能で、後からいつでも足せます。**
+自分がスマホから使う、または実行できない・見るだけの人に進捗を見せたい
+場合だけ必要です。
+
+**The CLI is complete on its own. The WebUI is an add-on you can install at
+any time.** It only matters if you want to use this from a phone, or show
+progress to someone who should see it but not run anything.
+
+```mermaid
+flowchart TD
+    start(["インストール完了\nA・B・Cのいずれかを実行済み\n\nInstall done — A, B, or C above"])
+    q{"スマホから使う、または\n閲覧専用の人に進捗を見せたい？\n\nUse it from a phone, or show\nprogress to a view-only person?"}
+    cli["CLIのみで運用\naipmo run / aipmo validate\n\nCLI only — nothing more to do"]
+    add["pip install \"aipmo[web]\""]
+    serve["aipmo serve --host 0.0.0.0"]
+    urls["実行用と閲覧用、2本のURLが表示される\n\nTwo URLs are printed:\noperator (can run) and viewer (read only)"]
+    share["渡す相手で使い分ける\n実行できる人→実行用 / 見るだけの人→閲覧用\n\nHand out the right one:\noperator URL to who runs it,\nviewer URL to who only watches"]
+
+    start --> q
+    q -- "いいえ / No" --> cli
+    q -- "はい / Yes" --> add --> serve --> urls --> share
+    cli -.->|"後から必要になったら\nNeed it later?"| add
+```
+
+閲覧専用の人には実行の権限を渡せません — ボタンが押せないだけでなく、
+サーバー側が拒否します。詳しくは [docs/MOBILE.md](docs/MOBILE.md)。
+
+A viewer-URL holder cannot run anything — the server refuses it, not just
+the button. Details in [docs/MOBILE.md](docs/MOBILE.md).
+
 | | 向いている人 / Who it suits | AI |
 |---|---|---|
 | **A. Windows インストーラ** | Windows。一番かんたん / easiest on Windows | クラウド / cloud |
