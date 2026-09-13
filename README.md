@@ -639,6 +639,7 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 | [SECURITY.md](SECURITY.md) | 脆弱性の報告 / reporting a vulnerability |
 | [docs/DEPLOY-HETZNER.md](docs/DEPLOY-HETZNER.md) | 有料 VPS 構成（Hetzner）/ paid VPS deployment |
 | [docs/DEPLOY-TARGETS.md](docs/DEPLOY-TARGETS.md) | PostgreSQL・Ollama・Qdrant を内部/外部どちらにするかの手順 / step-by-step for internal vs external PostgreSQL, Ollama, and Qdrant |
+| [docs/GIT_PULL_AND_WEBUI_INSTALLATION.md](docs/GIT_PULL_AND_WEBUI_INSTALLATION.md) | git clone からの WebUI 選択式インストール手順 / installing via git clone with the WebUI installer |
 | [NOTICE.md](NOTICE.md) | ライセンスと依存ライブラリ / licensing and dependencies |
 
 ---

@@ -1,10 +1,10 @@
-# AI-PMO-Platform Installation Script for Windows PowerShell
+﻿# AI-PMO-Platform Installation Script for Windows PowerShell
 
 Write-Host ""
-Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Blue
-Write-Host "║          AI-PMO-Platform Installation Script                  ║" -ForegroundColor Blue
-Write-Host "║                   Windows PowerShell                          ║" -ForegroundColor Blue
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Blue
+Write-Host "====================================================================" -ForegroundColor Blue
+Write-Host "          AI-PMO-Platform Installation Script                  " -ForegroundColor Blue
+Write-Host "                   Windows PowerShell                          " -ForegroundColor Blue
+Write-Host "====================================================================" -ForegroundColor Blue
 Write-Host ""
 
 # 1. Check Python
@@ -61,7 +61,7 @@ if ([string]::IsNullOrWhiteSpace($installWebUI)) { $installWebUI = "1" }
 if ($installWebUI -eq "1") {
     Write-Host ""
     Write-Host "Installing WebUI dependencies..." -ForegroundColor Blue
-    
+
     # Check Node.js
     $nodeVersion = & node --version 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -72,7 +72,7 @@ if ($installWebUI -eq "1") {
         Write-Host ""
         $skipWebUI = Read-Host "Skip WebUI installation? (y/n) [default: y]"
         if ([string]::IsNullOrWhiteSpace($skipWebUI)) { $skipWebUI = "y" }
-        
+
         if ($skipWebUI -eq "y") {
             Write-Host "WARNING: WebUI skipped. CLI only mode." -ForegroundColor Yellow
             $installWebUI = "0"
@@ -83,12 +83,12 @@ if ($installWebUI -eq "1") {
     } else {
         Write-Host "[OK] Node.js $nodeVersion detected" -ForegroundColor Green
     }
-    
+
     if ($installWebUI -eq "1") {
         # Install FastAPI dependencies
         pip install fastapi uvicorn websockets pydantic | Out-Null
         Write-Host "[OK] FastAPI dependencies installed" -ForegroundColor Green
-        
+
         # Install React dependencies
         if (Test-Path "aipmo\web\frontend") {
             Set-Location "aipmo\web\frontend"
@@ -98,7 +98,7 @@ if ($installWebUI -eq "1") {
         } else {
             Write-Host "WARNING: Frontend directory not found" -ForegroundColor Yellow
         }
-        
+
         Write-Host "[OK] WebUI installation complete" -ForegroundColor Green
     }
 } else {
@@ -107,30 +107,30 @@ if ($installWebUI -eq "1") {
 
 # Final message
 Write-Host ""
-Write-Host "╔════════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║                  Installation Complete!                        ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "====================================================================" -ForegroundColor Green
+Write-Host "                  Installation Complete!                        " -ForegroundColor Green
+Write-Host "====================================================================" -ForegroundColor Green
 Write-Host ""
 
-Write-Host "📋 Next Steps:" -ForegroundColor Blue
+Write-Host "Next Steps:" -ForegroundColor Blue
 Write-Host ""
 
 if ($installWebUI -eq "1") {
-    Write-Host "1️⃣  Run CLI mode:"
+    Write-Host "1. Run CLI mode:"
     Write-Host "    python -m aipmo.engine.maturation.cli"
     Write-Host ""
-    Write-Host "2️⃣  Run WebUI (FastAPI backend):"
+    Write-Host "2. Run WebUI (FastAPI backend):"
     Write-Host "    uvicorn aipmo.web.api:app --reload"
     Write-Host ""
-    Write-Host "3️⃣  In another terminal, run React frontend:"
+    Write-Host "3. In another terminal, run React frontend:"
     Write-Host "    cd aipmo\web\frontend"
     Write-Host "    npm run dev"
     Write-Host ""
-    Write-Host "4️⃣  Access WebUI:"
+    Write-Host "4. Access WebUI:"
     Write-Host "    http://localhost:3000 (Vite dev server)"
     Write-Host "    http://localhost:8000 (FastAPI + React build)"
 } else {
-    Write-Host "1️⃣  Run CLI:"
+    Write-Host "1. Run CLI:"
     Write-Host "    python -m aipmo.engine.maturation.cli"
     Write-Host ""
     Write-Host "To install WebUI later:"
@@ -140,16 +140,16 @@ if ($installWebUI -eq "1") {
 }
 
 Write-Host ""
-Write-Host "📖 Documentation:" -ForegroundColor Blue
+Write-Host "Documentation:" -ForegroundColor Blue
 Write-Host "    Read INSTALL.md for detailed setup instructions"
 Write-Host "    Read docs\guide\en.md for usage guide"
 Write-Host ""
 
-Write-Host "🚀 Activate environment:" -ForegroundColor Blue
+Write-Host "Activate environment:" -ForegroundColor Blue
 Write-Host "    .\venv\Scripts\Activate.ps1"
 Write-Host ""
 
-Write-Host "Happy coding! 🎉" -ForegroundColor Yellow
+Write-Host "Happy coding!" -ForegroundColor Yellow
 Write-Host ""
 
 Read-Host "Press Enter to exit"

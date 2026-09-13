@@ -4,10 +4,10 @@ REM AI-PMO-Platform Installation Script for Windows
 setlocal enabledelayedexpansion
 
 echo.
-echo ╔════════════════════════════════════════════════════════════════╗
-echo ║          AI-PMO-Platform Installation Script                  ║
-echo ║                         Windows                               ║
-echo ╚════════════════════════════════════════════════════════════════╝
+echo ====================================================================
+echo           AI-PMO-Platform Installation Script
+echo                          Windows
+echo ====================================================================
 echo.
 
 REM 1. Check Python
@@ -65,7 +65,7 @@ if "%INSTALL_WEBUI%"=="" set INSTALL_WEBUI=1
 if "%INSTALL_WEBUI%"=="1" (
     echo.
     echo Installing WebUI dependencies...
-    
+
     REM Check Node.js
     node --version >nul 2>&1
     if errorlevel 1 (
@@ -76,7 +76,7 @@ if "%INSTALL_WEBUI%"=="1" (
         echo.
         set /p SKIP_WEBUI="Skip WebUI installation? (y/n) [default: y]: "
         if "%SKIP_WEBUI%"=="" set SKIP_WEBUI=y
-        
+
         if "%SKIP_WEBUI%"=="y" (
             echo WARNING: WebUI skipped. CLI only mode.
             set INSTALL_WEBUI=0
@@ -88,12 +88,12 @@ if "%INSTALL_WEBUI%"=="1" (
         for /f "tokens=*" %%i in ('node --version') do set NODE_VERSION=%%i
         echo [OK] Node.js !NODE_VERSION! detected
     )
-    
+
     if "%INSTALL_WEBUI%"=="1" (
         REM Install FastAPI dependencies
         pip install fastapi uvicorn websockets pydantic >nul 2>&1
         echo [OK] FastAPI dependencies installed
-        
+
         REM Install React dependencies
         if exist "aipmo\web\frontend" (
             cd aipmo\web\frontend
@@ -103,7 +103,7 @@ if "%INSTALL_WEBUI%"=="1" (
         ) else (
             echo WARNING: Frontend directory not found
         )
-        
+
         echo [OK] WebUI installation complete
     )
 ) else (
@@ -112,30 +112,30 @@ if "%INSTALL_WEBUI%"=="1" (
 
 REM Final message
 echo.
-echo ╔════════════════════════════════════════════════════════════════╗
-echo ║                  Installation Complete!                        ║
-echo ╚════════════════════════════════════════════════════════════════╝
+echo ====================================================================
+echo                   Installation Complete!
+echo ====================================================================
 echo.
 
-echo 📋 Next Steps:
+echo Next Steps:
 echo.
 
 if "%INSTALL_WEBUI%"=="1" (
-    echo 1️⃣  Run CLI mode:
+    echo 1. Run CLI mode:
     echo    python -m aipmo.engine.maturation.cli
     echo.
-    echo 2️⃣  Run WebUI (FastAPI backend):
+    echo 2. Run WebUI (FastAPI backend):
     echo    uvicorn aipmo.web.api:app --reload
     echo.
-    echo 3️⃣  In another terminal, run React frontend:
+    echo 3. In another terminal, run React frontend:
     echo    cd aipmo\web\frontend
     echo    npm run dev
     echo.
-    echo 4️⃣  Access WebUI:
+    echo 4. Access WebUI:
     echo    http://localhost:3000 ^(Vite dev server^)
     echo    http://localhost:8000 ^(FastAPI + React build^)
 ) else (
-    echo 1️⃣  Run CLI:
+    echo 1. Run CLI:
     echo    python -m aipmo.engine.maturation.cli
     echo.
     echo To install WebUI later:
@@ -145,16 +145,16 @@ if "%INSTALL_WEBUI%"=="1" (
 )
 
 echo.
-echo 📖 Documentation:
+echo Documentation:
 echo    Read INSTALL.md for detailed setup instructions
 echo    Read docs\guide\en.md for usage guide
 echo.
 
-echo 🚀 Activate environment:
+echo Activate environment:
 echo    venv\Scripts\activate
 echo.
 
-echo Happy coding! 🎉
+echo Happy coding!
 echo.
 
 pause
