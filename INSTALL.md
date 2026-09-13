@@ -1,649 +1,333 @@
-# 📖 AI-PMO-Platform - インストールガイド
+# インストール方法 / Installation
 
-**プロジェクト**: AI-PMO-Platform / AI Maturation Engine  
-**バージョン**: 1.0.0  
-**最終更新**: 2026-09-11  
+PC の操作に不慣れでも入れられるようにしています。
+自分に合うものを 1 つ選んでください。
+
+Written for people who are not comfortable with a terminal. Pick one.
+
+| | 向いている人 / Who it suits | AI |
+|---|---|---|
+| **A. Windows インストーラ** | Windows。一番かんたん / easiest on Windows | クラウド / cloud |
+| **B. Mac・Linux スクリプト** | Mac または Linux | クラウド / cloud |
+| **C. Docker** | 社内データを外に出したくない / keeps data in-house | ローカル / local |
 
 ---
 
-## 🚀 クイックスタート
+## A. Windows インストーラ / Windows installer
 
-### **Linux / macOS（推奨）**
+1. [AI-PMO-Setup-0.1.6.exe](https://github.com/itanaka66/AI-PMO-Platform/releases/download/v0.1.6/AI-PMO-Setup-0.1.6.exe) をダウンロードする / download it
+2. ダブルクリックする / double-click it
+3. 画面の指示に従う / follow the prompts
 
-```bash
-# 1. リポジトリをクローン
-git clone https://github.com/itanaka66/AI-PMO-Platform.git
-cd AI-PMO-Platform
+管理者権限は不要です。インストール後にセットアップ画面が開くので、
+AI の提供元を選んで API キーを貼り付けてください。
 
-# 2. インストールスクリプトを実行
-bash scripts/install.sh
+No administrator rights required. A setup screen opens afterwards; choose an AI
+provider and paste your API key into it.
 
-# 3. CLI または WebUI を選択して起動
-```
+**API キーの取得 / Getting an API key**
+選んだ提供元のサイトで作成します。迷ったら OpenAI で構いません。
+Create one with the provider you chose; OpenAI is a fine default.
 
-### **Windows（PowerShell）**
+- OpenAI — https://platform.openai.com/api-keys
+- Gemini — https://aistudio.google.com
+- Groq — https://console.groq.com/keys
+- OpenRouter — https://openrouter.ai/keys
+- Claude - https://platform.claude.com/settings/keys
+
+提供元ごとの違いは [docs/PROVIDERS.md](docs/PROVIDERS.md) にあります。
+Groq と OpenRouter には埋め込み API が無いため、ベクトル検索を使う場合は
+鍵が2つ要ります。ウィザードがその場で知らせます。
+
+Groq and OpenRouter have no embeddings API, so vector search needs a second
+key; the wizard says so at the time.
+
+### インストーラを自分でビルドする / Building the installer yourself
+
+Windows と [Inno Setup 6](https://jrsoftware.org/isdl.php) が必要です。
+PyInstaller はクロスコンパイルできないので、Windows 上でしかビルドできません。
+
+Requires Windows and Inno Setup 6. PyInstaller cannot cross-compile, so this
+must run on Windows.
 
 ```powershell
-# 1. リポジトリをクローン
-git clone https://github.com/itanaka66/AI-PMO-Platform.git
-cd AI-PMO-Platform
-
-# 2. インストールスクリプトを実行
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
-
-# 3. CLI または WebUI を選択して起動
+.\installer\build.ps1
+# → dist\AI-PMO-Setup-0.1.6.exe
 ```
 
-### **Windows（バッチ）**
+タグを push すると GitHub Actions が同じものを作ります。
+Pushing a tag builds the same artifact in GitHub Actions.
 
-```batch
-# 1. リポジトリをクローン
-git clone https://github.com/itanaka66/AI-PMO-Platform.git
-cd AI-PMO-Platform
+### コード署名 / Code signing
 
-# 2. インストールスクリプトを実行
-scripts\install.bat
+署名する仕組み自体はすでに配線されています。証明書を用意して環境変数か
+GitHub のシークレットを設定するだけで、`aipmo.exe` 本体とインストーラの
+両方に自動で署名されます。**証明書そのものはこのリポジトリでは提供して
+いません** — 認証局から個人または組織として購入する必要があります。
 
-# 3. CLI または WebUI を選択して起動
-```
+The wiring for signing already exists. Provide a certificate and set either
+environment variables or GitHub secrets, and both `aipmo.exe` and the
+installer are signed automatically. **This repository does not provide a
+certificate** — one has to be purchased from a certificate authority, as an
+individual or an organisation.
 
----
+**証明書の入手 / Getting a certificate**
 
-## 📋 詳細インストール手順
+- 通常のコード署名証明書（OV）: DigiCert・Sectigo・SSL.com などで
+  年額 100〜400 USD 程度、組織確認が要ります。EV 証明書はさらに高額で
+  ハードウェアトークンが必要な代わり、SmartScreen の警告がすぐ収まります。
+- **OSS 向けの無料の選択肢**: このリポジトリは MIT ライセンスの無料公開
+  プロジェクトなので、[SignPath.io](https://signpath.io/) の OSS 向け無料枠
+  が使える可能性があります。その場合は署名の仕組み自体が異なる
+  （クラウド HSM 経由）ため、下記の手順ではなく SignPath 側の GitHub Action
+  を使うことになります。
 
-### **前提条件**
+- A standard (OV) code-signing certificate: roughly 100-400 USD/year from
+  DigiCert, Sectigo, SSL.com and similar, and requires organisation
+  verification. An EV certificate costs more and needs a hardware token, but
+  clears the SmartScreen warning immediately instead of over time.
+- **A free option for open source**: since this repository is a free,
+  MIT-licensed project, [SignPath.io](https://signpath.io/)'s free tier for
+  open-source projects may apply. That path signs through a cloud HSM rather
+  than a local file, so it uses SignPath's own GitHub Action instead of the
+  steps below.
 
-| 要件 | 最小バージョン | 推奨バージョン |
-|-----|--------|--------|
-| Python | 3.8 | 3.10+ |
-| Node.js | 16 | 18+ |
-| pip | - | 最新 |
-| npm | - | 最新 |
+**ローカルでビルドする場合 / Building locally**
 
-### **OS 別インストール**
-
-#### **1. Ubuntu / Debian**
-
-```bash
-# システム依存関係をインストール
-sudo apt-get update
-sudo apt-get install -y python3 python3-pip python3-venv git
-
-# Node.js をインストール（WebUI 使用時）
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# リポジトリをクローン
-git clone https://github.com/itanaka66/AI-PMO-Platform.git
-cd AI-PMO-Platform
-
-# インストール
-bash scripts/install.sh
-```
-
-#### **2. Fedora / CentOS / RHEL**
-
-```bash
-# システム依存関係をインストール
-sudo dnf install -y python3 python3-pip python3-devel git
-
-# Node.js をインストール（WebUI 使用時）
-curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
-sudo dnf install -y nodejs
-
-# リポジトリをクローン
-git clone https://github.com/itanaka66/AI-PMO-Platform.git
-cd AI-PMO-Platform
-
-# インストール
-bash scripts/install.sh
-```
-
-#### **3. macOS（Homebrew）**
-
-```bash
-# Homebrew をインストール（未インストール時）
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# 依存関係をインストール
-brew install python@3.10 node git
-
-# リポジトリをクローン
-git clone https://github.com/itanaka66/AI-PMO-Platform.git
-cd AI-PMO-Platform
-
-# インストール
-bash scripts/install.sh
-```
-
-#### **4. Windows 11（PowerShell）**
+証明書ファイル（.pfx）があるなら:
 
 ```powershell
-# 1. Python をインストール（https://www.python.org）
-# 「Add Python to PATH」をチェック
-
-# 2. Node.js をインストール（https://nodejs.org）
-# LTS バージョンを推奨
-
-# 3. Git をインストール（https://git-scm.com）
-
-# 4. リポジトリをクローン
-git clone https://github.com/itanaka66/AI-PMO-Platform.git
-cd AI-PMO-Platform
-
-# 5. インストールスクリプトを実行
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+$env:AIPMO_SIGN_CERT_PATH = "C:\path\to\cert.pfx"
+$env:AIPMO_SIGN_CERT_PASSWORD = "..."
+.\installer\build.ps1
 ```
 
-#### **5. Docker（推奨）**
+証明書がすでに証明書ストアにインポート済みなら、拇印（thumbprint）だけで済みます:
+
+```powershell
+$env:AIPMO_SIGN_CERT_THUMBPRINT = "..."
+.\installer\build.ps1
+```
+
+If you have a certificate file (.pfx), set `AIPMO_SIGN_CERT_PATH` and
+`AIPMO_SIGN_CERT_PASSWORD` as above. If the certificate is already imported
+into the certificate store, `AIPMO_SIGN_CERT_THUMBPRINT` alone is enough.
+
+**GitHub Actions で署名する場合 / Signing in GitHub Actions**
+
+リポジトリの Settings → Secrets and variables → Actions で次の2つを設定
+してください:
+
+- `AIPMO_SIGN_CERT_BASE64` — .pfx ファイルを base64 にしたもの
+  （`[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`）
+- `AIPMO_SIGN_CERT_PASSWORD` — その証明書のパスワード
+
+どちらも未設定なら、ビルドはこれまでどおり未署名で進みます — 既存の
+ワークフローの挙動は変わりません。
+
+Set these two repository secrets under Settings → Secrets and variables →
+Actions:
+
+- `AIPMO_SIGN_CERT_BASE64` — the .pfx file, base64-encoded
+  (`[Convert]::ToBase64String([IO.File]::ReadAllBytes("cert.pfx"))`)
+- `AIPMO_SIGN_CERT_PASSWORD` — that certificate's password
+
+Leaving either unset builds unsigned exactly as before — the existing
+workflow's behaviour does not change.
+
+---
+
+## B. Mac・Linux / macOS and Linux
+
+ターミナルを開いて、次の 1 行を貼り付けてください。
+
+Open Terminal and paste this single line.
 
 ```bash
-# Docker をインストール
-# https://docs.docker.com/install/
+curl -fsSL https://raw.githubusercontent.com/aipmo/aipmo/main/scripts/install.sh | bash
+```
 
-# リポジトリをクローン
-git clone https://github.com/itanaka66/AI-PMO-Platform.git
-cd AI-PMO-Platform
+リポジトリを既に持っている場合 / If you already have the repository:
 
-# Docker イメージをビルド
-docker-compose build
+```bash
+./scripts/install.sh
+```
 
-# コンテナを起動
-docker-compose up -d
+`sudo` は使いません。`~/.local` の下にだけ書き込みます。
+システムの Python には手を触れず、専用の仮想環境を作ります。
 
-# Web UI にアクセス
-open http://localhost:8000
+No `sudo`. Everything lands under `~/.local`. Your system Python is left alone;
+the installer builds an isolated virtual environment.
+
+> **`aipmo: command not found` と出たら / If you see this**
+> `~/.local/bin` が PATH に入っていません。次を実行してください。
+> Add `~/.local/bin` to your PATH:
+> ```bash
+> echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+> ```
+> bash を使っている場合は `~/.bashrc` に置き換えてください / use `~/.bashrc` for bash.
+
+---
+
+## C. Docker（ローカル AI）/ Docker (local AI)
+
+会議の記録を外部の AI サービスに送りたくない場合はこちらです。
+PostgreSQL・Qdrant・ローカル LLM（Ollama）は、それぞれ独立に**このマシンに
+自前で立てるか、外部のものに接続するか**を対話的に選べます。自前で
+立てない、と選んだものはコンテナも Docker の volume も一切作られません。
+
+Use this when meeting transcripts must not go to an external AI service.
+For each of PostgreSQL, Qdrant, and the local LLM (Ollama), you
+interactively choose whether to **run it here or connect to an external
+one.** Whichever you choose not to self-host gets neither a container nor
+a Docker volume.
+
+**必要なもの / Requirements**
+- [Docker Desktop](https://docs.docker.com/get-docker/)
+- 空きディスク 20GB 程度 / about 20GB free
+- メモリ 16GB 以上を推奨 / 16GB RAM or more recommended
+- GPU があると実用的な速度になります（無くても動きます）/ a GPU makes it usable in
+  practice, though it runs without one
+
+```bash
+./scripts/install-docker.sh
+```
+
+初回はモデルのダウンロードで数 GB あります。時間がかかります。
+The first run downloads several GB of model weights. It takes a while.
+
+対話質問なしで自動化したい場合は、CLI 引数で指定できます
+（`--help` で一覧表示）:
+
+To automate this without interactive prompts, pass CLI flags instead
+(see `--help` for the full list):
+
+```bash
+./scripts/install-docker.sh --postgres external \
+  --postgres-dsn postgresql://user:pw@host:5432/db \
+  --ollama local --qdrant skip
+```
+
+GPU を使う場合は `docker-compose.yml` の `deploy:` のコメントを外してください。
+To use a GPU, uncomment the `deploy:` block in `docker-compose.yml`.
+
+---
+
+## セットアップウィザード / Setup wizard
+
+インストール後に自動で開きます。後からやり直すこともできます。
+It opens automatically after installation. You can re-run it any time:
+
+```bash
+aipmo setup
+```
+
+聞かれること / What it asks:
+
+1. **AI をどこで動かすか / where the AI runs** — クラウドかローカルか
+2. **提供元 / provider** — OpenAI / Gemini / Groq / OpenRouter（クラウドの場合）
+3. **API キー / API key** — クラウドを選んだ場合のみ / cloud only
+4. **組織名 / organization name** — データの保管先を分ける識別子。
+   英小文字・数字・アンダースコアのみ /
+   an identifier that separates where your data is stored; lowercase, digits and
+   underscore only
+5. **データベース連携 / data layer** — 分からなければ N で構いません /
+   answer N if you are unsure
+
+ウィザードは画面の言語に合わせて日本語・英語・中国語・韓国語・スペイン語・
+フランス語・ドイツ語・ポルトガル語で表示されます。
+
+The wizard follows your system language across eight languages.
+
+API キーは `config.yaml` ではなく `.env` に、提供元ごとの正しい変数名
+（`OPENAI_API_KEY`、`GEMINI_API_KEY` など）で保存され、本人しか読めない権限に
+設定されます。`config.yaml` はチームで共有したりコミットしたりする前提なので、
+キーが混ざらないように分けてあります。
+
+The key goes to `.env`, not `config.yaml`, and is locked to your user account.
+Config files get shared and committed; keys should not ride along.
+
+---
+
+## 動作確認 / Verifying it works
+
+```bash
+aipmo validate templates/examples/meeting_to_tasks.yaml
+aipmo adapters
+aipmo doctor          # 接続確認 / connection check
+```
+
+続けて使うもの / What you will use next:
+
+```bash
+aipmo serve --host 0.0.0.0   # スマホ向け画面 / mobile interface
+aipmo schedule --list        # 定時実行の予定 / scheduled runs
+```
+
+スマホからの利用と権限分離は [docs/MOBILE.md](docs/MOBILE.md)、
+定時実行は [docs/SCHEDULER.md](docs/SCHEDULER.md) にあります。
+
+`OK  templates/examples/meeting_to_tasks.yaml  [software] ステップ 6 件`
+と表示されれば成功です。
+
+Seeing that line means it worked.
+
+---
+
+## アンインストール / Uninstalling
+
+**Windows** — 設定 → アプリ → AI-PMO Platform → アンインストール
+Settings → Apps → AI-PMO Platform → Uninstall
+
+**Mac・Linux**
+```bash
+rm -rf ~/.local/share/ai-pmo ~/.local/bin/aipmo
+```
+
+**Docker**
+```bash
+docker compose down -v    # -v はデータも消します / -v also deletes the data
 ```
 
 ---
 
-## 📝 インストール時の選択肢
+## うまくいかないとき / When it does not work
 
-インストール時に以下の選択肢が表示されます：
+**日本語が文字化けする / Japanese text comes out garbled**
+古い版を使っている可能性があります。`.bat` は CP932、`.ps1` と `.iss` は
+UTF-8 (BOM 付き) で保存されている必要があります。自分で編集した場合は、
+保存時の文字コードを確認してください。
 
-### **WebUI インストール（推奨）**
+If you edited these files yourself, check what your editor saved them as:
+`.bat` must be CP932, while `.ps1` and `.iss` need UTF-8 **with** a BOM —
+Windows PowerShell 5.1 reads a BOM-less script as ANSI.
 
-```
-[5/5] WebUI Installation
+**Windows で `.ps1` をダブルクリックしても何も起きない**
+既定の実行ポリシーで PowerShell スクリプトがブロックされています。
+`install.bat` の方をダブルクリックしてください。こちらが回避策込みで起動します。
 
-Do you want to install WebUI (FastAPI + React)?
-  1) Yes - Full installation with WebUI
-  2) No  - CLI only
+Windows blocks `.ps1` files by default. Double-click `install.bat` instead — it
+launches the script with the policy bypass already applied.
 
-Select (1 or 2) [default: 1]: 1
-```
-
-**推奨**: `1` を選択して WebUI をインストール
-
-### **WebUI なし（CLI のみ）**
-
-```
-Select (1 or 2) [default: 1]: 2
-```
-
-CLI モードのみで実行する場合は `2` を選択
-
----
-
-## 🌐 WebUI との接続方法
-
-### **概要**
-
-WebUI は以下の 2 つのコンポーネントで構成されています：
-
-```
-┌─────────────────────────────────────────┐
-│            Web ブラウザ                   │
-│   http://localhost:3000 または :8000     │
-└─────────────────┬───────────────────────┘
-                  │
-                  ↓ HTTP / WebSocket
-┌─────────────────────────────────────────┐
-│        FastAPI バックエンド               │
-│      http://localhost:8000                │
-│   REST API + WebSocket エンドポイント     │
-└─────────────────┬───────────────────────┘
-                  │
-                  ↓ (分析エンジン実行)
-┌─────────────────────────────────────────┐
-│    AI Maturation Engine                  │
-│    ハイブリッド評価・スコア分析           │
-└─────────────────────────────────────────┘
-```
-
-### **モード 1: 開発環境（推奨）**
-
-#### **ステップ 1: FastAPI バックエンドを起動**
-
+**`python3-venv` が無いと言われる / venv creation fails on Debian or Ubuntu**
 ```bash
-# 仮想環境を有効化
-source venv/bin/activate  # Linux/macOS
-# または
-venv\Scripts\activate  # Windows
-
-# FastAPI サーバーを起動
-uvicorn aipmo.web.api:app --reload --port 8000
+sudo apt install python3-venv
 ```
 
-出力例：
-```
-INFO:     Uvicorn running on http://127.0.0.1:8000
-INFO:     Application startup complete
-```
+**Docker が起動していないと言われる / Docker is not running**
+Docker Desktop を起動してから、もう一度実行してください。
+Start Docker Desktop, then run the script again.
 
-#### **ステップ 2: React フロントエンドを起動（別ターミナル）**
-
+**API キーを入れ忘れた / Forgot to enter the API key**
 ```bash
-# React ディレクトリに移動
-cd aipmo/web/frontend
-
-# 依存関係をインストール（初回のみ）
-npm install
-
-# 開発サーバーを起動
-npm run dev
+aipmo setup
 ```
-
-出力例：
-```
-  VITE v4.3.9  ready in 234 ms
-
-  ➜  Local:   http://localhost:5173/
-  ➜  press h to show help
-```
-
-#### **ステップ 3: ブラウザでアクセス**
-
-**Vite 開発サーバー（推奨）:**
-```
-http://localhost:5173
-```
-
-**FastAPI サーバー（本番環境）:**
-```
-http://localhost:8000
-```
-
-### **モード 2: 本番環境（Docker）**
-
-#### **ステップ 1: Docker イメージをビルド**
-
-```bash
-# Web ダッシュボード用 Docker Compose
-docker-compose -f docker-compose.web.yml build
-```
-
-#### **ステップ 2: コンテナを起動**
-
-```bash
-docker-compose -f docker-compose.web.yml up -d
-```
-
-#### **ステップ 3: ブラウザでアクセス**
-
-```
-http://localhost:8000
-```
-
-#### **ステップ 4: ログを確認**
-
-```bash
-# ログをリアルタイム表示
-docker-compose -f docker-compose.web.yml logs -f web
-
-# コンテナを停止
-docker-compose -f docker-compose.web.yml down
-```
-
-### **モード 3: カスタム設定**
-
-FastAPI サーバーのポート・ホストを変更：
-
-```bash
-# ポート 9000 で起動
-uvicorn aipmo.web.api:app --host 0.0.0.0 --port 9000
-
-# リモートホストから接続可能に（0.0.0.0 を指定）
-uvicorn aipmo.web.api:app --host 0.0.0.0 --port 8000
-```
-
-React フロントエンドのデバイス IP を設定：
-
-```bash
-# vite.config.js を編集
-export default defineConfig({
-  server: {
-    host: '0.0.0.0',  # すべてのネットワークインターフェース
-    port: 5173
-  }
-})
-
-# 起動
-npm run dev
-```
-
----
-
-## 🔗 API エンドポイント
-
-### **REST API**
-
-| メソッド | エンドポイント | 説明 |
-|---------|----------|------|
-| GET | `/health` | ヘルスチェック |
-| GET | `/api/templates` | テンプレート一覧 |
-| POST | `/api/sessions/create` | セッション作成 |
-| POST | `/api/evaluate` | 評価追加 |
-| GET | `/api/analysis/{template}` | 分析結果取得 |
-| GET | `/api/scores/{template}` | スコア取得 |
-| GET | `/api/insights/{template}` | 洞察取得 |
-| GET | `/api/readiness/{template}` | 準備度取得 |
-| GET | `/api/report/{template}` | レポート取得 |
-
-### **WebSocket**
-
-| エンドポイント | 説明 |
-|-----------|------|
-| `/ws/{template_name}` | リアルタイム更新 |
-
-**例:**
-```javascript
-// JavaScript クライアント
-const ws = new WebSocket('ws://localhost:8000/ws/meeting_to_tasks');
-
-ws.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-  console.log('Update:', message);
-};
-```
-
----
-
-## 🧪 テストの実行
-
-### **全テスト実行**
-
-```bash
-pytest tests/ -v
-```
-
-### **特定のテストスイート**
-
-```bash
-# 熟成エンジンのテスト
-pytest tests/test_maturation/ -v
-
-# 並列実行のテスト
-pytest tests/test_parallel_runner.py -v
-
-# カバレッジ付き
-pytest tests/ --cov=aipmo
-```
-
-### **期待される結果**
-
-```
-=============== 540+ passed in 12.34s ===============
-```
-
----
-
-## ⚙️ 環境変数設定
-
-### **FastAPI のための環境変数**
-
-```bash
-# .env ファイルを作成
-cp .env.example .env
-
-# エディタで編集
-nano .env
-```
-
-**設定例:**
-
-```bash
-# OpenAI
-OPENAI_API_KEY=sk-...
-
-# Ollama
-OLLAMA_HOST=http://localhost:11434
-
-# Web UI
-AIPMO_WEB_HOST=0.0.0.0
-AIPMO_WEB_PORT=8000
-
-# CORS（VITE 開発サーバーからのリクエスト許可）
-CORS_ORIGINS=["http://localhost:5173", "http://localhost:3000"]
-```
-
-### **React のための環境変数**
-
-```bash
-# aipmo/web/frontend/.env を作成
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000
-```
-
----
-
-## 🐛 トラブルシューティング
-
-### **Python が見つからない**
-
-```bash
-# Python パスを確認
-which python3      # Linux/macOS
-where python       # Windows
-
-# パスを追加（Windows）
-# 環境変数 → PATH に C:\Users\YourName\AppData\Local\Programs\Python\Python310 を追加
-```
-
-### **仮想環境を有効化できない**
-
-```bash
-# スクリプト実行ポリシーを変更（Windows）
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# venv を再作成
-python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
-venv\Scripts\activate     # Windows
-```
-
-### **npm install が失敗する**
-
-```bash
-# キャッシュをクリア
-npm cache clean --force
-
-# 再実行
-npm install
-
-# ディスク容量を確認
-npm cache verify
-```
-
-### **FastAPI が起動しない**
-
-```bash
-# ポートが使用中かどうか確認
-lsof -i :8000              # Linux/macOS
-netstat -ano | findstr :8000  # Windows
-
-# 別のポートで起動
-uvicorn aipmo.web.api:app --port 9000
-```
-
-### **WebSocket 接続エラー**
-
-```bash
-# ブラウザコンソールでエラーを確認
-# F12 キーで Developer Tools を開く → Console タブ
-
-# CORS エラーの場合、api.py の CORS 設定を確認
-# allow_origins=["*"] に変更（開発環境のみ）
-```
-
-### **React 開発サーバーが起動しない**
-
-```bash
-# ポート 5173 が使用中か確認
-lsof -i :5173
-
-# package.json の scripts を確認
-cat package.json | grep -A 5 '"scripts"'
-
-# 別のポートで起動
-npm run dev -- --port 3000
-```
-
----
-
-## 📡 API リクエスト例
-
-### **cURL での評価追加**
-
-```bash
-curl -X POST http://localhost:8000/api/evaluate \
-  -H "Content-Type: application/json" \
-  -d '{
-    "session_id": "uuid-here",
-    "template_name": "meeting_to_tasks",
-    "iteration": 1,
-    "ai_score": 78.5,
-    "user_score": 85.0,
-    "correctness": 80,
-    "usability": 85,
-    "maintainability": 90,
-    "clarity": 88,
-    "comments": "Good output",
-    "recommendation": "good"
-  }'
-```
-
-### **Python での API リクエスト**
-
-```python
-import requests
-import json
-
-# セッション作成
-response = requests.post(
-    "http://localhost:8000/api/sessions/create",
-    params={
-        "template_name": "meeting_to_tasks",
-        "user_id": "user123"
-    }
-)
-session_id = response.json()["session_id"]
-
-# 評価追加
-response = requests.post(
-    "http://localhost:8000/api/evaluate",
-    json={
-        "session_id": session_id,
-        "template_name": "meeting_to_tasks",
-        "iteration": 1,
-        "ai_score": 78.5,
-        "user_score": 85.0
-    }
-)
-
-# 分析結果取得
-response = requests.get(
-    "http://localhost:8000/api/analysis/meeting_to_tasks"
-)
-analysis = response.json()
-print(json.dumps(analysis, indent=2))
-```
-
-### **JavaScript での WebSocket**
-
-```javascript
-// WebSocket 接続
-const ws = new WebSocket('ws://localhost:8000/ws/meeting_to_tasks');
-
-// 接続成功
-ws.onopen = () => {
-  console.log('Connected');
-  ws.send(JSON.stringify({ type: 'ping' }));
-};
-
-// メッセージ受信
-ws.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-  console.log('Received:', message);
-};
-
-// エラー
-ws.onerror = (error) => {
-  console.error('WebSocket error:', error);
-};
-
-// 接続を閉じる
-ws.close();
-```
-
----
-
-## 🔄 CLI との併用
-
-CLI と WebUI は並行して実行可能：
-
-```bash
-# ターミナル 1: FastAPI
-uvicorn aipmo.web.api:app --reload
-
-# ターミナル 2: React
-cd aipmo/web/frontend && npm run dev
-
-# ターミナル 3: CLI
-python -m aipmo.engine.maturation.cli
-```
-
----
-
-## 📚 次のステップ
-
-1. **インストール完了後:**
-   - `docs/guide/en.md` を読む
-   - サンプルテンプレートを試す
-   - WebUI でダッシュボードを確認
-
-2. **カスタマイズ:**
-   - `templates/examples/` のテンプレートを参照
-   - 独自のテンプレートを作成
-   - LLM プロバイダーを設定
-
-3. **本番環境:**
-   - Docker で運用
-   - クラウド（Oracle Cloud Free など）にデプロイ
-   - ロードバランシング・監視を設定
-
----
-
-## 🆘 サポート
-
-### **ドキュメント**
-
-- 📖 `README.md` - プロジェクト概要
-- 🚀 `docs/ARCHITECTURE.md` - システムアーキテクチャ
-- 💬 `docs/guide/en.md` - 使用ガイド（英語）
-- 🎯 `docs/guide/ja.md` - 使用ガイド（日本語）
-
-### **GitHub Issues**
-
-https://github.com/itanaka66/AI-PMO-Platform/issues
-
-### **ライセンス**
-
-MIT License - 自由に使用、修正、配布可能
-
----
-
-**Happy installation! 🎉**
-
-**最終更新**: 2026-09-11  
-**バージョン**: 1.0.0
+をもう一度実行してください / run it again.
+
+**ウイルス対策ソフトがインストーラを止める / Antivirus blocks the installer**
+署名のない実行ファイルは警告されることがあります。心配な場合は
+B（Mac・Linux）か C（Docker）の方法を使うか、`installer\build.ps1` で
+自分でビルドしてください。
+
+Unsigned executables can trigger warnings. If that concerns you, use option B or
+C instead, or build it yourself with `installer\build.ps1`.
