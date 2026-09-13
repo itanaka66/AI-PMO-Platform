@@ -1,155 +1,265 @@
-﻿# AI-PMO-Platform Installation Script for Windows PowerShell
+﻿# AI-PMO Platform ― Windows インストーラ / Windows installer
+#
+# Python が無ければ導入し、専用の仮想環境を作り、セットアップウィザードを開く。
+# Installs Python if absent, creates an isolated virtual environment, and opens
+# the setup wizard.
+#
+# 実行 / Run:
+#   install.bat をダブルクリック / double-click install.bat
+#
+# システムの Python を汚さないため、必ず venv を作る。
+# Always builds a venv so the system Python is never modified.
 
-Write-Host ""
-Write-Host "====================================================================" -ForegroundColor Blue
-Write-Host "          AI-PMO-Platform Installation Script                  " -ForegroundColor Blue
-Write-Host "                   Windows PowerShell                          " -ForegroundColor Blue
-Write-Host "====================================================================" -ForegroundColor Blue
-Write-Host ""
+[CmdletBinding()]
+param(
+    [string]$InstallDir = "$env:LOCALAPPDATA\AI-PMO",
+    [switch]$NoShortcut,
+    [switch]$Quiet
+)
 
-# 1. Check Python
-Write-Host "[1/5] Checking Python..." -ForegroundColor Yellow
-$pythonVersion = & python --version 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "ERROR: Python is not installed" -ForegroundColor Red
-    Write-Host "Please install Python 3.8 or later from https://www.python.org"
-    Write-Host "Make sure to check 'Add Python to PATH' during installation"
-    Read-Host "Press Enter to exit"
-    exit 1
-}
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 
-Write-Host "[OK] Python $pythonVersion" -ForegroundColor Green
+$MinPythonMajor = 3
+$MinPythonMinor = 10
+$PythonInstallerUrl =
+    "https://www.python.org/ftp/python/3.12.7/python-3.12.7-amd64.exe"
 
-# 2. Create virtual environment
-Write-Host "[2/5] Setting up virtual environment..." -ForegroundColor Yellow
-if (-Not (Test-Path "venv")) {
-    python -m venv venv
-    Write-Host "[OK] Virtual environment created" -ForegroundColor Green
-} else {
-    Write-Host "Virtual environment already exists"
-}
-
-. .\venv\Scripts\Activate.ps1
-Write-Host "[OK] Virtual environment activated" -ForegroundColor Green
-
-# 3. Upgrade pip
-Write-Host "[3/5] Upgrading pip..." -ForegroundColor Yellow
-python -m pip install --upgrade pip setuptools wheel | Out-Null
-Write-Host "[OK] pip upgraded" -ForegroundColor Green
-
-# 4. Install dependencies
-Write-Host "[4/5] Installing dependencies..." -ForegroundColor Yellow
-if (-Not (Test-Path "requirements.txt")) {
-    Write-Host "ERROR: requirements.txt not found" -ForegroundColor Red
-    Read-Host "Press Enter to exit"
-    exit 1
-}
-
-pip install -r requirements.txt | Out-Null
-Write-Host "[OK] Dependencies installed" -ForegroundColor Green
-
-# 5. Install WebUI (Optional)
-Write-Host "[5/5] WebUI Installation" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "Do you want to install WebUI (FastAPI + React)?"
-Write-Host "  1) Yes - Full installation with WebUI"
-Write-Host "  2) No  - CLI only"
-Write-Host ""
-$installWebUI = Read-Host "Select (1 or 2) [default: 1]"
-if ([string]::IsNullOrWhiteSpace($installWebUI)) { $installWebUI = "1" }
-
-if ($installWebUI -eq "1") {
+function Write-Step($message) {
     Write-Host ""
-    Write-Host "Installing WebUI dependencies..." -ForegroundColor Blue
+    Write-Host "==> $message" -ForegroundColor Cyan
+}
 
-    # Check Node.js
-    $nodeVersion = & node --version 2>&1
+function Write-Ok($message) {
+    Write-Host "    OK  $message" -ForegroundColor Green
+}
+
+function Write-Warn($message) {
+    Write-Host "    !   $message" -ForegroundColor Yellow
+}
+
+function Fail($message) {
+    Write-Host ""
+    Write-Host "エラー / Error: $message" -ForegroundColor Red
+    Write-Host ""
+    if (-not $Quiet) {
+        Write-Host "Enter キーで終了 / Press Enter to exit"
+        [void](Read-Host)
+    }
+    exit 1
+}
+
+# --- Python を探す / locate a usable Python ------------------------------
+
+function Find-Python {
+    $candidates = @()
+
+    # py ランチャは複数バージョンを正しく解決するので最優先
+    # The py launcher resolves versions correctly, so try it first.
+    $launcher = Get-Command py -ErrorAction SilentlyContinue
+    if ($launcher) {
+        $candidates += ,@($launcher.Source, @("-3"))
+    }
+
+    $onPath = Get-Command python -ErrorAction SilentlyContinue
+    if ($onPath) {
+        $candidates += ,@($onPath.Source, @())
+    }
+
+    foreach ($candidate in $candidates) {
+        $exe = $candidate[0]
+        $prefix = $candidate[1]
+        try {
+            $args = $prefix + @("-c", "import sys; print(sys.version_info.major, sys.version_info.minor)")
+            $output = & $exe @args 2>$null
+            if ($LASTEXITCODE -ne 0) { continue }
+            $parts = $output.Trim().Split(" ")
+            $major = [int]$parts[0]
+            $minor = [int]$parts[1]
+            if ($major -gt $MinPythonMajor -or
+                ($major -eq $MinPythonMajor -and $minor -ge $MinPythonMinor)) {
+                return @{ Exe = $exe; Prefix = $prefix; Version = "$major.$minor" }
+            }
+            # Microsoft Store のスタブは実行しても何も返さないので上で弾かれる
+            # Microsoft Store stubs produce no output and are filtered above.
+        } catch {
+            continue
+        }
+    }
+    return $null
+}
+
+function Install-Python {
+    Write-Step "Python を導入します / Installing Python"
+    Write-Host "    数分かかります / This takes a few minutes."
+
+    $installer = Join-Path $env:TEMP "python-aipmo-setup.exe"
+    try {
+        Invoke-WebRequest -Uri $PythonInstallerUrl -OutFile $installer -UseBasicParsing
+    } catch {
+        Fail @"
+Python のダウンロードに失敗しました / Could not download Python.
+ネットワーク接続を確認するか、手動で導入してください。
+Check your network, or install manually from:
+  https://www.python.org/downloads/
+"@
+    }
+
+    # 管理者権限を避けるためユーザー単位で導入する
+    # Per-user install so no administrator rights are needed.
+    $arguments = @(
+        "/quiet", "InstallAllUsers=0", "PrependPath=1",
+        "Include_pip=1", "Include_launcher=1", "Include_test=0"
+    )
+    $process = Start-Process -FilePath $installer -ArgumentList $arguments `
+        -Wait -PassThru
+    Remove-Item $installer -ErrorAction SilentlyContinue
+
+    if ($process.ExitCode -ne 0) {
+        Fail "Python のインストーラが失敗しました (コード $($process.ExitCode)) / Python installer failed"
+    }
+
+    # PATH は現在のセッションに反映されないため、自分で読み直す
+    # PATH changes do not reach the current session; reload it.
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
+                [Environment]::GetEnvironmentVariable("Path", "User")
+
+    $python = Find-Python
+    if (-not $python) {
+        Fail @"
+Python は入りましたが、このウィンドウからは見つかりません。
+Python was installed but is not visible in this session.
+PC を再起動してから install.bat をもう一度実行してください。
+Restart your PC, then run install.bat again.
+"@
+    }
+    Write-Ok "Python $($python.Version)"
+    return $python
+}
+
+# --- 本体 / main ---------------------------------------------------------
+
+Write-Host ""
+Write-Host "  AI-PMO Platform" -ForegroundColor White
+Write-Host "  インストーラ / Installer"
+Write-Host "  ---------------------------------------------"
+
+Write-Step "Python を確認しています / Checking for Python"
+$python = Find-Python
+if ($python) {
+    Write-Ok "Python $($python.Version) が見つかりました / found"
+} else {
+    Write-Warn "対応する Python が見つかりません / no suitable Python found"
+    $python = Install-Python
+}
+
+Write-Step "インストール先 / Install location"
+Write-Host "    $InstallDir"
+New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+
+# ソースをコピーする。スクリプトの親ディレクトリがパッケージのルート。
+# Copy the sources. The script's parent directory is the package root.
+$sourceRoot = Split-Path -Parent $PSScriptRoot
+$payload = @("aipmo", "prompts", "templates", "sql",
+             "queries.yaml", "pyproject.toml", "README.md")
+
+foreach ($item in $payload) {
+    $source = Join-Path $sourceRoot $item
+    if (Test-Path $source) {
+        Copy-Item $source -Destination $InstallDir -Recurse -Force
+    }
+}
+Write-Ok "ファイルをコピーしました / files copied"
+
+Write-Step "仮想環境を作成しています / Creating the virtual environment"
+$venv = Join-Path $InstallDir ".venv"
+$venvPython = Join-Path $venv "Scripts\python.exe"
+
+if (-not (Test-Path $venvPython)) {
+    $createArgs = $python.Prefix + @("-m", "venv", $venv)
+    & $python.Exe @createArgs
     if ($LASTEXITCODE -ne 0) {
-        Write-Host ""
-        Write-Host "WARNING: Node.js is not installed" -ForegroundColor Yellow
-        Write-Host "WebUI requires Node.js 16 or later"
-        Write-Host "Install from: https://nodejs.org/"
-        Write-Host ""
-        $skipWebUI = Read-Host "Skip WebUI installation? (y/n) [default: y]"
-        if ([string]::IsNullOrWhiteSpace($skipWebUI)) { $skipWebUI = "y" }
-
-        if ($skipWebUI -eq "y") {
-            Write-Host "WARNING: WebUI skipped. CLI only mode." -ForegroundColor Yellow
-            $installWebUI = "0"
-        } else {
-            Read-Host "Press Enter to exit"
-            exit 1
-        }
-    } else {
-        Write-Host "[OK] Node.js $nodeVersion detected" -ForegroundColor Green
+        Fail "仮想環境を作成できませんでした / could not create the virtual environment"
     }
+}
+Write-Ok ".venv"
 
-    if ($installWebUI -eq "1") {
-        # Install FastAPI dependencies
-        pip install fastapi uvicorn websockets pydantic | Out-Null
-        Write-Host "[OK] FastAPI dependencies installed" -ForegroundColor Green
+Write-Step "依存パッケージを導入しています / Installing dependencies"
+Write-Host "    数分かかります / This takes a few minutes."
 
-        # Install React dependencies
-        if (Test-Path "aipmo\web\frontend") {
-            Set-Location "aipmo\web\frontend"
-            npm install | Out-Null
-            Write-Host "[OK] React dependencies installed" -ForegroundColor Green
-            Set-Location "..\..\.."
-        } else {
-            Write-Host "WARNING: Frontend directory not found" -ForegroundColor Yellow
-        }
+& $venvPython -m pip install --upgrade pip --quiet --disable-pip-version-check
+if ($LASTEXITCODE -ne 0) { Fail "pip の更新に失敗しました / pip upgrade failed" }
 
-        Write-Host "[OK] WebUI installation complete" -ForegroundColor Green
+Push-Location $InstallDir
+try {
+    & $venvPython -m pip install --quiet --disable-pip-version-check ".[cloud,data]"
+    if ($LASTEXITCODE -ne 0) {
+        Fail @"
+依存パッケージの導入に失敗しました / dependency installation failed.
+プロキシ環境の場合は、管理者に PyPI (pypi.org) への接続許可を確認してください。
+Behind a proxy? Ask your administrator to allow access to pypi.org.
+"@
     }
-} else {
-    Write-Host "[OK] CLI mode selected (WebUI skipped)" -ForegroundColor Green
+} finally {
+    Pop-Location
+}
+Write-Ok "完了 / done"
+
+# --- ショートカット / shortcuts -----------------------------------------
+
+if (-not $NoShortcut) {
+    Write-Step "ショートカットを作成しています / Creating shortcuts"
+
+    $launcher = Join-Path $InstallDir "AI-PMO.cmd"
+    @"
+@echo off
+cd /d "%~dp0"
+call ".venv\Scripts\activate.bat"
+echo.
+echo   AI-PMO Platform
+echo   ---------------------------------------------
+echo   aipmo setup      初回設定 / first-run setup
+echo   aipmo validate   テンプレート検証 / validate a template
+echo   aipmo run        テンプレート実行 / run a template
+echo   aipmo doctor     接続確認 / connection check
+echo   aipmo --help     すべてのコマンド / all commands
+echo.
+cmd /k
+"@ | Set-Content -Path $launcher -Encoding ASCII
+
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($dir in @([Environment]::GetFolderPath("Desktop"),
+                       (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"))) {
+        if (-not (Test-Path $dir)) { continue }
+        $link = $shell.CreateShortcut((Join-Path $dir "AI-PMO.lnk"))
+        $link.TargetPath = $launcher
+        $link.WorkingDirectory = $InstallDir
+        $link.Description = "AI-PMO Platform"
+        $link.Save()
+    }
+    Write-Ok "デスクトップとスタートメニュー / desktop and Start menu"
 }
 
-# Final message
+# --- セットアップ / setup ------------------------------------------------
+
 Write-Host ""
-Write-Host "====================================================================" -ForegroundColor Green
-Write-Host "                  Installation Complete!                        " -ForegroundColor Green
-Write-Host "====================================================================" -ForegroundColor Green
+Write-Host "  インストールが完了しました / Installation complete" -ForegroundColor Green
 Write-Host ""
 
-Write-Host "Next Steps:" -ForegroundColor Blue
-Write-Host ""
+if (-not $Quiet) {
+    Write-Host "  続けて初期設定を行います / Continuing to first-run setup."
+    Write-Host ""
+    Push-Location $InstallDir
+    try {
+        & $venvPython -m aipmo.cli setup --dir $InstallDir
+    } finally {
+        Pop-Location
+    }
 
-if ($installWebUI -eq "1") {
-    Write-Host "1. Run CLI mode:"
-    Write-Host "    python -m aipmo.engine.maturation.cli"
     Write-Host ""
-    Write-Host "2. Run WebUI (FastAPI backend):"
-    Write-Host "    uvicorn aipmo.web.api:app --reload"
+    Write-Host "  デスクトップの AI-PMO から起動できます" -ForegroundColor Cyan
+    Write-Host "  Launch it from the AI-PMO shortcut on your desktop." -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "3. In another terminal, run React frontend:"
-    Write-Host "    cd aipmo\web\frontend"
-    Write-Host "    npm run dev"
-    Write-Host ""
-    Write-Host "4. Access WebUI:"
-    Write-Host "    http://localhost:3000 (Vite dev server)"
-    Write-Host "    http://localhost:8000 (FastAPI + React build)"
-} else {
-    Write-Host "1. Run CLI:"
-    Write-Host "    python -m aipmo.engine.maturation.cli"
-    Write-Host ""
-    Write-Host "To install WebUI later:"
-    Write-Host "    cd aipmo\web\frontend"
-    Write-Host "    npm install"
-    Write-Host "    npm run build"
+    Write-Host "  Enter キーで終了 / Press Enter to exit"
+    [void](Read-Host)
 }
-
-Write-Host ""
-Write-Host "Documentation:" -ForegroundColor Blue
-Write-Host "    Read INSTALL.md for detailed setup instructions"
-Write-Host "    Read docs\guide\en.md for usage guide"
-Write-Host ""
-
-Write-Host "Activate environment:" -ForegroundColor Blue
-Write-Host "    .\venv\Scripts\Activate.ps1"
-Write-Host ""
-
-Write-Host "Happy coding!" -ForegroundColor Yellow
-Write-Host ""
-
-Read-Host "Press Enter to exit"

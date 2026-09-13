@@ -8,6 +8,12 @@
 はじめての方は [はじめてのガイド（8言語）](docs/guide/README.md) をどうぞ。
 New here? Start with the [getting-started guide (8 languages)](docs/guide/README.md) .
 
+CLI だけで動きます。スマホから使いたい・進捗を人に見せたいなら、
+[INSTALL.md](INSTALL.md) の「WebUI は要る？」を先に確認してください。
+
+It runs on the CLI alone. If you want phone access or to show progress to
+someone else, check "Do you need the WebUI?" in [INSTALL.md](INSTALL.md) first.
+
 <a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">初心者向けAI-PMO
 はじめてのガイド</a>  PMO 業務のノウハウを「実行可能なテンプレート」として記述し、LLM と外部ツール連携を
 組み合わせて自動実行する基盤。 
@@ -639,7 +645,6 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 | [SECURITY.md](SECURITY.md) | 脆弱性の報告 / reporting a vulnerability |
 | [docs/DEPLOY-HETZNER.md](docs/DEPLOY-HETZNER.md) | 有料 VPS 構成（Hetzner）/ paid VPS deployment |
 | [docs/DEPLOY-TARGETS.md](docs/DEPLOY-TARGETS.md) | PostgreSQL・Ollama・Qdrant を内部/外部どちらにするかの手順 / step-by-step for internal vs external PostgreSQL, Ollama, and Qdrant |
-| [docs/GIT_PULL_AND_WEBUI_INSTALLATION.md](docs/GIT_PULL_AND_WEBUI_INSTALLATION.md) | git clone からの WebUI 選択式インストール手順 / installing via git clone with the WebUI installer |
 | [NOTICE.md](NOTICE.md) | ライセンスと依存ライブラリ / licensing and dependencies |
 
 ---
