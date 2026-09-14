@@ -201,6 +201,10 @@ via an external Qdrant Cloud plan.
 scripts\install.bat           # Windows
 ./scripts/install-docker.sh   # Docker (local AI)
 
+# WebUI（スマホ向け画面）も入れる場合 / to also install the WebUI:
+./scripts/install.sh --web
+scripts\install.bat -Web
+
 # 開発者向け / from source
 pip install -e ".[dev]"
 pip install -e ".[cloud,data,web]"   # 全部入り / everything

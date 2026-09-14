@@ -9,12 +9,21 @@
 #
 # システムの Python を汚さないため、必ず venv を作る。
 # Always builds a venv so the system Python is never modified.
+#
+# WebUI（スマホ向け画面）は既定では入れない。CLI だけで完結するため。
+# 入れる場合は -Web を渡すか、対話実行なら質問に答える。
+#
+# The WebUI (the mobile-friendly screen) is not installed by default - the
+# CLI is complete on its own. Pass -Web to include it, or answer the
+# interactive prompt during a normal (non -Quiet) run.
 
 [CmdletBinding()]
 param(
     [string]$InstallDir = "$env:LOCALAPPDATA\AI-PMO",
     [switch]$NoShortcut,
-    [switch]$Quiet
+    [switch]$Quiet,
+    [switch]$Web,
+    [switch]$NoWeb
 )
 
 $ErrorActionPreference = "Stop"
@@ -153,6 +162,21 @@ if ($python) {
     $python = Install-Python
 }
 
+if ($Web) {
+    $installWeb = $true
+} elseif ($NoWeb) {
+    $installWeb = $false
+} elseif (-not $Quiet) {
+    Write-Step "WebUI（スマホ向け画面）/ WebUI (mobile-friendly screen)"
+    Write-Host "    CLI だけで完結します。スマホから使う・進捗を見せたい場合だけ要ります。"
+    Write-Host "    The CLI is complete on its own; this only matters for phone access or"
+    Write-Host "    showing progress to someone else."
+    $choice = Read-Host "    WebUI も入れますか？ / Install it too? (y/N)"
+    $installWeb = ($choice -eq "y" -or $choice -eq "Y" -or $choice -eq "yes")
+} else {
+    $installWeb = $false
+}
+
 Write-Step "インストール先 / Install location"
 Write-Host "    $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -190,9 +214,12 @@ Write-Host "    数分かかります / This takes a few minutes."
 & $venvPython -m pip install --upgrade pip --quiet --disable-pip-version-check
 if ($LASTEXITCODE -ne 0) { Fail "pip の更新に失敗しました / pip upgrade failed" }
 
+$extras = "cloud,data"
+if ($installWeb) { $extras = "$extras,web" }
+
 Push-Location $InstallDir
 try {
-    & $venvPython -m pip install --quiet --disable-pip-version-check ".[cloud,data]"
+    & $venvPython -m pip install --quiet --disable-pip-version-check ".[$extras]"
     if ($LASTEXITCODE -ne 0) {
         Fail @"
 依存パッケージの導入に失敗しました / dependency installation failed.
@@ -244,6 +271,16 @@ cmd /k
 
 Write-Host ""
 Write-Host "  インストールが完了しました / Installation complete" -ForegroundColor Green
+Write-Host ""
+
+if ($installWeb) {
+    Write-Host "  WebUI を入れました。起動するには / WebUI installed. Start it with:"
+    Write-Host "    aipmo serve --host 0.0.0.0"
+} else {
+    Write-Host "  WebUI は入れていません。後から入れる場合は次を実行してください:"
+    Write-Host "  WebUI was not installed. To add it later, run:"
+    Write-Host "    install.ps1 -Web"
+}
 Write-Host ""
 
 if (-not $Quiet) {

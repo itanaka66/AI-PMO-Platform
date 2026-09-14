@@ -22,7 +22,7 @@ flowchart TD
     start(["インストール完了\nA・B・Cのいずれかを実行済み\n\nInstall done — A, B, or C above"])
     q{"スマホから使う、または\n閲覧専用の人に進捗を見せたい？\n\nUse it from a phone, or show\nprogress to a view-only person?"}
     cli["CLIのみで運用\naipmo run / aipmo validate\n\nCLI only — nothing more to do"]
-    add["pip install \"aipmo[web]\""]
+    add["install.sh --web / install.bat -Web\n(手動なら pip install \"aipmo[web]\")\n\nor manually: pip install \"aipmo[web]\""]
     serve["aipmo serve --host 0.0.0.0"]
     urls["実行用と閲覧用、2本のURLが表示される\n\nTwo URLs are printed:\noperator (can run) and viewer (read only)"]
     share["渡す相手で使い分ける\n実行できる人→実行用 / 見るだけの人→閲覧用\n\nHand out the right one:\noperator URL to who runs it,\nviewer URL to who only watches"]
@@ -30,7 +30,7 @@ flowchart TD
     start --> q
     q -- "いいえ / No" --> cli
     q -- "はい / Yes" --> add --> serve --> urls --> share
-    cli -.->|"後から必要になったら\nNeed it later?"| add
+    cli -.->|"後から必要になったら\nNeed it later? Re-run the\ninstaller with --web / -Web"| add
 ```
 
 閲覧専用の人には実行の権限を渡せません — ボタンが押せないだけでなく、
@@ -58,6 +58,16 @@ AI の提供元を選んで API キーを貼り付けてください。
 
 No administrator rights required. A setup screen opens afterwards; choose an AI
 provider and paste your API key into it.
+
+この配布形式（.exe）は現時点で WebUI を含みません。WebUI が必要な場合は、
+リポジトリを clone して `scripts\install.bat -Web`（または
+`scripts\install.ps1 -Web`）を実行してください——中身は同じセットアップ
+ウィザードで、追加で WebUI も入ります。
+
+This distribution (the .exe) does not currently bundle the WebUI. If you
+need it, clone the repository and run `scripts\install.bat -Web` (or
+`scripts\install.ps1 -Web`) instead — same setup wizard underneath, with
+the WebUI included.
 
 **API キーの取得 / Getting an API key**
 選んだ提供元のサイトで作成します。迷ったら OpenAI で構いません。
@@ -192,6 +202,17 @@ curl -fsSL https://raw.githubusercontent.com/aipmo/aipmo/main/scripts/install.sh
 
 No `sudo`. Everything lands under `~/.local`. Your system Python is left alone;
 the installer builds an isolated virtual environment.
+
+対話端末で実行すると、WebUI（上の「WebUI は要る？」を参照）を入れるか
+聞かれます。自動化したい場合は先に答えを渡せます:
+
+Running it interactively asks whether to install the WebUI too (see "Do you
+need the WebUI?" above). To skip the prompt, pass the answer up front:
+
+```bash
+./scripts/install.sh --web      # WebUI も入れる / also install the WebUI
+./scripts/install.sh --no-web   # CLI のみ / CLI only
+```
 
 > **`aipmo: command not found` と出たら / If you see this**
 > `~/.local/bin` が PATH に入っていません。次を実行してください。
