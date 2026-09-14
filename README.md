@@ -67,6 +67,13 @@ flowchart TB
     replan["🔄 WBS再計画AI<br/>再計画(スケジュール/リソース再配置)<br/>WBS構造の最適化・代替案の生成・推奨案の提示"]
     new_wbs["🌳 新WBS / 新スケジュール<br/>更新されたWBS・計画・リソース/予算の更新<br/>関係者への通知"]
 
+    subgraph twin_group["🪞 Project Digital Twin"]
+        direction LR
+        twin["プロジェクトの全状態<br/>WBS・タスク・予算・リスク<br/>依存関係・意思決定・文書"]
+        twin_diag["🩺 健全性診断AI<br/>5軸ルール採点 + LLM所見<br/>(schedule/resources/risks/budget/blockers)"]
+        twin -->|採点対象| twin_diag
+    end
+
     exec -->|目標・要求| core
     core --> planning
     planning --> task_engine
@@ -77,6 +84,9 @@ flowchart TB
     replan -->|<b>要承認</b>| new_wbs
     new_wbs -.->|実行| execution
 
+    execution -.->|Jira等から毎日同期<br/>daily sync| twin
+    twin_diag -->|所見・推奨アクション| exec
+
     classDef exec fill:#dbeeff,stroke:#2f6db5;
     classDef core fill:#d9f2e6,stroke:#2f9e6f;
     classDef plan fill:#eef1fb,stroke:#6b6fd6;
@@ -86,6 +96,7 @@ flowchart TB
     classDef risk fill:#eef1fb,stroke:#6b6fd6;
     classDef plan2 fill:#fde8d8,stroke:#d4813a;
     classDef wbs fill:#fbe1de,stroke:#c1554a;
+    classDef twin fill:#f3e8fd,stroke:#8a4fd6;
     class exec exec;
     class core core;
     class wbs_gen,risk_ai,plan_ai plan;
@@ -95,6 +106,7 @@ flowchart TB
     class forecast risk;
     class replan plan2;
     class new_wbs wbs;
+    class twin,twin_diag twin;
 ```
 
 | 図の要素 / Box | 対応する実装 / What actually exists |
@@ -105,15 +117,19 @@ flowchart TB
 | 承認（経営者/PM） | Web UI の Proposals 画面、`/api/wbs-proposals/{id}/approve`\|`reject`（operator ロールのみ） |
 | 新WBS / 新スケジュール | `wbs_replan_proposals` テーブル（承認されるまでは提案のまま。生WBSへの自動反映はしない） |
 | Progress AI | `sprint_health` / `agile.sprint_issues`（進捗率・完了ポイントはアダプタ側で計算、AIには集計させない） |
+| Project Digital Twin | `digital_twin_sync` テンプレート（Jira から毎日同期）が書き込む12テーブル（[sql/schema.sql](sql/schema.sql)）。詳細は [docs/PROJECT-DIGITAL-TWIN.md](docs/PROJECT-DIGITAL-TWIN.md) |
+| 健全性診断AI | `digital_twin_diagnose` テンプレート。`aipmo/health.py` の `assess_project_health` が5軸を決定論的に採点し、LLM は所見・推奨アクションの文章だけを書く（スコアの再計算はしない） |
 | Task Engine・PMO AI Core | **未実装。** 現状は個別テンプレートの集合を `aipmo schedule` が定時実行する構成で、複数テンプレートを横断して優先順位付け・タスク統合を行う単一の常駐エンジンはまだ無い |
 | 開発AI・テストAI・調査AI・文書AI・営業AI | **未実装。** `agent` ステップに役割ごとの道具・プロンプトを与えれば同じ枠組みで作れるが、現状は役割特化のテンプレートは無い |
 
 図が示す「PMO AI 自身の開発を WBS で管理する」という自己参照的な運用は構想段階。まずはこの図の
-右半分（Progress AI → Risk/Forecast → WBS再計画AI → 承認）が実際に動く状態にした、というのが現在地。
+右半分（Progress AI → Risk/Forecast → WBS再計画AI → 承認）と、Project Digital Twin（毎日の同期 →
+健全性診断）が実際に動く状態にした、というのが現在地。
 
 The self-referential idea in the diagram — the PMO AI managing its own development via a WBS — is
 still a concept. What exists today is the right half of the loop (Progress AI → Risk/Forecast →
-WBS-replanning AI → approval) actually running.
+WBS-replanning AI → approval), plus the Project Digital Twin (daily sync → health diagnosis),
+actually running.
 
 ---
 
