@@ -6,17 +6,41 @@
 #
 # システムの Python を汚さないため、必ず venv を作る。
 # Always builds a venv so the system Python is never modified.
+#
+# WebUI（スマホ向け画面）は既定では入れない。CLI だけで完結するため。
+# 入れる場合は --web を渡すか、対話端末なら質問に答える。
+#
+# The WebUI (the mobile-friendly screen) is not installed by default — the
+# CLI is complete on its own. Pass --web to include it, or answer the
+# interactive prompt when one is available.
+#
+# 使い方 / Usage:
+#   ./scripts/install.sh [--web|--no-web] [-h|--help]
 
 set -euo pipefail
 
 INSTALL_DIR="${AIPMO_HOME:-$HOME/.local/share/ai-pmo}"
 MIN_MAJOR=3
 MIN_MINOR=10
+INSTALL_WEB=""
 
 step()  { printf '\n==> %s\n' "$1"; }
 ok()    { printf '    OK  %s\n' "$1"; }
 warn()  { printf '    !   %s\n' "$1"; }
 fail()  { printf '\nエラー / Error: %s\n\n' "$1" >&2; exit 1; }
+
+usage() {
+  sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --web) INSTALL_WEB=1; shift ;;
+    --no-web) INSTALL_WEB=0; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "不明な引数です / unknown argument: $1 (--help を参照 / see --help)" ;;
+  esac
+done
 
 find_python() {
   for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
@@ -50,6 +74,22 @@ if ! PYTHON="$(find_python)"; then
 fi
 ok "$($PYTHON --version)"
 
+if [ -z "$INSTALL_WEB" ]; then
+  if [ -t 0 ]; then
+    step "WebUI（スマホ向け画面）/ WebUI (mobile-friendly screen)"
+    printf '    CLI だけで完結します。スマホから使う・進捗を見せたい場合だけ要ります。\n'
+    printf '    The CLI is complete on its own; this only matters for phone access or\n'
+    printf '    showing progress to someone else.\n'
+    read -r -p "    WebUI も入れますか？ / Install it too? (y/N): " choice || choice=""
+    case "$choice" in
+      y|Y|yes|YES) INSTALL_WEB=1 ;;
+      *) INSTALL_WEB=0 ;;
+    esac
+  else
+    INSTALL_WEB=0
+  fi
+fi
+
 step "インストール先 / Install location"
 printf '    %s\n' "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
@@ -69,11 +109,14 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 ok ".venv"
 
+EXTRAS="cloud,data"
+[ "$INSTALL_WEB" = "1" ] && EXTRAS="$EXTRAS,web"
+
 step "依存パッケージを導入しています / Installing dependencies"
 printf '    数分かかります / This takes a few minutes.\n'
 "$VENV/bin/python" -m pip install --upgrade pip --quiet --disable-pip-version-check
 (cd "$INSTALL_DIR" && "$VENV/bin/python" -m pip install --quiet \
-  --disable-pip-version-check ".[cloud,data]") \
+  --disable-pip-version-check ".[$EXTRAS]") \
   || fail "依存パッケージの導入に失敗しました / dependency installation failed"
 ok "完了 / done"
 
@@ -100,4 +143,13 @@ if [ -t 0 ]; then
   "$VENV/bin/python" -m aipmo.cli setup --dir "$INSTALL_DIR"
 else
   printf '  次に実行してください / Next, run:\n    aipmo setup\n\n'
+fi
+
+if [ "$INSTALL_WEB" = "1" ]; then
+  printf '  WebUI を入れました。起動するには / WebUI installed. Start it with:\n'
+  printf '    aipmo serve --host 0.0.0.0\n\n'
+else
+  printf '  WebUI は入れていません。後から入れる場合は次を実行してください:\n'
+  printf '  WebUI was not installed. To add it later, run:\n'
+  printf '    %s --web\n\n' "$0"
 fi
