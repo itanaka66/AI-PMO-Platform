@@ -154,6 +154,7 @@ actually running.
 | `digital_twin_diagnose` | 5軸を決定論的に採点し、AI が所見と推奨アクションを記述して記録 / Deterministically scores five dimensions, then has the AI write findings and recommendations |
 | `model_comparison` | 同じプロンプトを複数の AI に同時投稿し、書きぶりを比較 / Sends the same prompt to several AI providers at once and compares the results |
 | `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める / Sends independent notifications concurrently to cut run time |
+| `crawl_watch` | 外部サイトの1ページを取得し、見出し・リンク・メタデータを Slack へ通知 / Fetches an external page and posts its headline, links, and metadata to Slack |
 | `generalize_knowledge` | 社内知見を匿名化・一般化し、レビュー待ちの候補として提出 / Anonymizes and generalizes internal knowledge, submitting it as a candidate awaiting review |
 | `construction/site_meeting` | 工程会議 → 是正起票・安全指摘の即時通知 / Site meeting → corrective-action issues and immediate safety-flag notification |
 | `marketing/campaign_check` | キャンペーン進行（承認待ちを分けて扱う） / Campaign progress check, separating items awaiting approval |
@@ -653,6 +654,7 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 | [docs/TEAMS.md](docs/TEAMS.md) | Teams 連携 / Teams |
 | [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |
 | [docs/TICKET-TRACKERS.md](docs/TICKET-TRACKERS.md) | GitHub Projects・Plane・OpenProject・Azure DevOps |
+| [docs/CRAWLER.md](docs/CRAWLER.md) | Web クローラアダプタ / web crawler adapter |
 | [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
 | [docs/PARALLEL-STEPS-DESIGN.md](docs/PARALLEL-STEPS-DESIGN.md) | 依存関係ベースの並列実行 — 設計中、Engine への配線は未着手 / dependency-based parallel execution — design doc; not yet wired into the Engine |
 | [docs/PROJECT-DIGITAL-TWIN.md](docs/PROJECT-DIGITAL-TWIN.md) | プロジェクトの全状態管理とハイブリッド健康診断 / full project state and hybrid health diagnosis |
