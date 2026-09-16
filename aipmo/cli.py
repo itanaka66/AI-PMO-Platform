@@ -207,6 +207,18 @@ def build_engine(
 
         adapters.register(RiskForecastAdapter(**dict(adapter_config["risk_forecast"])))
 
+    # crawler も risk_forecast と同じ理由で opt-in — 認証情報は要らないが、
+    # 外部サイトに実際に到達するアダプタなので、有効かどうかは
+    # config.yaml から読み取れるようにする。
+    #
+    # crawler is opt-in for the same reason as risk_forecast — no
+    # credentials needed, but it does reach real external sites, so whether
+    # it is active should be visible from config.yaml.
+    if "crawler" in adapter_config:
+        from .adapters.crawler import CrawlerAdapter
+
+        adapters.register(CrawlerAdapter(**dict(adapter_config["crawler"])))
+
     # wbs_replan は postgres の上に合成される（JiraAgileAdapter が jira の
     # 上に合成されるのと同じ形）。postgres が無ければ wbs_replan_proposals
     # にもそもそも書けないので、postgres が設定されているときだけ登録する。

@@ -1,0 +1,75 @@
+name: crawl_watch
+version: "1"
+industry: generic
+description: |
+  外部サイトの1ページを取得し、見出し・リンク・メタデータを抜き出して
+  Slack へ通知する例。crawler アダプタは読み取り専用（writes を持つ
+  アクションが無い）なので、承認は要らない。
+
+  Fetches one external page and posts its headline, links, and metadata to
+  Slack. The crawler adapter is read-only (no action has writes=True), so
+  no approval is required.
+
+trigger: manual
+
+params:
+  url: "https://example.com/news"
+  headline_tag: "h1"
+  slack_channel: "#pmo"
+
+steps:
+  - id: fetch
+    adapter: crawler
+    action: fetch_page
+    inputs:
+      url: "{{ params.url }}"
+
+  - id: headline
+    when: "{{ steps.fetch.output.status }} == 200"
+    adapter: crawler
+    action: extract_text
+    inputs:
+      html: "{{ steps.fetch.output.content }}"
+      tag: "{{ params.headline_tag }}"
+
+  - id: links
+    when: "{{ steps.fetch.output.status }} == 200"
+    adapter: crawler
+    action: extract_links
+    inputs:
+      html: "{{ steps.fetch.output.content }}"
+      base_url: "{{ params.url }}"
+
+  - id: metadata
+    when: "{{ steps.fetch.output.status }} == 200"
+    adapter: crawler
+    action: extract_metadata
+    inputs:
+      html: "{{ steps.fetch.output.content }}"
+
+  - id: notify_ok
+    when: "{{ steps.fetch.output.status }} == 200"
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: |
+        :mag: {{ params.url }}
+
+        タイトル: {{ steps.metadata.output.title }}
+        見出し: {{ steps.headline.output.texts }}
+        リンク数: {{ steps.links.output.count }}
+
+  # DSL の when は単一の比較式のみ対応のため、成功時と別の分岐として書く
+  # （wbs_risk_forecast.yaml の notify_critical と同じ考え方）。
+  #
+  # The DSL's `when` accepts only a single comparison, so this is a separate
+  # branch from the success case (same approach as wbs_risk_forecast.yaml's
+  # notify_critical).
+  - id: notify_failed
+    when: "{{ steps.fetch.output.status }} != 200"
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.slack_channel }}"
+      text: ":warning: {{ params.url }} の取得に失敗（status {{ steps.fetch.output.status }}）"
