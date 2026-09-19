@@ -578,45 +578,73 @@ def _fake_ollama_urlopen(monkeypatch, captured: dict):
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
 
-def test_ollama_sends_num_ctx_top_p_and_repeat_penalty_by_default(monkeypatch):
+RTX3090_HOST = "http://192.168.0.180:11434"
+
+
+def test_ollama_sends_no_extra_options_by_default():
+    """既定（未知のホスト、いわゆる A770 機側）は Ollama 自身の既定値のまま。"""
+    provider = OllamaProvider(model="qwen2.5:14b", host="http://a770-host:11434")
+
+    assert provider.num_ctx is None
+    assert provider.num_predict is None
+    assert provider.top_p is None
+    assert provider.repeat_penalty is None
+
+
+def test_ollama_omits_unset_options_from_the_request(monkeypatch):
     captured: dict = {}
     _fake_ollama_urlopen(monkeypatch, captured)
-    provider = OllamaProvider(model="qwen2.5:14b")
+    provider = OllamaProvider(model="qwen2.5:14b", host="http://a770-host:11434")
 
-    provider.complete(LLMRequest(prompt="hi", temperature=0.7, max_tokens=32768))
+    provider.complete(LLMRequest(prompt="hi", temperature=0.7, max_tokens=4096))
+
+    options = captured["payload"]["options"]
+    assert options == {"temperature": 0.7, "num_predict": 4096}
+
+
+def test_ollama_auto_applies_rich_defaults_for_the_rtx3090_host(monkeypatch):
+    """host が RTX3090 機の URL と一致すると、4つの既定値が自動で入る。"""
+    captured: dict = {}
+    _fake_ollama_urlopen(monkeypatch, captured)
+    provider = OllamaProvider(model="qwen2.5:14b", host=RTX3090_HOST)
+
+    provider.complete(LLMRequest(prompt="hi", temperature=0.7))
 
     options = captured["payload"]["options"]
     assert options["num_ctx"] == 65536
+    assert options["num_predict"] == 32768
     assert options["top_p"] == 0.9
     assert options["repeat_penalty"] == 1.1
-    # temperature / num_predict はリクエストごとに変わる
-    # temperature / num_predict still vary per request
+    # temperature は常にリクエスト由来 / temperature always comes from the request
     assert options["temperature"] == 0.7
-    assert options["num_predict"] == 32768
 
 
-def test_ollama_options_are_configurable(monkeypatch):
+def test_ollama_explicit_options_win_over_the_rtx3090_auto_defaults():
+    provider = OllamaProvider(model="qwen2.5:14b", host=RTX3090_HOST, num_ctx=8192)
+
+    assert provider.num_ctx == 8192
+    # 明示していないものは自動既定値のまま / the rest still auto-fill
+    assert provider.top_p == 0.9
+    assert provider.repeat_penalty == 1.1
+
+
+def test_ollama_options_are_configurable_on_any_host():
     """config.yaml の llm.<profile> から provider 単位で上書きできる。"""
-    captured: dict = {}
-    _fake_ollama_urlopen(monkeypatch, captured)
-    provider = OllamaProvider(model="qwen2.5:14b", num_ctx=8192,
-                              top_p=0.5, repeat_penalty=1.3)
+    provider = OllamaProvider(model="qwen2.5:14b", host="http://a770-host:11434",
+                              num_ctx=8192, top_p=0.5, repeat_penalty=1.3)
 
-    provider.complete(LLMRequest(prompt="hi"))
-
-    options = captured["payload"]["options"]
-    assert options["num_ctx"] == 8192
-    assert options["top_p"] == 0.5
-    assert options["repeat_penalty"] == 1.3
+    assert provider.num_ctx == 8192
+    assert provider.top_p == 0.5
+    assert provider.repeat_penalty == 1.3
 
 
 def test_ollama_provider_builds_from_config_with_extra_options():
     provider = build_provider({
-        "provider": "ollama", "model": "qwen2.5:14b",
-        "num_ctx": 65536, "top_p": 0.9, "repeat_penalty": 1.1,
+        "provider": "ollama", "model": "qwen2.5:14b", "host": RTX3090_HOST,
     })
 
     assert isinstance(provider, OllamaProvider)
     assert provider.num_ctx == 65536
+    assert provider.num_predict == 32768
     assert provider.top_p == 0.9
     assert provider.repeat_penalty == 1.1
