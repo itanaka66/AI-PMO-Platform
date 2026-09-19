@@ -263,50 +263,79 @@ class OpenAIProvider(OpenAICompatibleProvider):
                          base_url=base_url, **extra)
 
 
+#  この IP は特定の1台（RTX3090搭載機）を指す固定値。もう1台の Ollama
+#  ホスト（A770搭載機、VRAM が少ない）はここに挙げた URL 以外すべてで、
+#  そちらは Ollama 自体の既定値のまま（num_ctx 等を一切送らない）にする。
+#
+#  This IP names one specific machine (the one with an RTX3090). The other
+#  Ollama host (an A770 machine, with less VRAM) is any URL other than this
+#  one, and gets no options overrides at all — Ollama's own built-in
+#  defaults apply there.
+_RTX3090_HOST = "http://192.168.0.180:11434"
+_RTX3090_DEFAULTS: dict[str, Any] = {
+    "num_ctx": 65536, "num_predict": 32768, "top_p": 0.9, "repeat_penalty": 1.1,
+}
+
+
 class OllamaProvider(LLMProvider):
     """ローカル LLM。Docker 版で使う。
 
-    temperature・num_predict はリクエストごとに変わる（LLMRequest 由来）。
-    num_ctx・top_p・repeat_penalty はテンプレート側から渡す手段が無いので、
-    provider 単位の固定設定にしている——config.yaml の llm.<profile> に
-    書けば、qwen2.5:14b のようなロングコンテキストモデルでも既定のまま
-    コンテキストが打ち切られることがない。
+    temperature は常にリクエストごと（LLMRequest 由来）。num_predict・
+    num_ctx・top_p・repeat_penalty は明示的に渡さない限り既定で None——
+    その場合オプションとして送らず、Ollama 自身の既定値に任せる
+    （VRAM の少ないホストではそれが安全）。host が _RTX3090_HOST と
+    一致する場合だけ、その4つに自動で _RTX3090_DEFAULTS を適用する
+    （明示的に渡した値があればそちらを優先する）。
 
-    temperature and num_predict vary per request (from LLMRequest).
-    num_ctx/top_p/repeat_penalty have no per-template way to be set, so they
-    are fixed at the provider level instead — set them in config.yaml's
-    llm.<profile> block so a long-context model like qwen2.5:14b is not
-    silently truncated by Ollama's much smaller built-in default.
+    temperature always comes from the request (LLMRequest). num_predict/
+    num_ctx/top_p/repeat_penalty default to None unless given explicitly,
+    in which case they are omitted from the request entirely and Ollama's
+    own defaults apply (the safe choice on a host with less VRAM). Only
+    when host matches _RTX3090_HOST are those four auto-filled from
+    _RTX3090_DEFAULTS (an explicitly passed value still wins).
     """
 
     name = "ollama"
 
     def __init__(self, model: str = "qwen2.5:14b",
                  host: str | None = None,
-                 num_ctx: int = 65536,
-                 top_p: float = 0.9,
-                 repeat_penalty: float = 1.1) -> None:
+                 num_ctx: int | None = None,
+                 num_predict: int | None = None,
+                 top_p: float | None = None,
+                 repeat_penalty: float | None = None) -> None:
         self.model = model
         self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-        self.num_ctx = num_ctx
-        self.top_p = top_p
-        self.repeat_penalty = repeat_penalty
+
+        defaults = (_RTX3090_DEFAULTS if self.host.rstrip("/") == _RTX3090_HOST
+                    else {})
+        self.num_ctx = num_ctx if num_ctx is not None else defaults.get("num_ctx")
+        self.num_predict = (num_predict if num_predict is not None
+                            else defaults.get("num_predict"))
+        self.top_p = top_p if top_p is not None else defaults.get("top_p")
+        self.repeat_penalty = (repeat_penalty if repeat_penalty is not None
+                               else defaults.get("repeat_penalty"))
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         import urllib.request
+
+        options: dict[str, Any] = {
+            "temperature": request.temperature,
+            "num_predict": self.num_predict if self.num_predict is not None
+                           else request.max_tokens,
+        }
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        if self.top_p is not None:
+            options["top_p"] = self.top_p
+        if self.repeat_penalty is not None:
+            options["repeat_penalty"] = self.repeat_penalty
 
         payload = {
             "model": self.model,
             "prompt": request.prompt,
             "system": request.system or "",
             "stream": False,
-            "options": {
-                "num_ctx": self.num_ctx,
-                "num_predict": request.max_tokens,
-                "temperature": request.temperature,
-                "top_p": self.top_p,
-                "repeat_penalty": self.repeat_penalty,
-            },
+            "options": options,
         }
         if request.json_mode:
             payload["format"] = "json"

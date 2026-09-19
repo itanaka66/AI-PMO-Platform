@@ -123,13 +123,30 @@ llm:
     provider: ollama
     model: qwen2.5:14b
     host: http://localhost:11434
-    # 以下は既定値——省略可。ロングコンテキストモデルで打ち切られたく
-    # ない場合や、生成の傾向を変えたい場合だけ書き換える。
-    # The below are defaults — omit them; override only to avoid truncating
-    # a long-context model or to change generation behavior.
-    num_ctx: 65536          # コンテキスト長 / context window
-    top_p: 0.9
-    repeat_penalty: 1.1
+    # num_ctx・num_predict・top_p・repeat_penalty は省略すると Ollama 自身の
+    # 既定値のまま送られる（VRAM の少ないホストではそれが安全）。
+    # 明示的に書けば、この host がどれであっても常にそちらが優先される。
+    #
+    # Omitting num_ctx/num_predict/top_p/repeat_penalty leaves them out of
+    # the request entirely, so Ollama's own defaults apply (the safe choice
+    # on a host with less VRAM). Setting any of them here always wins,
+    # regardless of host.
+    # num_ctx: 65536
+    # top_p: 0.9
+    # repeat_penalty: 1.1
+```
+
+`http://192.168.0.180:11434`（RTX3090搭載機）だけは特別扱いで、上の4つ
+（`num_ctx: 65536`・`num_predict: 32768`・`top_p: 0.9`・`repeat_penalty: 1.1`）
+を config.yaml に何も書かなくても自動で適用する
+（`aipmo/llm/base.py` の `_RTX3090_HOST`）。それ以外の host（A770搭載機など）
+は上記のとおりオプションを一切送らない。
+
+`http://192.168.0.180:11434` (the RTX3090 machine) is special-cased: it
+gets those same four options (`num_ctx: 65536`, `num_predict: 32768`,
+`top_p: 0.9`, `repeat_penalty: 1.1`) automatically, with nothing to write
+in config.yaml (`_RTX3090_HOST` in `aipmo/llm/base.py`). Any other host
+(e.g. the A770 machine) sends no options overrides at all, as above.
 
 # vLLM — --served-model-name に渡した名前をそのまま書く
 llm:
