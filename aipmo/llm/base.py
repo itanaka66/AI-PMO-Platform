@@ -264,14 +264,33 @@ class OpenAIProvider(OpenAICompatibleProvider):
 
 
 class OllamaProvider(LLMProvider):
-    """ローカル LLM。Docker 版で使う。"""
+    """ローカル LLM。Docker 版で使う。
+
+    temperature・num_predict はリクエストごとに変わる（LLMRequest 由来）。
+    num_ctx・top_p・repeat_penalty はテンプレート側から渡す手段が無いので、
+    provider 単位の固定設定にしている——config.yaml の llm.<profile> に
+    書けば、qwen2.5:14b のようなロングコンテキストモデルでも既定のまま
+    コンテキストが打ち切られることがない。
+
+    temperature and num_predict vary per request (from LLMRequest).
+    num_ctx/top_p/repeat_penalty have no per-template way to be set, so they
+    are fixed at the provider level instead — set them in config.yaml's
+    llm.<profile> block so a long-context model like qwen2.5:14b is not
+    silently truncated by Ollama's much smaller built-in default.
+    """
 
     name = "ollama"
 
     def __init__(self, model: str = "qwen2.5:14b",
-                 host: str | None = None) -> None:
+                 host: str | None = None,
+                 num_ctx: int = 65536,
+                 top_p: float = 0.9,
+                 repeat_penalty: float = 1.1) -> None:
         self.model = model
         self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        self.num_ctx = num_ctx
+        self.top_p = top_p
+        self.repeat_penalty = repeat_penalty
 
     def complete(self, request: LLMRequest) -> LLMResponse:
         import urllib.request
@@ -282,8 +301,11 @@ class OllamaProvider(LLMProvider):
             "system": request.system or "",
             "stream": False,
             "options": {
-                "temperature": request.temperature,
+                "num_ctx": self.num_ctx,
                 "num_predict": request.max_tokens,
+                "temperature": request.temperature,
+                "top_p": self.top_p,
+                "repeat_penalty": self.repeat_penalty,
             },
         }
         if request.json_mode:
