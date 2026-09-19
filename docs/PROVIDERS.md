@@ -123,6 +123,13 @@ llm:
     provider: ollama
     model: qwen2.5:14b
     host: http://localhost:11434
+    # 以下は既定値——省略可。ロングコンテキストモデルで打ち切られたく
+    # ない場合や、生成の傾向を変えたい場合だけ書き換える。
+    # The below are defaults — omit them; override only to avoid truncating
+    # a long-context model or to change generation behavior.
+    num_ctx: 65536          # コンテキスト長 / context window
+    top_p: 0.9
+    repeat_penalty: 1.1
 
 # vLLM — --served-model-name に渡した名前をそのまま書く
 llm:

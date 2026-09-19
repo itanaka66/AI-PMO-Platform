@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from aipmo.llm.base import LLMRequest, OpenAICompatibleProvider
+from aipmo.llm.base import LLMRequest, OllamaProvider, OpenAICompatibleProvider
 from aipmo.llm.embeddings import OllamaEmbedder, build_embedder
 from aipmo.llm.presets import PRESETS, ProviderError, require_embeddings, resolve
 from aipmo.llm.registry import LLMRegistry, build_provider
@@ -554,3 +554,69 @@ def test_wizard_routes_embeddings_away_from_claude_and_warns():
 
     assert config["adapters"]["qdrant"]["embedding"]["provider"] == "openai"
     assert any("OPENAI_API_KEY" in w for w in answers.warnings)
+
+
+# --- Ollama の options / Ollama's options ------------------------------------
+
+def _fake_ollama_urlopen(monkeypatch, captured: dict):
+    import io
+    import json as json_module
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["payload"] = json_module.loads(request.data.decode("utf-8"))
+        body = json_module.dumps({"response": "ok", "prompt_eval_count": 1,
+                                   "eval_count": 1}).encode("utf-8")
+        return FakeResponse(body)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+
+def test_ollama_sends_num_ctx_top_p_and_repeat_penalty_by_default(monkeypatch):
+    captured: dict = {}
+    _fake_ollama_urlopen(monkeypatch, captured)
+    provider = OllamaProvider(model="qwen2.5:14b")
+
+    provider.complete(LLMRequest(prompt="hi", temperature=0.7, max_tokens=32768))
+
+    options = captured["payload"]["options"]
+    assert options["num_ctx"] == 65536
+    assert options["top_p"] == 0.9
+    assert options["repeat_penalty"] == 1.1
+    # temperature / num_predict はリクエストごとに変わる
+    # temperature / num_predict still vary per request
+    assert options["temperature"] == 0.7
+    assert options["num_predict"] == 32768
+
+
+def test_ollama_options_are_configurable(monkeypatch):
+    """config.yaml の llm.<profile> から provider 単位で上書きできる。"""
+    captured: dict = {}
+    _fake_ollama_urlopen(monkeypatch, captured)
+    provider = OllamaProvider(model="qwen2.5:14b", num_ctx=8192,
+                              top_p=0.5, repeat_penalty=1.3)
+
+    provider.complete(LLMRequest(prompt="hi"))
+
+    options = captured["payload"]["options"]
+    assert options["num_ctx"] == 8192
+    assert options["top_p"] == 0.5
+    assert options["repeat_penalty"] == 1.3
+
+
+def test_ollama_provider_builds_from_config_with_extra_options():
+    provider = build_provider({
+        "provider": "ollama", "model": "qwen2.5:14b",
+        "num_ctx": 65536, "top_p": 0.9, "repeat_penalty": 1.1,
+    })
+
+    assert isinstance(provider, OllamaProvider)
+    assert provider.num_ctx == 65536
+    assert provider.top_p == 0.9
+    assert provider.repeat_penalty == 1.1
