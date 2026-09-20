@@ -22,7 +22,7 @@ flowchart TD
     start(["インストール完了\nA・B・Cのいずれかを実行済み\n\nInstall done — A, B, or C above"])
     q{"スマホから使う、または\n閲覧専用の人に進捗を見せたい？\n\nUse it from a phone, or show\nprogress to a view-only person?"}
     cli["CLIのみで運用\naipmo run / aipmo validate\n\nCLI only — nothing more to do"]
-    add["install.sh --web / install.bat -Web\n(手動なら pip install \"aipmo[web]\")\n\nor manually: pip install \"aipmo[web]\""]
+    add["install.sh --web / install.bat -Web\n(手動なら pip install &quot;aipmo[web]&quot;)\n\nor manually: pip install &quot;aipmo[web]&quot;"]
     serve["aipmo serve --host 0.0.0.0"]
     urls["実行用と閲覧用、2本のURLが表示される\n\nTwo URLs are printed:\noperator (can run) and viewer (read only)"]
     share["渡す相手で使い分ける\n実行できる人→実行用 / 見るだけの人→閲覧用\n\nHand out the right one:\noperator URL to who runs it,\nviewer URL to who only watches"]
