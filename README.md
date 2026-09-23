@@ -221,6 +221,7 @@ scripts\install.bat           # Windows
 # WebUI（スマホ向け画面）も入れる場合 / to also install the WebUI:
 ./scripts/install.sh --web
 scripts\install.bat -Web
+./scripts/install-docker.sh --web
 
 # 開発者向け / from source
 pip install -e ".[dev]"

@@ -25,18 +25,23 @@
 #                                       required with --qdrant external
 #   --qdrant-api-key KEY               任意（--qdrant external のみ）
 #                                       optional (--qdrant external only)
+#   --web / --no-web                   WebUI も入れる/入れない・既定 no-web
+#                                       also install the WebUI or not — default no-web
 #   -h, --help                         このヘルプを表示 / show this help
 #
 # 例 / Examples:
 #   ./scripts/install-docker.sh
-#     # 対話的に質問される（対話端末が無ければ全部自前が既定）
-#     # asked interactively (defaults to self-hosting everything with no TTY)
+#     # 対話的に質問される（対話端末が無ければ全部自前・WebUIなしが既定）
+#     # asked interactively (defaults to self-hosting everything with no
+#     # WebUI when there is no TTY)
 #
 #   ./scripts/install-docker.sh --postgres external \
 #     --postgres-dsn postgresql://user:pw@host:5432/db \
-#     --ollama local --qdrant skip
-#     # 質問されない。PostgreSQL だけ外部、Ollama は自前、Qdrant は使わない
-#     # no prompts: external PostgreSQL, self-hosted Ollama, no Qdrant
+#     --ollama local --qdrant skip --web
+#     # 質問されない。PostgreSQL だけ外部、Ollama は自前、Qdrant は使わない、
+#     # WebUI は入れる
+#     # no prompts: external PostgreSQL, self-hosted Ollama, no Qdrant,
+#     # WebUI included
 
 set -euo pipefail
 
@@ -51,7 +56,7 @@ warn() { printf '\n[!] %s\n' "$1"; }
 fail() { printf '\nエラー / Error: %s\n\n' "$1" >&2; exit 1; }
 
 usage() {
-  sed -n '2,39p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+  sed -n '2,44p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 # --- CLI 引数の解析 / parsing CLI arguments -----------------------------------
@@ -59,6 +64,7 @@ usage() {
 POSTGRES_MODE=""
 OLLAMA_MODE=""
 QDRANT_MODE=""
+WEB_MODE=""
 PG_DSN_VALUE=""
 OLLAMA_HOST_VALUE=""
 QDRANT_URL_VALUE=""
@@ -95,6 +101,10 @@ while [ $# -gt 0 ]; do
     --qdrant-api-key)
       require_value "--qdrant-api-key" $(( $# > 1 ? 1 : 0 ))
       QDRANT_API_KEY_VALUE="$2"; shift 2 ;;
+    --web)
+      WEB_MODE=1; CLI_SELECTION_GIVEN=1; shift ;;
+    --no-web)
+      WEB_MODE=0; CLI_SELECTION_GIVEN=1; shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
@@ -155,6 +165,7 @@ if [ "$CLI_SELECTION_GIVEN" -eq 1 ]; then
   [ -n "$POSTGRES_MODE" ] || POSTGRES_MODE=local
   [ -n "$OLLAMA_MODE" ]   || OLLAMA_MODE=local
   [ -n "$QDRANT_MODE" ]   || QDRANT_MODE=local
+  [ -n "$WEB_MODE" ]      || WEB_MODE=0
 elif [ -t 0 ]; then
   step "PostgreSQL の接続先 / PostgreSQL target"
   note "1) このマシンに自前で立てる（既定）/ run it on this machine (default)"
@@ -199,13 +210,24 @@ elif [ -t 0 ]; then
       QDRANT_MODE=local
       ;;
   esac
+
+  step "WebUI（スマホ向け画面）/ WebUI (mobile-friendly screen)"
+  note "CLI だけで完結します。スマホから使う・進捗を見せたい場合だけ要ります。"
+  note "The CLI is complete on its own; this only matters for phone access or"
+  note "showing progress to someone else."
+  read -r -p "    WebUI も入れますか？ / Install it too? (y/N): " choice || choice=""
+  case "$choice" in
+    y|Y|yes|YES) WEB_MODE=1 ;;
+    *) WEB_MODE=0 ;;
+  esac
 else
   note "非対話環境のため既定値を使います（PostgreSQL・Ollama・Qdrant を"
-  note "すべて自前で立てる）/ non-interactive: using defaults (self-hosting"
-  note "PostgreSQL, Ollama, and Qdrant all)"
+  note "すべて自前で立てる、WebUI は入れない）/ non-interactive: using"
+  note "defaults (self-hosting PostgreSQL, Ollama, and Qdrant all; no WebUI)"
   POSTGRES_MODE=local
   OLLAMA_MODE=local
   QDRANT_MODE=local
+  WEB_MODE=0
 fi
 
 # --- .env の生成 / writing .env ----------------------------------------------
@@ -250,6 +272,7 @@ PROFILE_ARGS=""
 [ "$POSTGRES_MODE" = local ] && PROFILE_ARGS="$PROFILE_ARGS --profile postgres"
 [ "$OLLAMA_MODE"   = local ] && PROFILE_ARGS="$PROFILE_ARGS --profile ollama"
 [ "$QDRANT_MODE"   = local ] && PROFILE_ARGS="$PROFILE_ARGS --profile qdrant"
+[ "$WEB_MODE"      = 1 ]     && PROFILE_ARGS="$PROFILE_ARGS --profile web"
 
 step "コンテナを起動しています / Starting the containers"
 printf '    初回はイメージ取得に時間がかかります / First run downloads images.\n'
@@ -269,6 +292,7 @@ fi
 
 step "アプリをビルドしています / Building the application"
 docker compose build aipmo
+[ "$WEB_MODE" = 1 ] && docker compose build web
 
 step "接続を確認しています / Checking connections"
 docker compose run --rm aipmo doctor \
@@ -283,3 +307,12 @@ printf '\n  完了しました / Done.\n\n'
 printf '  使い方 / Usage:\n'
 printf '    docker compose run --rm aipmo doctor\n'
 printf '    docker compose run --rm aipmo run templates/examples/meeting_minutes.yaml\n\n'
+
+if [ "$WEB_MODE" = 1 ]; then
+  printf '  WebUI を起動しました / WebUI is running:\n'
+  printf '    docker compose logs web        # 実行用・閲覧用のURL / operator and viewer URLs\n\n'
+else
+  printf '  WebUI は入れていません。後から入れる場合は次を実行してください:\n'
+  printf '  WebUI was not installed. To add it later, run:\n'
+  printf '    %s --web\n\n' "$0"
+fi

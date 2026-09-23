@@ -7,7 +7,15 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY aipmo ./aipmo
 
-RUN pip install --no-cache-dir ".[cloud,data]"
+# web は fastapi/uvicorn のみで軽量なので常に含める。1つのイメージを
+# scheduler・aipmo・web の全コンテナで使い回し、WebUI を実際に起動するか
+# どうかは docker-compose.yml の web サービス（--profile web）側で選ぶ。
+#
+# web is lightweight (just fastapi/uvicorn), so it is always included. The
+# same image is shared by the scheduler, aipmo, and web containers; whether
+# the WebUI actually runs is decided by docker-compose.yml's web service
+# (--profile web), not by what's installed here.
+RUN pip install --no-cache-dir ".[cloud,data,web]"
 
 COPY prompts ./prompts
 COPY templates ./templates

@@ -23,6 +23,25 @@
 # or left unset if you are not using it — see .env.example).
 #
 #   docker compose run --rm aipmo setup
+#
+# WebUI（スマホ向け画面）は既定では起動しない。CLI（aipmo run 等）は
+# これだけで完結する。足す場合は --profile web を追加する:
+#
+#   docker compose --profile web up -d
+#
+# URL は `docker compose logs web` に出る（実行用・閲覧用の2本）。固定
+# したい場合は .env に AIPMO_WEB_TOKEN / AIPMO_VIEWER_TOKEN を書く——
+# 指定しなければ起動のたびに新しく生成される。詳しくは docs/MOBILE.md。
+#
+# The WebUI (the mobile-friendly screen) does not start by default — the
+# CLI (aipmo run, etc.) is complete without it. Add --profile web to
+# include it:
+#
+#   docker compose --profile web up -d
+#
+# Its URLs (operator and viewer) are printed to `docker compose logs web`.
+# To pin them, set AIPMO_WEB_TOKEN / AIPMO_VIEWER_TOKEN in .env — left
+# unset, a new one is generated on every restart. See docs/MOBILE.md.
 
 services:
   postgres:
@@ -94,6 +113,32 @@ services:
     entrypoint: ["aipmo"]
     command: ["schedule"]
     stop_grace_period: 120s
+
+  web:
+    build: .
+    profiles: ["web"]
+    environment:
+      AIPMO_CONFIG: /app/config.docker.yaml
+      AIPMO_PG_DSN: ${AIPMO_PG_DSN:-postgresql://aipmo:aipmo@postgres:5432/aipmo}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
+      QDRANT_URL: ${QDRANT_URL:-}
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      # 未設定なら aipmo serve が起動のたびに新しいトークンを発行する。
+      # 固定したい場合は .env に書く / docs/MOBILE.md 参照。
+      # Left unset, aipmo serve mints a fresh token on every start. Pin them
+      # in .env instead — see docs/MOBILE.md.
+      AIPMO_WEB_TOKEN: ${AIPMO_WEB_TOKEN:-}
+      AIPMO_VIEWER_TOKEN: ${AIPMO_VIEWER_TOKEN:-}
+      AIPMO_CORS_ORIGINS: ${AIPMO_CORS_ORIGINS:-}
+    volumes:
+      - ./prompts:/app/prompts:ro
+      - ./templates:/app/templates:ro
+      - ./queries.yaml:/app/queries.yaml:ro
+    ports:
+      - "8765:8765"
+    entrypoint: ["aipmo"]
+    command: ["serve", "--host", "0.0.0.0"]
+    restart: unless-stopped
 
 volumes:
   postgres_data:
