@@ -10,17 +10,19 @@ Written for people who are not comfortable with a terminal. Pick one.
 ## WebUI は要る？ / Do you need the WebUI?
 
 **CLI だけで完結します。WebUI は追加機能で、後からいつでも足せます。**
-自分がスマホから使う、または実行できない・見るだけの人に進捗を見せたい
-場合だけ必要です。
+ブラウザ画面（PC・スマホどちらからでも開けます）で操作したい、または
+実行できない・見るだけの人に進捗を見せたい場合だけ必要です——スマホ専用の
+機能ではありません。
 
 **The CLI is complete on its own. The WebUI is an add-on you can install at
-any time.** It only matters if you want to use this from a phone, or show
-progress to someone who should see it but not run anything.
+any time.** It only matters if you want a browser screen (reachable from a
+PC or a phone — it is not phone-specific), or want to show progress to
+someone who should see it but not run anything.
 
 ```mermaid
 flowchart TD
     start(["インストール完了\nA・B・Cのいずれかを実行済み\n\nInstall done — A, B, or C above"])
-    q{"スマホから使う、または\n閲覧専用の人に進捗を見せたい？\n\nUse it from a phone, or show\nprogress to a view-only person?"}
+    q{"ブラウザ画面（PC・スマホ問わず）で操作したい、または\n閲覧専用の人に進捗を見せたい？\n\nWant a browser screen (PC or phone), or\nshow progress to a view-only person?"}
     cli["CLIのみで運用\naipmo run / aipmo validate\n\nCLI only — nothing more to do"]
     add["install.sh --web / install.bat -Web\n(手動なら pip install 'aipmo[web]')\n\nor manually: pip install 'aipmo[web]'"]
     serve["aipmo serve --host 0.0.0.0"]
