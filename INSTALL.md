@@ -263,6 +263,16 @@ To automate this without interactive prompts, pass CLI flags instead
   --ollama local --qdrant skip
 ```
 
+WebUI（スマホ向け画面）も対話質問で聞かれます。`--web` / `--no-web` で
+指定することもできます:
+
+The WebUI (the mobile-friendly screen) is also asked about interactively.
+Pass `--web` / `--no-web` to decide it non-interactively instead:
+
+```bash
+./scripts/install-docker.sh --web
+```
+
 GPU を使う場合は `docker-compose.yml` の `deploy:` のコメントを外してください。
 To use a GPU, uncomment the `deploy:` block in `docker-compose.yml`.
 
