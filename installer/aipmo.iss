@@ -83,10 +83,20 @@ Source: "..\sql\*";       DestDir: "{app}\sql";       Flags: ignoreversion recur
 Source: "..\queries.yaml"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.md";    DestDir: "{app}"; Flags: ignoreversion isreadme
 
+; ショートカットの起動用。aipmo.exe を直接開くと、コンソールウィンドウが
+; 開いて即座に閉じる（引数無しは usage エラーで exit、--help も出力後に
+; exit するため）。cmd /k で開いたままにする AI-PMO.cmd をここに挟む。
+;
+; What the shortcuts launch. Opening aipmo.exe directly flashes a console
+; window that closes immediately - no arguments is a usage error, --help
+; also exits right after printing. AI-PMO.cmd sits in between and keeps the
+; window open with cmd /k.
+Source: "AI-PMO.cmd"; DestDir: "{app}"; Flags: ignoreversion
+
 [Icons]
-Name: "{group}\AI-PMO";       Filename: "{app}\{#AppExeName}"; Parameters: "--help"
+Name: "{group}\AI-PMO";       Filename: "{app}\AI-PMO.cmd"; IconFilename: "{app}\{#AppExeName}"
 Name: "{group}\AI-PMO Setup"; Filename: "{app}\{#AppExeName}"; Parameters: "setup"
-Name: "{autodesktop}\AI-PMO"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\AI-PMO"; Filename: "{app}\AI-PMO.cmd"; IconFilename: "{app}\{#AppExeName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Parameters: "setup"; \
