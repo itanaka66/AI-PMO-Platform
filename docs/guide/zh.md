@@ -187,6 +187,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 - [SCHEDULER.md](../SCHEDULER.md) —— 按设定的时间自动运行
 - [AGILE.md](../AGILE.md) —— 报告冲刺进展
 - [INDUSTRIES.md](../INDUSTRIES.md) —— 建筑、市场营销等行业用法
-- [LICENSE](../../LICENSE) —— MIT 许可证（允许商用、修改与再分发）
+- [LICENSE](../../LICENSE) —— GPL-3.0 许可证（允许商用与修改；再分发或修改后的版本也必须以 GPL-3.0 发布）
 - [README.md](../../README.md) —— 原理与设计（面向开发者）
 - `templates/examples/` —— 模板实例

@@ -61,12 +61,14 @@ aipmo schedule                           # 定時実行
 
 ## ライセンス / License
 
-MIT License（[LICENSE](LICENSE)）— Copyright (c) 2026 株式会社エージーネディア。
+GPL-3.0 License（[LICENSE](LICENSE)）— Copyright (C) 2026 株式会社エージーネディア。
 
 **このリポジトリにあるものは、すべて無料です。** 商用利用・改変・再配布が
-可能で、テンプレートとプロンプトも同じ条件です。詳細は [NOTICE.md](NOTICE.md)。
+可能で（コピーレフト——再配布・改変版も GPL-3.0 で公開）、テンプレートと
+プロンプトも同じ条件です。詳細は [NOTICE.md](NOTICE.md)。
 
-MIT. Commercial use, modification and redistribution are permitted, and that
+GPL-3.0. Commercial use, modification and redistribution are permitted
+(copyleft — a redistributed or modified copy must also be GPL-3.0), and that
 includes the templates and prompts.
 
 ## まだ決めていないこと / Not yet decided

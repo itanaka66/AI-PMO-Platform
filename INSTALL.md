@@ -122,7 +122,7 @@ individual or an organisation.
 - 通常のコード署名証明書（OV）: DigiCert・Sectigo・SSL.com などで
   年額 100〜400 USD 程度、組織確認が要ります。EV 証明書はさらに高額で
   ハードウェアトークンが必要な代わり、SmartScreen の警告がすぐ収まります。
-- **OSS 向けの無料の選択肢**: このリポジトリは MIT ライセンスの無料公開
+- **OSS 向けの無料の選択肢**: このリポジトリは GPL-3.0 ライセンスの無料公開
   プロジェクトなので、[SignPath.io](https://signpath.io/) の OSS 向け無料枠
   が使える可能性があります。その場合は署名の仕組み自体が異なる
   （クラウド HSM 経由）ため、下記の手順ではなく SignPath 側の GitHub Action
@@ -133,7 +133,7 @@ individual or an organisation.
   verification. An EV certificate costs more and needs a hardware token, but
   clears the SmartScreen warning immediately instead of over time.
 - **A free option for open source**: since this repository is a free,
-  MIT-licensed project, [SignPath.io](https://signpath.io/)'s free tier for
+  GPL-3.0-licensed project, [SignPath.io](https://signpath.io/)'s free tier for
   open-source projects may apply. That path signs through a cloud HSM rather
   than a local file, so it uses SignPath's own GitHub Action instead of the
   steps below.

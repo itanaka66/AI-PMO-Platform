@@ -193,6 +193,6 @@ Mehr dazu in [INSTALL.md](../../INSTALL.md).
 - [SCHEDULER.md](../SCHEDULER.md) — zeitgesteuert automatisch ausführen
 - [AGILE.md](../AGILE.md) — über Sprints berichten
 - [INDUSTRIES.md](../INDUSTRIES.md) — Bau, Marketing und andere Branchen
-- [LICENSE](../../LICENSE) — MIT (kommerzielle Nutzung, Änderung und Weitergabe erlaubt)
+- [LICENSE](../../LICENSE) — GPL-3.0 (kommerzielle Nutzung und Änderung erlaubt; weitergegebene oder geänderte Versionen müssen ebenfalls unter GPL-3.0 stehen)
 - [README.md](../../README.md) — Funktionsweise und Aufbau, für Entwickler
 - `templates/examples/` — Beispielvorlagen

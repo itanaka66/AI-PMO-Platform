@@ -192,6 +192,6 @@ Mais detalhes em [INSTALL.md](../../INSTALL.md).
 - [SCHEDULER.md](../SCHEDULER.md) — executar automaticamente em horários definidos
 - [AGILE.md](../AGILE.md) — relatar o andamento das sprints
 - [INDUSTRIES.md](../INDUSTRIES.md) — construção, marketing e outros setores
-- [LICENSE](../../LICENSE) — MIT (uso comercial, modificação e redistribuição permitidos)
+- [LICENSE](../../LICENSE) — GPL-3.0 (uso comercial e modificação permitidos; versões redistribuídas ou modificadas também devem ser publicadas sob GPL-3.0)
 - [README.md](../../README.md) — como funciona, para desenvolvedores
 - `templates/examples/` — modelos de exemplo

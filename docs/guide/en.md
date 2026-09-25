@@ -190,6 +190,6 @@ More detail is in [INSTALL.md](../../INSTALL.md).
 - [SCHEDULER.md](../SCHEDULER.md) — running things automatically on a schedule
 - [AGILE.md](../AGILE.md) — reporting on sprints
 - [INDUSTRIES.md](../INDUSTRIES.md) — construction, marketing and other fields
-- [LICENSE](../../LICENSE) — MIT (commercial use, modification and redistribution allowed)
+- [LICENSE](../../LICENSE) — GPL-3.0 (commercial use and modification allowed; redistributed or modified copies must also be GPL-3.0)
 - [README.md](../../README.md) — how it works, for developers
 - `templates/examples/` — worked template examples

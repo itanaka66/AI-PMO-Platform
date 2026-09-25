@@ -175,22 +175,31 @@ def test_the_documented_test_count_matches_reality():
 
 # --- ライセンス / licensing --------------------------------------------------
 
-def test_a_license_file_exists_and_names_mit():
+def test_a_license_file_exists_and_names_gpl():
     """OSS 公開にはライセンスが要る。無いと、利用者は法的に使えない。
 
     Without a licence file the default is "all rights reserved", so nobody can
     legally use it.
     """
     text = (ROOT / "LICENSE").read_text(encoding="utf-8")
-    assert "MIT License" in text
-    assert "Copyright (c)" in text
-    assert "WITHOUT WARRANTY OF ANY KIND" in text
+    assert "GNU GENERAL PUBLIC LICENSE" in text
+    assert "Version 3" in text
+    assert "Copyright (C)" in text
+    assert "Disclaimer of Warranty" in text
 
 
 def test_the_license_has_no_placeholder_left_in_it():
-    """雛形の <year> や <name> が残ったまま公開されると意味を成さない。"""
+    """雛形の [year] 等が残ったまま公開されると意味を成さない。
+
+    <year>・<name of author> は GPL 本文の「他のプロジラムへの適用方法」
+    節に含まれる、他者向けの記載例であり、このファイル自身の雛形ではない
+    ——GPL は本文を改変してはならないため、これらは意図して残る。
+    <year>/<name of author> are instructional examples inside GPL's own "How
+    to Apply These Terms" section, addressed to other authors — not a
+    fill-in-the-blank for this file, which must not be altered.
+    """
     text = (ROOT / "LICENSE").read_text(encoding="utf-8")
-    for placeholder in ("<year>", "<name>", "[year]", "[fullname]", "YOUR NAME"):
+    for placeholder in ("[year]", "[fullname]", "YOUR NAME"):
         assert placeholder not in text, f"雛形が残っています: {placeholder}"
 
 
@@ -203,13 +212,13 @@ def test_the_package_metadata_declares_the_license():
 
     project = config["project"]
     assert project["license"] == {"file": "LICENSE"}
-    assert any("MIT" in c for c in project.get("classifiers", []))
+    assert any("GNU General Public License" in c for c in project.get("classifiers", []))
 
 
 def test_the_license_is_findable_from_the_readme():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert "LICENSE" in readme
-    assert "MIT" in readme
+    assert "GPL-3.0" in readme
 
 
 def test_dependency_licensing_is_documented():
@@ -227,11 +236,17 @@ def test_dependency_licensing_is_documented():
 def test_the_copyright_names_the_company():
     """権利は法人が保有する。個人名のままだと、後から移す手続きが要る。
 
+    GPL-3.0 本文（LICENSE）はライセンス文書そのものであり、FSF 自身の
+    著作権表示以外は書き加えない——このプロジェクト自身の著作権表示は
+    NOTICE.md 側にある。
+
     The corporation holds the rights; an individual's name would mean a
-    transfer later.
+    transfer later. LICENSE is the GPL-3.0 text itself and carries only the
+    FSF's own copyright line; this project's copyright notice lives in
+    NOTICE.md instead.
     """
-    licence = (ROOT / "LICENSE").read_text(encoding="utf-8")
-    assert "agNedia Inc." in licence
+    notice = (ROOT / "NOTICE.md").read_text(encoding="utf-8")
+    assert "agNedia Inc." in notice
 
     import tomllib
 
