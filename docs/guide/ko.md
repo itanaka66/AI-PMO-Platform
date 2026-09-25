@@ -189,6 +189,6 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 - [SCHEDULER.md](../SCHEDULER.md) — 정해진 시각에 자동으로 실행하기
 - [AGILE.md](../AGILE.md) — 스프린트 상황 보고하기
 - [INDUSTRIES.md](../INDUSTRIES.md) — 건설·마케팅 등 업종별 활용
-- [LICENSE](../../LICENSE) — MIT 라이선스 (상업적 이용·수정·재배포 가능)
+- [LICENSE](../../LICENSE) — GPL-3.0 라이선스 (상업적 이용·수정 가능; 재배포·수정판도 GPL-3.0으로 공개해야 함)
 - [README.md](../../README.md) — 구조와 설계 (개발자용)
 - `templates/examples/` — 템플릿 실제 예

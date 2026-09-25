@@ -1,22 +1,25 @@
 # ライセンスについて / Licensing
 
-本体は **MIT License** です。全文は [LICENSE](LICENSE) にあります。
+本体は **GNU General Public License v3.0 以降（GPL-3.0-or-later）** です。
+全文は [LICENSE](LICENSE) にあります。
 
-This software is released under the **MIT License**; the full text is in
-[LICENSE](LICENSE).
+This software is released under the **GNU General Public License v3.0 or
+later (GPL-3.0-or-later)**; the full text is in [LICENSE](LICENSE).
 
-商用利用・改変・再配布・クローズドソース製品への組み込みが可能です。
-著作権表示とライセンス文の同梱だけが条件です。
+商用利用・改変・再配布は自由です。ただしコピーレフト——改変・再配布した
+バージョンも同じ GPL-3.0 で公開し、ソースコードを添えて提供する必要が
+あります。**クローズドソース製品に組み込むことはできません。**
 
-Commercial use, modification, redistribution and inclusion in closed-source
-products are all permitted. The only condition is that the copyright notice and
-licence text travel with it.
+Commercial use, modification and redistribution are all permitted. It is
+copyleft, though: a modified or redistributed version must also be released
+under GPL-3.0, with its source made available. **It cannot be incorporated
+into a closed-source product.**
 
 ---
 
 ## 何が含まれるか / What it covers
 
-MIT License は、このリポジトリに含まれるものすべてに適用されます。
+GPL-3.0 License は、このリポジトリに含まれるものすべてに適用されます。
 コードだけでなく、**テンプレート（`templates/`）とプロンプト（`prompts/`）も
 同じ条件で自由に使われます。**
 
@@ -30,23 +33,27 @@ templates and prompts as well.
 reduced or time-limited versions; there is nothing here that costs money to use.
 
 有償の教材として販売するテンプレートは、**このリポジトリには置きません。**
-MIT License はここに入れたものすべてに及ぶため、置いた時点で誰でも無料で
-使え、再販もできるようになります。無料と有償の境界は、リポジトリの境界です。
+GPL-3.0 License はここに入れたものすべてに及ぶため、置いた時点で誰でも
+無料で使え、ソース付きでの再配布もできるようになります。無料と有償の境界は、
+リポジトリの境界です。
 
-Templates sold as teaching material are **kept out of this repository**. The MIT
-licence reaches everything placed here, so anything added becomes free for
-anyone to use and to resell. The boundary between free and paid is the
-repository boundary itself.
+Templates sold as teaching material are **kept out of this repository**. The
+GPL-3.0 licence reaches everything placed here, so anything added becomes free
+for anyone to use and redistribute (with source). The boundary between free
+and paid is the repository boundary itself.
 
 ---
 
 ## 依存ライブラリ / Dependencies
 
-依存ライブラリはそれぞれのライセンスに従います。本体の MIT License は
-それらには及びません。
+依存ライブラリはそれぞれのライセンスに従います。本体の GPL-3.0 License は
+それらには及びません——いずれも寛容型ライセンス（MIT・Apache-2.0・
+BSD-3-Clause）か LGPL-3.0 で、GPL-3.0 と組み合わせて配布できます。
 
-Dependencies carry their own licences; the MIT licence here does not extend to
-them.
+Dependencies carry their own licences; the GPL-3.0 licence here does not
+extend to them. All of them are either permissive (MIT, Apache-2.0,
+BSD-3-Clause) or LGPL-3.0, so all are compatible with distributing this
+project under GPL-3.0.
 
 | ライブラリ | ライセンス | 用途 |
 |---|---|---|
@@ -84,10 +91,13 @@ Use of the external services follows their own terms.
 
 ## 著作権者 / Copyright holder
 
-株式会社エージーネディア / agNedia Inc.
+Copyright (C) 2026 株式会社エージーネディア / agNedia Inc.
 
 有償サービスを提供する法人が権利を保有しています。individual から法人へ
-移す手続きは要りません。
+移す手続きは要りません。GPL-3.0 の全文（[LICENSE](LICENSE)）はライセンス
+文書そのものなので改変せず、著作権表示はこの NOTICE.md 側に置いています。
 
 The corporation that provides the paid offerings holds the rights, so no
-transfer from an individual is needed later.
+transfer from an individual is needed later. LICENSE holds the GPL-3.0 text
+verbatim (the license document itself is not to be altered); this project's
+own copyright notice lives here in NOTICE.md instead.

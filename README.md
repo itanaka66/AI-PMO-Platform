@@ -23,11 +23,13 @@ show progress to someone else, check "Do you need the WebUI?" in
 <a href="https://claude.ai/code/artifact/877371e4-7535-46c8-91bb-027d61dbc1a6" target="_blank">AI-PMO Getting Started Guide for beginers</a>  A runtime that encodes PMO know-how as executable templates and runs them by
 combining LLM calls with the tools a team already uses.
 
-**すべて無料です。** 機能制限版でも試用版でもありません。MIT License なので、
-商用利用も改変も再配布も自由です。
+**すべて無料です。** 機能制限版でも試用版でもありません。GPL-3.0 License なので、
+商用利用も改変も再配布も自由です（コピーレフト——再配布・改変版も GPL-3.0 で
+公開し、ソースコードを添える必要があります）。
 
-**All of it is free** — not a reduced edition, not a trial. MIT licensed, so
-commercial use, modification and redistribution are all permitted.
+**All of it is free** — not a reduced edition, not a trial. GPL-3.0 licensed, so
+commercial use, modification and redistribution are all permitted (copyleft —
+a redistributed or modified copy must also be GPL-3.0 and include its source).
 
 ---
 
@@ -688,7 +690,8 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 
 ## ライセンス / License
 
-MIT License — Copyright (c) 2026 株式会社エージーネディア / agNedia Inc.
+GNU General Public License v3.0 (GPL-3.0-or-later) —
+Copyright (C) 2026 株式会社エージーネディア / agNedia Inc.
 
 **このリポジトリにあるものは、すべて無料です。** テンプレートもプロンプトも
 同じ条件で、使うために支払うものはありません。
