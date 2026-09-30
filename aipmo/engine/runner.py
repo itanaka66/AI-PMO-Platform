@@ -222,6 +222,13 @@ class Engine:
         # time. A single DB connection is not safe to use from several threads
         # at once, so history writes alone are serialized here.
         self._history_lock = threading.Lock()
+        # 実行が成功で終わるたびに (テンプレート名, RunContext) で呼ばれる。
+        # Task Engine のように、テンプレートを横断して結果を集めるものが
+        # ここに繋ぐ。リスナーの失敗で本来の実行は失敗させない。
+        # Called with (template name, RunContext) after each successful run.
+        # Cross-template consumers such as the Task Engine hook in here; a
+        # listener's failure never fails the run itself.
+        self.run_listeners: list[Callable[[str, RunContext], None]] = []
 
     def run(
         self,
@@ -251,6 +258,12 @@ class Engine:
             raise
 
         self._record_run_finish(ctx, status="success")
+        for listener in self.run_listeners:
+            try:
+                listener(template.name, ctx)
+            except Exception:
+                logger.warning("run %s: 実行完了リスナーが失敗 / run listener failed",
+                               ctx.run_id, exc_info=True)
         logger.info("run %s finished", ctx.run_id)
         return ctx
 

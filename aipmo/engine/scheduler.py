@@ -173,6 +173,7 @@ class Scheduler:
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         sleep: Callable[[float], None] = clock.sleep,
         jitter: bool = True,
+        task_engine: Any = None,
     ) -> None:
         self.engine = engine
         self.jobs = jobs
@@ -180,6 +181,10 @@ class Scheduler:
         self.now = now
         self.sleep = sleep
         self.jitter = jitter
+        # 常駐の間、テンプレートが走らない時間帯も順位を時間経過で更新する。
+        # While resident, keep the ranking current with the passing of time
+        # even when no template runs.
+        self.task_engine = task_engine
         self._stopping = threading.Event()
         # tick() が対象を並行に走らせるようになったので、複数ジョブが
         # 同時に完了して state を書くことがある。Engine の _history_lock
@@ -297,6 +302,11 @@ class Scheduler:
                 # ループ自体は決して落とさない。落ちたら誰も何も動かない。
                 # The loop itself never dies: if it does, nothing runs at all.
                 logger.exception("スケジューラのループでエラー / error in the loop")
+            if self.task_engine is not None:
+                try:
+                    self.task_engine.refresh()
+                except Exception:
+                    logger.exception("Task Engine の更新でエラー / task engine refresh failed")
             self._stopping.wait(interval)
 
         logger.info("停止しました / stopped")

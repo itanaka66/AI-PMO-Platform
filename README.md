@@ -123,7 +123,8 @@ flowchart TB
 | Progress AI | `sprint_health` / `agile.sprint_issues`（進捗率・完了ポイントはアダプタ側で計算、AIには集計させない） |
 | Project Digital Twin | `digital_twin_sync` テンプレート（Jira から毎日同期）が書き込む12テーブル（[sql/schema.sql](sql/schema.sql)）。詳細は [docs/PROJECT-DIGITAL-TWIN.md](docs/PROJECT-DIGITAL-TWIN.md) |
 | 健全性診断AI | `digital_twin_diagnose` テンプレート。`aipmo/health.py` の `assess_project_health` が5軸を決定論的に採点し、LLM は所見・推奨アクションの文章だけを書く（スコアの再計算はしない） |
-| Task Engine・PMO AI Core | **未実装。** 現状は個別テンプレートの集合を `aipmo schedule` が定時実行する構成で、複数テンプレートを横断して優先順位付け・タスク統合を行う単一の常駐エンジンはまだ無い |
+| Task Engine | `aipmo/task_engine.py`。実行が終わるたびに各テンプレートの出力（`items: [{key, summary, assignee, due_date, priority…}]`）からタスクを集め、Jira キー／タイトルで1件に統合し、優先度・期限超過・ブロック・複数テンプレートからの指摘で決定論的に採点して順位付けする（LLM は使わず、内訳は `--why` で見える）。`aipmo schedule` の常駐中は時間経過でも順位を更新。台帳は `task-ledger.json`、表示は `aipmo tasks`。タスクの割当・進捗ルール管理は未実装 |
+| PMO AI Core | **未実装。** 全体最適化・意思決定・学習の統括層はまだ無い |
 | 開発AI・テストAI・調査AI・文書AI・営業AI | **未実装。** `agent` ステップに役割ごとの道具・プロンプトを与えれば同じ枠組みで作れるが、現状は役割特化のテンプレートは無い |
 
 図が示す「PMO AI 自身の開発を WBS で管理する」という自己参照的な運用は構想段階。まずはこの図の
@@ -236,6 +237,7 @@ aipmo validate templates/examples/meeting_to_tasks.yaml
 aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
+aipmo tasks --why                    # 横断の優先順位 / cross-template task ranking
 aipmo doctor                         # 接続確認 / connection check
 pytest                               # 1015 件
 ```

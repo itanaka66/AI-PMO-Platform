@@ -136,6 +136,7 @@ aipmo adapters    # つながっている外部ツールの一覧
 aipmo doctor      # 接続できているか確認する
 aipmo serve       # スマホから使う画面を開く
 aipmo schedule    # 決まった時刻の自動実行を始める
+aipmo tasks       # 複数のテンプレートを横断した、やることの優先順位
 ```
 
 ---

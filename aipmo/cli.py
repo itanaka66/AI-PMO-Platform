@@ -302,6 +302,63 @@ def build_engine(
     return Engine(adapters, llms, prompts, approve=approve)
 
 
+def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
+                       default: bool):
+    """複数テンプレート横断の Task Engine を Engine に繋ぐ。
+
+    常駐する `aipmo schedule` では既定で有効、それ以外は config.yaml に
+    `task_engine:` を書いたときだけ。`enabled: false` でいつでも切れる。
+
+    Hooks the cross-template Task Engine to the engine. On by default for the
+    resident `aipmo schedule`; elsewhere only when config.yaml has a
+    `task_engine:` section. `enabled: false` always turns it off.
+    """
+    from .task_engine import TaskEngine
+
+    section = config.get("task_engine")
+    if isinstance(section, dict):
+        enabled = bool(section.get("enabled", True))
+    else:
+        section, enabled = {}, default
+    if not enabled:
+        return None
+    path = Path(section.get("file", base / "task-ledger.json"))
+    if not path.is_absolute():
+        path = base / path
+    task_engine = TaskEngine(path, stale_days=int(section.get("stale_days", 30)))
+    task_engine.attach(engine)
+    return task_engine
+
+
+def cmd_tasks(args: argparse.Namespace) -> int:
+    """横断の優先順位を表示する / show the cross-template ranking."""
+    from .task_engine import TaskEngine
+
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    section = config.get("task_engine") or {}
+    path = Path(section.get("file", base / "task-ledger.json"))
+    if not path.is_absolute():
+        path = base / path
+
+    task_engine = TaskEngine(path)
+    task_engine.refresh()
+    ranked = task_engine.ranked(assignee=args.assignee, limit=args.limit)
+    if not ranked:
+        print("タスクはありません / no tasks. "
+              "(`aipmo schedule` が走ると集まります / gathered while the scheduler runs)")
+        return 0
+    for position, task in enumerate(ranked, 1):
+        who = task.assignee or "-"
+        due = task.due_date or "-"
+        print(f"{position:>3}. [{task.score:>3}] {task.key or '':<10} {task.title}"
+              f"  ({who}, 期限 {due}, {', '.join(task.templates)})")
+        if args.why:
+            for reason in task.reasons:
+                print(f"        - {reason}")
+    return 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     from .setup_wizard import SetupError
 
@@ -368,6 +425,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     cors_origins = resolve_cors_origins(web, os.environ.get("AIPMO_CORS_ORIGINS"))
 
     engine = build_engine(config)
+    attach_task_engine(engine, config, Path.cwd(), default=False)
     template_root = Path(web.get("templates_dir", "templates")).resolve()
     app = create_app(engine, template_root, token, viewer_token=viewer_token,
                      tenant=config.get("tenant", ""), lang=config.get("lang"),
@@ -419,6 +477,7 @@ def cmd_schedule(args: argparse.Namespace) -> int:
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
     engine = build_engine(config, base_dir=base)
+    task_engine = attach_task_engine(engine, config, base, default=True)
 
     web = dict(config.get("web") or {})
     root = Path(web.get("templates_dir", "templates"))
@@ -442,7 +501,8 @@ def cmd_schedule(args: argparse.Namespace) -> int:
         return 1
 
     state_path = Path(config.get("state_file", base / "scheduler-state.json"))
-    scheduler = Scheduler(engine, jobs, State.load(state_path))
+    scheduler = Scheduler(engine, jobs, State.load(state_path),
+                          task_engine=task_engine)
 
     if args.list:
         for job in scheduler.jobs:
@@ -521,7 +581,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     # require approval are simply refused in that case.
     approve = _confirm_agent_write if sys.stdin.isatty() else None
     try:
-        engine = build_engine(load_config(config_path), config_path.parent, approve=approve)
+        run_config = load_config(config_path)
+        engine = build_engine(run_config, config_path.parent, approve=approve)
+        attach_task_engine(engine, run_config, config_path.resolve().parent,
+                           default=False)
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
@@ -599,6 +662,15 @@ def main(argv: list[str] | None = None) -> int:
     p_schedule.add_argument("--interval", type=float, default=20.0,
                             help="確認の間隔（秒）/ check interval in seconds")
     p_schedule.set_defaults(func=cmd_schedule)
+
+    p_tasks = sub.add_parser(
+        "tasks", help="テンプレート横断のタスク優先順位 / cross-template task ranking")
+    p_tasks.add_argument("--assignee", help="担当者で絞る / filter by assignee")
+    p_tasks.add_argument("--limit", type=int, default=20,
+                         help="表示件数 / how many to show")
+    p_tasks.add_argument("--why", action="store_true",
+                         help="点数の内訳も表示 / show the score breakdown")
+    p_tasks.set_defaults(func=cmd_tasks)
 
     p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")
     p_setup.add_argument("--dir", default=".", help="設定の出力先 / where to write config")
