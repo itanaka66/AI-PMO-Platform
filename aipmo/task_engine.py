@@ -328,6 +328,7 @@ class TaskEngine:
         stamp = self.now().isoformat()
         created = 0
         with self._lock:
+            self._adopt_external_assignments()
             for candidate in candidates:
                 if self._merge(candidate, template, run_id, stamp):
                     created += 1
@@ -424,6 +425,30 @@ class TaskEngine:
 
     # -- 順位付け / ranking ---------------------------------------------
 
+    def _adopt_external_assignments(self) -> None:
+        """別プロセス（Web 画面・CLI）が確定した担当を取り込む。
+
+        `aipmo schedule` と `aipmo serve` は別プロセスで、同じ台帳ファイルを
+        使う。Web 画面で担当を確定しても、常駐側がメモリ上の台帳を保存すると
+        上書きされて消える。ファイルに担当が入っていて、こちらに無いものだけ
+        を取り込むことで、それを防ぐ。
+
+        Picks up assignments another process (the web UI, the CLI) confirmed.
+        The scheduler and the web server are separate processes sharing one
+        ledger file; without this, the scheduler saving its in-memory copy
+        would erase an assignment just confirmed in the UI. Only an assignee
+        present on disk and absent here is adopted.
+        """
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        for raw in data.get("tasks", []):
+            task = self.tasks.get(raw.get("id"))
+            if task is not None and raw.get("assignee") and not task.assignee:
+                task.assignee = raw["assignee"]
+                task.suggested_assignee = task.suggestion_reason = None
+
     def refresh(self) -> None:
         """時間経過での再採点。期限が迫る・超過するほど順位が動くため、
         テンプレートが走らなくても定期的に呼ぶ。
@@ -432,6 +457,7 @@ class TaskEngine:
         the ranking even when no template has run.
         """
         with self._lock:
+            self._adopt_external_assignments()
             self._rescore_locked()
             self._save()
 

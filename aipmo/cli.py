@@ -302,6 +302,18 @@ def build_engine(
     return Engine(adapters, llms, prompts, approve=approve)
 
 
+def ledger_path(config: dict[str, Any], base: Path) -> Path:
+    """台帳ファイルの場所。schedule / serve / pmo / assign で同じにする。
+
+    The ledger's location — identical for schedule, serve, pmo and assign, so
+    the web screen reads the file the scheduler writes.
+    """
+    section = config.get("task_engine")
+    section = section if isinstance(section, dict) else {}
+    path = Path(section.get("file", base / "task-ledger.json"))
+    return path if path.is_absolute() else base / path
+
+
 def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
                        default: bool, launch: bool = False):
     """複数テンプレート横断の Task Engine を Engine に繋ぐ。
@@ -322,9 +334,7 @@ def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
         section, enabled = {}, default
     if not enabled:
         return None
-    path = Path(section.get("file", base / "task-ledger.json"))
-    if not path.is_absolute():
-        path = base / path
+    path = ledger_path(config, base)
     task_engine = TaskEngine(path, stale_days=int(section.get("stale_days", 30)))
     task_engine.attach(engine)
     return build_pmo_core(config, task_engine, engine, base if launch else None)
@@ -407,10 +417,7 @@ def _open_ledger(args: argparse.Namespace):
 
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
-    path = Path((config.get("task_engine") or {}).get("file", base / "task-ledger.json"))
-    if not path.is_absolute():
-        path = base / path
-    return config, build_pmo_core(config, TaskEngine(path))
+    return config, build_pmo_core(config, TaskEngine(ledger_path(config, base)))
 
 
 def cmd_pmo(args: argparse.Namespace) -> int:
@@ -510,12 +517,7 @@ def cmd_tasks(args: argparse.Namespace) -> int:
 
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
-    section = config.get("task_engine") or {}
-    path = Path(section.get("file", base / "task-ledger.json"))
-    if not path.is_absolute():
-        path = base / path
-
-    task_engine = TaskEngine(path)
+    task_engine = TaskEngine(ledger_path(config, base))
     task_engine.refresh()
     ranked = task_engine.ranked(assignee=args.assignee, limit=args.limit)
     if not ranked:
@@ -600,12 +602,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     cors_origins = resolve_cors_origins(web, os.environ.get("AIPMO_CORS_ORIGINS"))
 
+    base = Path(args.config).resolve().parent
     engine = build_engine(config)
-    attach_task_engine(engine, config, Path.cwd(), default=False)
+    attach_task_engine(engine, config, base, default=False)
     template_root = Path(web.get("templates_dir", "templates")).resolve()
     app = create_app(engine, template_root, token, viewer_token=viewer_token,
                      tenant=config.get("tenant", ""), lang=config.get("lang"),
-                     cors_origins=cors_origins or None)
+                     cors_origins=cors_origins or None,
+                     pmo_ledger=ledger_path(config, base))
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()

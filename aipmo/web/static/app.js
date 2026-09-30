@@ -408,6 +408,196 @@ function empty(message) {
   return div;
 }
 
+/* ---------- PMO Core ----------
+ * 台帳とブリーフィングを読んで見せる。画面から周を回したり通知したりは
+ * しない。できる操作は「担当の提案を確定する」だけ（operator のみ。
+ * ボタンを隠すのは権限制御ではなく、サーバーが 403 を返す）。
+ * 文字列はすべて textContent で入れる — 課題名などは外部由来で信用できない。
+ *
+ * Shows the ledger and briefing; it never runs a cycle or notifies. The one
+ * action is confirming an assignment proposal (operator only; hiding the
+ * button is not access control, the server answers 403). Everything goes in
+ * through textContent because issue titles come from outside.
+ */
+
+let jiraWritable = false;
+const STALE_SECONDS = 15 * 60;
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+function humanAge(seconds) {
+  if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} h`;
+  return `${Math.round(seconds / 86400)} d`;
+}
+
+function pmoSection(title, count) {
+  const wrap = el("section", "pmo-block");
+  const head = el("h3", "pmo-sub", title);
+  if (count != null) head.append(el("span", "pmo-count", String(count)));
+  wrap.append(head);
+  return wrap;
+}
+
+function taskRow(task) {
+  const row = el("details", "pmo-task");
+  const summary = el("summary");
+  summary.append(el("span", "tag score", String(task.score)));
+  summary.append(el("span", "pmo-title", task.title));
+  const meta = [task.key, task.assignee || task.suggested_assignee && `→ ${task.suggested_assignee}`,
+    task.due_date].filter(Boolean).join(" · ");
+  if (meta) summary.append(el("span", "pmo-meta", meta));
+  row.append(summary);
+  const list = el("ul", "pmo-reasons");
+  for (const reason of task.reasons || []) list.append(el("li", null, reason));
+  if (task.blocked) list.append(el("li", null, "blocked"));
+  row.append(list);
+  return row;
+}
+
+function proposalRow(task) {
+  const row = el("div", "pmo-proposal");
+  row.append(el("div", "pmo-title", task.title));
+  row.append(el("div", "pmo-meta",
+    `${task.key || ""} → ${task.suggested_assignee} — ${task.suggestion_reason || ""}`));
+  if (canRun) {
+    const button = el("button", "btn btn-approve", t("web_pmo_accept", "Confirm assignee"));
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await api("/api/pmo/assignments/accept", {
+          method: "POST",
+          body: JSON.stringify({ ref: task.id, jira: jiraWritable && Boolean(task.key) }),
+        });
+        toast(t("web_pmo_accepted", "Confirmed."));
+        await refreshPmo();
+      } catch (error) {
+        toast(error.message, "error");
+        button.disabled = false;
+      }
+    });
+    row.append(button);
+  }
+  return row;
+}
+
+function renderPmo(data, decisions) {
+  const host = $("pmo");
+  host.replaceChildren();
+  const { briefing, tasks } = data;
+
+  if (!briefing) {
+    host.append(empty(t("web_pmo_none", "No PMO data yet.")));
+  } else {
+    const top = el("div", "pmo-top");
+    const level = el("span", "tag level", `${t("web_pmo_level", "Overall")}: ${briefing.overall_level}`);
+    level.dataset.level = briefing.overall_level;
+    top.append(level, el("span", "pmo-meta", `${briefing.active_count}`));
+    host.append(top);
+
+    const age = data.briefing_age_seconds;
+    if (age != null && age > STALE_SECONDS) {
+      const warn = el("div", "card-note error",
+        t("web_pmo_stale", "Not updated for {age}.").replace("{age}", humanAge(age)));
+      host.append(warn);
+    }
+
+    if (briefing.alerts.length) {
+      const block = pmoSection(t("web_pmo_alerts", "Alerts"), briefing.alerts.length);
+      for (const alert of briefing.alerts) {
+        const row = el("div", "pmo-alert");
+        row.dataset.severity = alert.severity;
+        row.append(el("span", "tag sev", alert.severity));
+        row.append(el("span", "pmo-title", alert.title));
+        row.append(el("div", "pmo-meta", alert.message));
+        block.append(row);
+      }
+      host.append(block);
+    }
+
+    if (briefing.responses && briefing.responses.length) {
+      const block = pmoSection(t("web_pmo_responses", "Responses"), null);
+      for (const r of briefing.responses) {
+        block.append(el("div", "pmo-meta", `${r.id} · ${r.template} · ${r.status}`));
+      }
+      host.append(block);
+    }
+  }
+
+  const proposals = tasks.filter((task) => task.suggested_assignee && !task.assignee);
+  if (proposals.length) {
+    const block = pmoSection(t("web_pmo_proposals", "Assignment proposals"), proposals.length);
+    for (const task of proposals) block.append(proposalRow(task));
+    host.append(block);
+  }
+
+  if (tasks.length) {
+    const block = pmoSection(t("web_pmo_priorities", "Priorities"), tasks.length);
+    for (const task of tasks.slice(0, 10)) block.append(taskRow(task));
+    host.append(block);
+  }
+
+  if (briefing && briefing.member_loads && briefing.member_loads.length) {
+    const block = pmoSection(t("web_pmo_members", "Member load"), null);
+    for (const m of briefing.member_loads) {
+      const row = el("div", "pmo-load");
+      row.append(el("span", "pmo-title", m.member));
+      const meter = el("progress");
+      meter.max = m.capacity;
+      meter.value = Math.min(m.load, m.capacity);
+      if (m.load > m.capacity) meter.dataset.over = "true";
+      row.append(meter, el("span", "pmo-meta", `${m.load}/${m.capacity}`));
+      block.append(row);
+    }
+    host.append(block);
+  }
+
+  const learned = briefing && briefing.learning;
+  if (learned && (Object.keys(learned.member_factor).length
+                  || Object.keys(learned.label_bonus).length)) {
+    const block = pmoSection(t("web_pmo_learning", "Learned adjustments"), null);
+    for (const [who, factor] of Object.entries(learned.member_factor)) {
+      block.append(el("div", "pmo-meta", `${who}: ×${factor}`));
+    }
+    for (const [label, bonus] of Object.entries(learned.label_bonus)) {
+      block.append(el("div", "pmo-meta", `${label}: +${bonus}`));
+    }
+    host.append(block);
+  }
+
+  if (decisions.length) {
+    const details = el("details", "pmo-decisions");
+    details.append(el("summary", null, t("web_pmo_decisions", "Recent decisions")));
+    for (const d of decisions.slice(0, 20)) {
+      const { at, kind, ...rest } = d;
+      const detail = Object.values(rest).filter((v) => typeof v === "string").join(" · ");
+      details.append(el("div", "pmo-meta", `${clock(at)}  ${kind}  ${detail}`));
+    }
+    host.append(details);
+  }
+}
+
+async function refreshPmo() {
+  // PMO のデータが無い構成（台帳が無い・未設定）は 404。エラーではなく
+  // 「使っていない機能」として、見出しごと隠す。
+  // A deployment with no PMO data answers 404; that is an unused feature,
+  // not an error, so the heading is hidden rather than toasting each refresh.
+  try {
+    const data = await api("/api/pmo");
+    const { items } = await api("/api/pmo/decisions?limit=20").catch(() => ({ items: [] }));
+    $("h-pmo").hidden = false;
+    renderPmo(data, items);
+  } catch (error) {
+    $("h-pmo").hidden = true;
+    $("pmo").replaceChildren();
+  }
+}
+
 /* ---------- 起動 / boot ---------- */
 
 async function refreshRuns() {
@@ -452,6 +642,8 @@ async function boot() {
     canRun = Boolean(session.can_run);
     document.documentElement.lang = session.lang || "en";
     $("tenant").textContent = session.tenant;
+    jiraWritable = (session.adapters.jira || []).includes("update_issue");
+    $("h-pmo").textContent = t("web_pmo", "PMO Core");
     $("h-proposals").textContent = t("web_proposals", "WBS Proposals");
     $("h-templates").textContent = t("web_templates", "Templates");
     $("h-runs").textContent = t("web_runs", "Runs");
@@ -459,6 +651,7 @@ async function boot() {
     const { items } = await api("/api/templates");
     renderTemplates(items);
     await refreshRuns();
+    await refreshPmo();
     await refreshProposals();
     refreshHealth();
   } catch (error) {
@@ -473,6 +666,7 @@ boot();
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     refreshRuns().catch(() => {});
+    refreshPmo().catch(() => {});
     refreshProposals().catch(() => {});
     refreshHealth();
   }

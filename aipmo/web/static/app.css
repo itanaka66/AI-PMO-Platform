@@ -425,3 +425,32 @@ h2:first-of-type { margin-top: 4px; }
   }
   .card:active { background: #22303a; }
 }
+
+/* ---------- PMO Core ---------- */
+.pmo-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tag.level[data-level="critical"], .tag.level[data-level="high"] { color: var(--fail); border-color: var(--fail); }
+.tag.level[data-level="medium"] { color: var(--warn); border-color: var(--warn); }
+.tag.level[data-level="low"] { color: var(--ok); border-color: var(--ok); }
+.pmo-block { margin: 12px 0; }
+.pmo-sub { font-size: 13px; color: var(--muted); margin: 0 0 6px; font-weight: 600; }
+.pmo-count { margin-left: 6px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.pmo-title { color: var(--ink); font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.pmo-meta { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.pmo-alert, .pmo-proposal, .pmo-task {
+  background: var(--surface); border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule); border-radius: 4px;
+  padding: 8px 10px; margin-bottom: 6px;
+}
+.pmo-alert[data-severity="critical"], .pmo-alert[data-severity="high"] { border-left-color: var(--fail); }
+.pmo-alert[data-severity="medium"] { border-left-color: var(--warn); }
+.pmo-proposal { display: flex; flex-direction: column; gap: 4px; }
+.pmo-proposal .btn { align-self: flex-start; min-height: var(--tap); }
+.pmo-task summary { cursor: pointer; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.pmo-reasons { margin: 6px 0 0; padding-left: 1.2em; font-size: 12px; color: var(--muted); }
+.tag.score { font-variant-numeric: tabular-nums; min-width: 2.2em; text-align: center; }
+.pmo-load { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.pmo-load progress { flex: 1; height: 8px; accent-color: var(--accent); }
+.pmo-load progress[data-over="true"] { accent-color: var(--fail); }
+.pmo-decisions { margin-top: 12px; }
+.pmo-decisions summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.pmo-decisions .pmo-meta { padding: 2px 0; font-family: var(--mono); }

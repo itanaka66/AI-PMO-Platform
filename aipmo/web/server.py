@@ -46,9 +46,11 @@ the ability to file issues and send messages.
 """
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +163,7 @@ def create_app(
     lang: str | None = None,
     store: RunStore | None = None,
     cors_origins: list[str] | None = None,
+    pmo_ledger: Path | None = None,
 ):
     runs = store or RunStore()
     ui_lang = normalize(lang) if lang else detect()
@@ -499,6 +502,104 @@ def create_app(
                 for name in engine.adapters.names()
             }
         }
+
+    # -- PMO Core の表示 / PMO Core view -----------------------------------
+    #
+    # 台帳（task-ledger.json）と、常駐側 (`aipmo schedule`) が周ごとに書く
+    # ブリーフィング・判断ログを**読むだけ**。画面から周を回したり、通知や
+    # テンプレート起動を起こしたりはしない。書けるのは担当の確定だけで、
+    # operator のみ。
+    #
+    # Reads the ledger and what the resident `aipmo schedule` writes each
+    # cycle (briefing, decision log); never runs a cycle, notifies or
+    # launches templates from here. The one write is confirming an assignment,
+    # and that needs operator.
+
+    def _pmo_files() -> tuple[Path, Path, Path]:
+        if pmo_ledger is None:
+            raise HTTPException(status_code=404, detail="PMO Core is not configured")
+        base = pmo_ledger.parent
+        return pmo_ledger, base / "pmo-briefing.json", base / "pmo-decisions.jsonl"
+
+    @app.get("/api/pmo", dependencies=[guard])
+    def pmo_view() -> dict[str, Any]:
+        from ..task_engine import TaskEngine
+
+        ledger, briefing_file, _ = _pmo_files()
+        if not ledger.exists() and not briefing_file.exists():
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+
+        briefing = None
+        age = None
+        try:
+            briefing = json.loads(briefing_file.read_text(encoding="utf-8"))
+            generated = datetime.fromisoformat(briefing["generated_at"])
+            age = int((datetime.now(timezone.utc) - generated).total_seconds())
+        except (OSError, ValueError, KeyError):
+            briefing = None
+
+        tasks = [
+            {"id": t.id, "key": t.key, "title": t.title, "score": t.score,
+             "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
+             "suggestion_reason": t.suggestion_reason, "due_date": t.due_date,
+             "priority": t.priority, "status": t.status, "blocked": t.blocked,
+             "reasons": t.reasons, "templates": t.templates}
+            for t in TaskEngine(ledger).ranked(limit=50)
+        ]
+        return {"briefing": briefing, "briefing_age_seconds": age, "tasks": tasks}
+
+    @app.get("/api/pmo/decisions", dependencies=[guard])
+    def pmo_decisions(limit: int = 50) -> dict[str, Any]:
+        _, _, decisions = _pmo_files()
+        limit = max(1, min(limit, 200))
+        try:
+            lines = decisions.read_text(encoding="utf-8").splitlines()[-limit:]
+        except OSError:
+            return {"items": []}
+        items = []
+        for line in reversed(lines):        # 新しい順 / newest first
+            try:
+                items.append(json.loads(line))
+            except ValueError:
+                continue
+        return {"items": items}
+
+    @app.post("/api/pmo/assignments/accept")
+    def pmo_accept(request: Request, payload: dict[str, Any],
+                   role: str = operator_guard) -> dict[str, Any]:
+        from ..pmo_core import PmoCore
+        from ..task_engine import TaskEngine
+
+        ledger, _, _ = _pmo_files()
+        ref = str(payload.get("ref") or "")
+        if not ref:
+            raise HTTPException(status_code=422, detail="ref is required")
+
+        write = None
+        if payload.get("jira"):
+            if not engine.adapters.has("jira"):
+                raise HTTPException(status_code=503, detail="jira adapter is not configured")
+            jira = engine.adapters.get("jira")
+
+            def write(key: str, assignee: str) -> Any:
+                result = jira.invoke("update_issue",
+                                     {"issue_key": key, "assignee": assignee})
+                if result.get("unresolved_assignee"):
+                    raise RuntimeError(f"cannot resolve assignee {assignee!r} in Jira")
+                return result
+
+        core = PmoCore(task_engine=TaskEngine(ledger))
+        try:
+            task = core.accept_assignment(ref, write=write)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        logger.info("pmo assignment accepted: %s -> %s by %s from %s (jira=%s)",
+                    task.id, task.assignee, role, _client_ip(request), write is not None)
+        return {"id": task.id, "assignee": task.assignee, "jira_updated": write is not None}
 
     # -- WBS 再計画の承認 / WBS replan approval ----------------------------
     #

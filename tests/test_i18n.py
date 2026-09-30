@@ -43,6 +43,9 @@ def test_every_language_is_listed(lang):
 # Listed one by one on purpose: loosening the rule would let real misses through.
 ALLOWED_IDENTICAL = {
     ("de", "tenant_prompt"),   # 「Name」はドイツ語でも同じ綴り / same spelling in German
+    # 製品内の固有名詞 / a proper noun of the product
+    ("zh", "web_pmo"), ("ko", "web_pmo"), ("es", "web_pmo"),
+    ("fr", "web_pmo"), ("de", "web_pmo"), ("pt", "web_pmo"), ("ja", "web_pmo"),
 }
 
 
