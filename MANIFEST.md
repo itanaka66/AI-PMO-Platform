@@ -18,6 +18,7 @@ A template-driven runtime for automating PMO work.
 | `aipmo/llm/` | 提供元プリセット（OpenAI・Gemini・Groq・OpenRouter・ローカル） |
 | `aipmo/web/` | スマホ向け画面（権限分離つき、WBS再計画の承認 API を含む） |
 | `templates/examples/` | ソフトウェア開発向けテンプレート 7本 |
+| `templates/roles/` | 役割特化エージェント（開発・テスト・調査・文書・営業）5本 |
 | `templates/industries/` | 建設・マーケティング等、10業界向けテンプレート |
 | `prompts/` | 業務ごとのプロンプト 8本 |
 | `docs/` | 機能ごとの手引き（日英併記） |

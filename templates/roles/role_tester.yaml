@@ -1,0 +1,44 @@
+name: role_tester
+version: "1"
+industry: software
+description: |
+  テストAI。課題から受け入れ条件・テストケース・回帰範囲を作る。
+  テストの実行や合否の判定はしない（作るのは観点であって結果ではない）。
+  書き込みは Jira へのコメントだけで、1 回ごとに人の承認が要る。
+
+trigger: manual
+
+params:
+  issue_key: PROJ-1
+  jira_project: PROJ
+  report_channel: "#qa-notes"
+
+steps:
+  - id: design
+    agent:
+      tools:
+        - jira.search
+        - jira.add_comment
+      allow_writes: true
+      require_approval: true
+      max_iterations: 6
+    llm:
+      profile: default
+      temperature: 0.1
+    config:
+      system: |
+        あなたは PMO チームの「テストAI」です。役割は、課題の記述から確認すべきことを
+        漏れなく洗い出すことです。仕様に書かれていない期待結果は作らず、決まっていない
+        点は「確認したいこと」として人に返します。テストを実行した、合格した、とは書きません。
+    prompt: role_tester_ja
+
+  - id: share
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.report_channel }}"
+      text: |
+        *テストAI: {{ params.issue_key }} のテスト観点* ({{ run.date }})
+
+        {{ steps.design.output.answer }}

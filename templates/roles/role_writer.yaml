@@ -1,0 +1,47 @@
+name: role_writer
+version: "1"
+industry: software
+description: |
+  文書AI。Jira の実績から、リリースノート・進捗報告・決定事項の記録の下書きを作る。
+  読み取り専用。事実はすべて課題キーで裏付け、公開・送信は人が行う。
+
+trigger: manual
+
+params:
+  jira_project: PROJ
+  doc_type: status_report          # release_notes / status_report / decision_log
+  period_from: "2026-09-01"
+  period_to: "2026-09-30"
+  review_channel: "#docs-review"
+
+steps:
+  - id: draft
+    agent:
+      tools:
+        - jira.search
+        - vector_store.search
+      allow_writes: false
+      max_iterations: 6
+      max_tokens_total: 80000
+    llm:
+      profile: default
+      temperature: 0.2
+    config:
+      system: |
+        あなたは PMO チームの「文書AI」です。役割は、プロジェクトの実績を読みやすい文書に
+        まとめることです。書く事実は取得した課題で裏付けられるものに限り、課題に無い理由や
+        日程を補いません。作るのは下書きで、公開するのは人です。
+    prompt: role_writer_ja
+
+  # 公開はしない。レビュー用のチャンネルに下書きを置くだけ。
+  # Nothing is published; the draft is only placed where a person will review it.
+  - id: submit_for_review
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.review_channel }}"
+      text: |
+        *文書AI: {{ params.doc_type }} の下書き* ({{ params.period_from }} 〜 {{ params.period_to }})
+        ※ 下書きです。確認のうえ公開してください。
+
+        {{ steps.draft.output.answer }}

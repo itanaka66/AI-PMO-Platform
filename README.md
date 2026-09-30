@@ -125,7 +125,7 @@ flowchart TB
 | 健全性診断AI | `digital_twin_diagnose` テンプレート。`aipmo/health.py` の `assess_project_health` が5軸を決定論的に採点し、LLM は所見・推奨アクションの文章だけを書く（スコアの再計算はしない） |
 | Task Engine | `aipmo/task_engine.py`。実行が終わるたびに各テンプレートの出力（`items: [{key, summary, assignee, due_date, priority…}]`）からタスクを集め、Jira キー／タイトルで1件に統合し、優先度・期限超過・ブロック・複数テンプレートからの指摘で決定論的に採点して順位付けする（LLM は使わず、内訳は `--why` で見える）。`aipmo schedule` の常駐中は時間経過でも順位を更新。台帳は `task-ledger.json`、表示は `aipmo tasks`。タスクの割当・進捗ルール管理は下の PMO AI Core が担う |
 | PMO AI Core | `aipmo/pmo_core.py`。台帳の上で1周ごとに、①担当者のいないタスクへ**担当者を提案**（空き容量・スキル＝ラベル一致で選定。上限に達した人には積まず、空きが無ければ「割当先なし」と報告）、②**進捗ルール**を全タスクに適用（期限超過・停滞・長期ブロック・担当未定・期限間近で未着手。`pmo_core.rules` で閾値・重大度を上書き）、③新しく出た警告だけを Slack 通知（`pmo_core.notify.slack_channel`、再通知間隔つき）、④全体のブリーフィングを `pmo-briefing.json` に出力。判断は決定論的（LLM 不使用）で、すべて追記専用の `pmo-decisions.jsonl` に残る。担当の**確定は人**が `aipmo assign KEY --apply [--jira]` で行い、その時初めて Jira を更新する。表示は `aipmo pmo`。⑤**学習**（`aipmo/pmo_learning.py`）：完了を観測するたびに期限に対する遅れを実績として台帳に残し、メンバーごとの実効キャパシティ（期限内完了率がチーム平均より高ければ増、低ければ減。0.5〜1.5倍）と、平均より遅れやすいラベルの順位加点（0〜15点）だけを調整する。統計の補正で LLM は使わず、最低サンプル数（既定5件）・小標本の平均への縮小・上下限の歯止めつき。根拠は `pmo-learned.json` と `model_updated` の判断ログ、`pmo_core.learning.enabled: false` で無効化。⑥**高リスク時のテンプレート自動起動**：`pmo_core.responses` に運用者が書いたテンプレートだけを、全体レベル（`min_level`）・ルール（`rules`）・警告件数（`min_alerts`）の条件、`cooldown_hours`、`max_per_day`、同一応答の重複起動禁止の範囲で、`aipmo schedule` の常駐中に別スレッドで起動する（トリガーに警告・優先順位を渡す。存在しないテンプレート名は起動時に設定エラー）。`aipmo pmo` は起動せず「起動するはずのもの」だけを表示 |
-| 開発AI・テストAI・調査AI・文書AI・営業AI | **未実装。** `agent` ステップに役割ごとの道具・プロンプトを与えれば同じ枠組みで作れるが、現状は役割特化のテンプレートは無い |
+| 開発AI・テストAI・調査AI・文書AI・営業AI | `templates/roles/` の `role_developer` / `role_tester` / `role_researcher` / `role_writer` / `role_sales`。`agent` ステップに役割ごとの道具（最小限を列挙）と憲章・プロンプトを与えた構成。開発AI・テストAIが書けるのは Jira コメントだけ（1回ごとに人の承認）、調査・文書・営業AIは読み取り専用で、文書・営業AIの成果は社内レビュー用チャンネルへの**下書き**まで（顧客や公開先へ出す手段は持たせない）。詳細は [docs/ROLES.md](docs/ROLES.md)。コードを書く・テストを実行する等の実作業は行わない |
 
 図が示す「PMO AI 自身の開発を WBS で管理する」という自己参照的な運用は構想段階。まずはこの図の
 右半分（Progress AI → Risk/Forecast → WBS再計画AI → 承認）と、Project Digital Twin（毎日の同期 →
@@ -146,6 +146,7 @@ actually running.
 | `meeting_task_update` | 会議の内容から既存課題を更新（確信度で選別） / Updates existing issues from meeting content, filtered by confidence |
 | `overdue_chase` | 期限超過の担当者へ個別に催促 / Individually chases overdue owners |
 | `overdue_triage` | 遅延状況をエージェントが調査して報告 / An agent investigates delays and reports back |
+| `role_developer` `role_tester` `role_researcher` `role_writer` `role_sales` | 役割特化のエージェント（開発・テスト・調査・文書・営業）。[docs/ROLES.md](docs/ROLES.md) / Role-specialised agents |
 | `portfolio_investigation` | 複数プロジェクトを独立したサブエージェントで並行調査 / Investigates several projects concurrently, one subagent per project |
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） / Sprint health check — notifies only when something is wrong |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 / Drafts a WBS from meeting decisions |

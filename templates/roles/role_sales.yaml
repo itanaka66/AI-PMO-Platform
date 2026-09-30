@@ -1,0 +1,46 @@
+name: role_sales
+version: "1"
+industry: generic
+description: |
+  営業AI。顧客向けの報告・遅延連絡・フォローアップの下書きを作る。
+  読み取り専用で、顧客へは送らない。納期・金額・契約に触れる約束は書かず、
+  社内向けメモを分けて添えるので、営業担当が確認してから送る。
+
+trigger: manual
+
+params:
+  customer: "ACME 株式会社"
+  purpose: status_update           # status_update / delay_notice / proposal_followup
+  jira_project: PROJ
+  review_channel: "#sales-review"
+
+steps:
+  - id: draft
+    agent:
+      tools:
+        - jira.search
+        - vector_store.search
+      allow_writes: false
+      max_iterations: 6
+    llm:
+      profile: default
+      temperature: 0.3
+    config:
+      system: |
+        あなたは PMO チームの「営業AI」です。役割は、営業担当が顧客へ送る文面の下書きを
+        用意することです。納期・金額・品質・契約条件についての約束はしません。
+        顧客に見せてよい情報と社内だけの情報を厳密に分け、社内の情報は本文に出しません。
+    prompt: role_sales_ja
+
+  # 送信先は社内のレビュー用チャンネルだけ。顧客への送信手段は渡していない。
+  # Only an internal review channel: no tool that could reach the customer.
+  - id: submit_for_review
+    adapter: slack
+    action: post_message
+    inputs:
+      channel: "{{ params.review_channel }}"
+      text: |
+        *営業AI: {{ params.customer }} 向け {{ params.purpose }} の下書き*
+        ※ 未送信の下書きです。「社内向けメモ」を確認のうえ、担当者が送ってください。
+
+        {{ steps.draft.output.answer }}

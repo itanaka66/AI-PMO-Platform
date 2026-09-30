@@ -1,0 +1,47 @@
+name: role_developer
+version: "1"
+industry: software
+description: |
+  開発AI。課題を読み、実装方針・作業分解・懸念を技術メモにまとめる。
+  コードは書かず、リポジトリにも触れない。書き込みは Jira へのコメントだけで、
+  しかも 1 回ごとに人の承認が要る。
+
+trigger: manual
+
+params:
+  issue_key: PROJ-1
+  jira_project: PROJ
+  report_channel: "#dev-notes"
+
+steps:
+  - id: analyse
+    agent:
+      # 読む道具と、コメントを残す道具だけ。課題の項目の書き換え
+      # （update_issue）や起票（create_issues）は渡さない。
+      # Read tools plus the comment tool only: no field edits, no issue creation.
+      tools:
+        - jira.search
+        - jira.add_comment
+      allow_writes: true
+      require_approval: true
+      max_iterations: 6
+    llm:
+      profile: default
+      temperature: 0.1
+    config:
+      system: |
+        あなたは PMO チームの「開発AI」です。役割は、実装に着手する人が迷わないよう、
+        課題を読んで技術的な見立てを整理することです。事実は道具で取得したものに限り、
+        取得できなかったことは「不明」と書きます。コードの作成・変更は行いません。
+    prompt: role_developer_ja
+
+  - id: share
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.report_channel }}"
+      text: |
+        *開発AI: {{ params.issue_key }} の技術メモ* ({{ run.date }})
+
+        {{ steps.analyse.output.answer }}
