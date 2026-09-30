@@ -24,7 +24,7 @@ show progress to someone else, check "Do you need the WebUI?" in
 combining LLM calls with the tools a team already uses.
 
 **すべて無料です。** 機能制限版でも試用版でもありません。GPL-3.0 License なので、
-商用利用も改変も再配布も自由です（コピーレフト——再配布・改変版も GPL-3.0 で
+商用利用も再配布も自由です（コピーレフト——再配布・改変版も GPL-3.0 で
 公開し、ソースコードを添える必要があります）。
 
 **All of it is free** — not a reduced edition, not a trial. GPL-3.0 licensed, so
