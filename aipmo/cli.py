@@ -327,7 +327,128 @@ def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
         path = base / path
     task_engine = TaskEngine(path, stale_days=int(section.get("stale_days", 30)))
     task_engine.attach(engine)
-    return task_engine
+    return build_pmo_core(config, task_engine, engine)
+
+
+def build_pmo_core(config: dict[str, Any], task_engine: Any,
+                   engine: Engine | None = None):
+    """Task Engine の上に PMO Core（担当割当・進捗ルール・統括）を載せる。
+
+    `engine` を渡したときだけ、`pmo_core.notify.slack_channel` への通知を
+    有効にする（表示だけのコマンドは通知しない）。
+
+    Puts the PMO Core (assignment, progress rules, oversight) on the Task
+    Engine. Notification to `pmo_core.notify.slack_channel` is wired only
+    when an `engine` is given — display-only commands never notify.
+    """
+    from .pmo_core import PmoCore, RuleError, load_members, load_rules, slack_notifier
+
+    section = config.get("pmo_core") or {}
+    try:
+        rules = load_rules(section.get("rules"))
+    except RuleError as exc:
+        raise ConfigError(f"pmo_core.rules: {exc}") from exc
+
+    notify = None
+    notify_config = section.get("notify") or {}
+    channel = notify_config.get("slack_channel")
+    if channel and engine is not None and engine.adapters.has("slack"):
+        notify = slack_notifier(engine.adapters.get("slack"), channel)
+
+    return PmoCore(task_engine=task_engine, rules=rules,
+                   members=load_members(section.get("members")), notify=notify,
+                   renotify_hours=int(notify_config.get("renotify_hours", 24)))
+
+
+def _open_ledger(args: argparse.Namespace):
+    from .task_engine import TaskEngine
+
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    path = Path((config.get("task_engine") or {}).get("file", base / "task-ledger.json"))
+    if not path.is_absolute():
+        path = base / path
+    return config, build_pmo_core(config, TaskEngine(path))
+
+
+def cmd_pmo(args: argparse.Namespace) -> int:
+    """PMO Core のブリーフィングを表示する / show the PMO Core briefing."""
+    try:
+        _, core = _open_ledger(args)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    briefing = core.cycle()
+    if args.json:
+        print(json.dumps(briefing, ensure_ascii=False, indent=2))
+        return 0
+
+    print(f"全体: {briefing['overall_level']}   未完了 {briefing['active_count']} 件")
+    print("\n優先順位 / top priorities")
+    for i, item in enumerate(briefing["top_priorities"], 1):
+        print(f"  {i}. [{item['score']:>3}] {item['title']}"
+              f"  ({item['assignee'] or '担当未定'}, 期限 {item['due_date'] or '-'})")
+    print(f"\n警告 / alerts ({len(briefing['alerts'])})")
+    for alert in briefing["alerts"]:
+        print(f"  [{alert['severity']}] {alert['title']} — {alert['message']}")
+    print(f"\n担当の提案 / assignment proposals ({len(briefing['assignment_proposals'])})")
+    for p in briefing["assignment_proposals"]:
+        print(f"  {p['title']} → {p['assignee']}  ({p['reason']})")
+    for m in briefing["overloaded_members"]:
+        print(f"  ! {m['member']} は上限超過 {m['load']}/{m['capacity']}")
+    if briefing["unassignable"]:
+        print(f"  ! 割り当て先の空きが無い: {len(briefing['unassignable'])} 件")
+    return 0
+
+
+def cmd_assign(args: argparse.Namespace) -> int:
+    """担当の提案を見る／確定する / list or confirm assignment proposals."""
+    try:
+        config, core = _open_ledger(args)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    core.cycle()
+
+    if not args.ref:
+        proposals = [t for t in core.task_engine.ranked() if t.suggested_assignee]
+        if not proposals:
+            print("提案はありません / no proposals")
+        for t in proposals:
+            print(f"{t.key or t.id:<14} {t.title} → {t.suggested_assignee}"
+                  f"  ({t.suggestion_reason})")
+        return 0
+
+    if not args.apply:
+        print("確定するには --apply を付けてください "
+              "/ add --apply to confirm this proposal", file=sys.stderr)
+        return 1
+
+    write = None
+    if args.jira:
+        config_path = Path(args.config)
+        engine = build_engine(config, config_path.resolve().parent)
+        if not engine.adapters.has("jira"):
+            print("jira アダプタが設定されていません / jira adapter is not configured",
+                  file=sys.stderr)
+            return 1
+        jira = engine.adapters.get("jira")
+
+        def write(key: str, assignee: str) -> Any:
+            result = jira.invoke("update_issue", {"issue_key": key, "assignee": assignee})
+            if result.get("unresolved_assignee"):
+                raise RuntimeError(
+                    f"Jira で担当者を特定できません / cannot resolve {assignee!r}")
+            return result
+
+    try:
+        task = core.accept_assignment(args.ref, write=write)
+    except (KeyError, ValueError, RuntimeError) as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    print(f"確定しました / assigned: {task.title} → {task.assignee}"
+          + (" (Jira 更新済み / Jira updated)" if write is not None else " (台帳のみ / ledger only)"))
+    return 0
 
 
 def cmd_tasks(args: argparse.Namespace) -> int:
@@ -351,6 +472,8 @@ def cmd_tasks(args: argparse.Namespace) -> int:
     for position, task in enumerate(ranked, 1):
         who = task.assignee or "-"
         due = task.due_date or "-"
+        if not task.assignee and task.suggested_assignee:
+            who = f"担当未定→提案 {task.suggested_assignee}"
         print(f"{position:>3}. [{task.score:>3}] {task.key or '':<10} {task.title}"
               f"  ({who}, 期限 {due}, {', '.join(task.templates)})")
         if args.why:
@@ -477,7 +600,11 @@ def cmd_schedule(args: argparse.Namespace) -> int:
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
     engine = build_engine(config, base_dir=base)
-    task_engine = attach_task_engine(engine, config, base, default=True)
+    try:
+        task_engine = attach_task_engine(engine, config, base, default=True)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
 
     web = dict(config.get("web") or {})
     root = Path(web.get("templates_dir", "templates"))
@@ -671,6 +798,20 @@ def main(argv: list[str] | None = None) -> int:
     p_tasks.add_argument("--why", action="store_true",
                          help="点数の内訳も表示 / show the score breakdown")
     p_tasks.set_defaults(func=cmd_tasks)
+
+    p_pmo = sub.add_parser(
+        "pmo", help="PMO Core のブリーフィング / PMO Core briefing")
+    p_pmo.add_argument("--json", action="store_true", help="JSON で出力 / print as JSON")
+    p_pmo.set_defaults(func=cmd_pmo)
+
+    p_assign = sub.add_parser(
+        "assign", help="担当の提案を見る・確定する / list or confirm assignment proposals")
+    p_assign.add_argument("ref", nargs="?", help="確定するタスクの Jira キー／id")
+    p_assign.add_argument("--apply", action="store_true",
+                          help="提案を確定する（ref が必要）/ confirm the proposal for ref")
+    p_assign.add_argument("--jira", action="store_true",
+                          help="確定時に Jira の担当者も更新 / also update the Jira assignee")
+    p_assign.set_defaults(func=cmd_assign)
 
     p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")
     p_setup.add_argument("--dir", default=".", help="設定の出力先 / where to write config")

@@ -88,6 +88,17 @@ class Task:
     status: str | None = None
     blocked: bool = False
     done: bool = False
+    labels: list[str] = field(default_factory=list)
+    # 現在の状態／ブロックになってからの時刻。進捗ルール（停滞・長期ブロック）
+    # が「どれだけ続いているか」を数えるのに使う。
+    # When the current status / blocked state began; progress rules use these
+    # to count how long something has been stuck.
+    status_since: str | None = None
+    blocked_since: str | None = None
+    # PMO Core が出した担当者の提案。確定は人（assign --apply）。
+    # The PMO Core's assignee proposal; a human confirms it (assign --apply).
+    suggested_assignee: str | None = None
+    suggestion_reason: str | None = None
     sources: list[dict[str, str]] = field(default_factory=list)
     first_seen: str = ""
     last_seen: str = ""
@@ -193,6 +204,7 @@ def extract_candidates(output: Any) -> list[dict[str, Any]]:
             "due_date": _text(item.get("due_date") or item.get("duedate")),
             "priority": _text(item.get("priority")),
             "status": status,
+            "labels": [str(label) for label in labels],
             "blocked": (
                 any(str(label).lower() in _BLOCKED_MARKERS for label in labels)
                 or bool(status and status.lower() in _BLOCKED_MARKERS)
@@ -246,6 +258,11 @@ class TaskEngine:
             except TypeError:
                 continue
             self.tasks[task.id] = task
+
+    def save(self) -> None:
+        """外部（PMO Core）が台帳を書き換えたあとに保存する。"""
+        with self._lock:
+            self._save()
 
     def _save(self) -> None:
         payload = {"updated_at": self.now().isoformat(),
@@ -309,7 +326,7 @@ class TaskEngine:
             key = candidate["key"]
             task = Task(
                 id=f"JIRA:{key}" if key else f"T:{_normalize_title(candidate['title'])}",
-                title=candidate["title"], first_seen=stamp,
+                title=candidate["title"], first_seen=stamp, status_since=stamp,
             )
             self.tasks[task.id] = task
         elif candidate["key"] and task.key is None:
@@ -321,7 +338,12 @@ class TaskEngine:
         if candidate["key"]:
             task.title = candidate["title"]  # キー付き（課題管理側）の題名を正とする
         task.assignee = candidate["assignee"] or task.assignee
+        if task.assignee:
+            task.suggested_assignee = task.suggestion_reason = None
+        if candidate["status"] and candidate["status"] != task.status:
+            task.status_since = stamp
         task.status = candidate["status"] or task.status
+        task.labels = sorted(set(task.labels) | set(candidate.get("labels") or []))
 
         new_due, old_due = _parse_date(candidate["due_date"]), _parse_date(task.due_date)
         if new_due and (old_due is None or new_due < old_due):
@@ -336,6 +358,10 @@ class TaskEngine:
         # The latest observation wins: a template reporting it done, or no
         # longer blocked, clears the earlier state.
         task.done = candidate["done"]
+        if candidate["blocked"] and not task.blocked:
+            task.blocked_since = stamp
+        elif not candidate["blocked"]:
+            task.blocked_since = None
         task.blocked = candidate["blocked"]
 
         task.last_seen = stamp

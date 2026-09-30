@@ -123,8 +123,8 @@ flowchart TB
 | Progress AI | `sprint_health` / `agile.sprint_issues`（進捗率・完了ポイントはアダプタ側で計算、AIには集計させない） |
 | Project Digital Twin | `digital_twin_sync` テンプレート（Jira から毎日同期）が書き込む12テーブル（[sql/schema.sql](sql/schema.sql)）。詳細は [docs/PROJECT-DIGITAL-TWIN.md](docs/PROJECT-DIGITAL-TWIN.md) |
 | 健全性診断AI | `digital_twin_diagnose` テンプレート。`aipmo/health.py` の `assess_project_health` が5軸を決定論的に採点し、LLM は所見・推奨アクションの文章だけを書く（スコアの再計算はしない） |
-| Task Engine | `aipmo/task_engine.py`。実行が終わるたびに各テンプレートの出力（`items: [{key, summary, assignee, due_date, priority…}]`）からタスクを集め、Jira キー／タイトルで1件に統合し、優先度・期限超過・ブロック・複数テンプレートからの指摘で決定論的に採点して順位付けする（LLM は使わず、内訳は `--why` で見える）。`aipmo schedule` の常駐中は時間経過でも順位を更新。台帳は `task-ledger.json`、表示は `aipmo tasks`。タスクの割当・進捗ルール管理は未実装 |
-| PMO AI Core | **未実装。** 全体最適化・意思決定・学習の統括層はまだ無い |
+| Task Engine | `aipmo/task_engine.py`。実行が終わるたびに各テンプレートの出力（`items: [{key, summary, assignee, due_date, priority…}]`）からタスクを集め、Jira キー／タイトルで1件に統合し、優先度・期限超過・ブロック・複数テンプレートからの指摘で決定論的に採点して順位付けする（LLM は使わず、内訳は `--why` で見える）。`aipmo schedule` の常駐中は時間経過でも順位を更新。台帳は `task-ledger.json`、表示は `aipmo tasks`。タスクの割当・進捗ルール管理は下の PMO AI Core が担う |
+| PMO AI Core | `aipmo/pmo_core.py`。台帳の上で1周ごとに、①担当者のいないタスクへ**担当者を提案**（空き容量・スキル＝ラベル一致で選定。上限に達した人には積まず、空きが無ければ「割当先なし」と報告）、②**進捗ルール**を全タスクに適用（期限超過・停滞・長期ブロック・担当未定・期限間近で未着手。`pmo_core.rules` で閾値・重大度を上書き）、③新しく出た警告だけを Slack 通知（`pmo_core.notify.slack_channel`、再通知間隔つき）、④全体のブリーフィングを `pmo-briefing.json` に出力。判断は決定論的（LLM 不使用）で、すべて追記専用の `pmo-decisions.jsonl` に残る。担当の**確定は人**が `aipmo assign KEY --apply [--jira]` で行い、その時初めて Jira を更新する。表示は `aipmo pmo`。学習（過去の実績からの重み調整）とテンプレートの自動起動は未実装 |
 | 開発AI・テストAI・調査AI・文書AI・営業AI | **未実装。** `agent` ステップに役割ごとの道具・プロンプトを与えれば同じ枠組みで作れるが、現状は役割特化のテンプレートは無い |
 
 図が示す「PMO AI 自身の開発を WBS で管理する」という自己参照的な運用は構想段階。まずはこの図の
@@ -238,6 +238,8 @@ aipmo run templates/examples/overdue_triage.yaml
 aipmo serve --host 0.0.0.0           # スマホ向け画面 / mobile interface
 aipmo schedule                       # 定時実行 / the scheduler
 aipmo tasks --why                    # 横断の優先順位 / cross-template task ranking
+aipmo pmo                            # PMO Core のブリーフィング / PMO Core briefing
+aipmo assign KEY --apply --jira      # 担当の提案を確定 / confirm an assignment proposal
 aipmo doctor                         # 接続確認 / connection check
 pytest                               # 1015 件
 ```
