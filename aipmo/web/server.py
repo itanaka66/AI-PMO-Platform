@@ -72,6 +72,8 @@ from ..dsl import loader
 from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
+from ..pmo_core import PmoCore
+from ..task_engine import TaskEngine
 
 logger = logging.getLogger("aipmo.web")
 
@@ -505,7 +507,7 @@ def create_app(
 
     # -- PMO Core の表示 / PMO Core view -----------------------------------
     #
-    # 台帳（task-ledger.json）と、常駐側 (`aipmo schedule`) が周ごとに書く
+    # 台帳（task-ledger.db）と、常駐側 (`aipmo schedule`) が周ごとに書く
     # ブリーフィング・判断ログを**読むだけ**。画面から周を回したり、通知や
     # テンプレート起動を起こしたりはしない。書けるのは担当の確定だけで、
     # operator のみ。
@@ -521,12 +523,17 @@ def create_app(
         base = pmo_ledger.parent
         return pmo_ledger, base / "pmo-briefing.json", base / "pmo-decisions.jsonl"
 
+    def _ranked(ledger: Path) -> list[Any]:
+        store = TaskEngine(ledger)
+        try:
+            return store.ranked(limit=50)
+        finally:
+            store.close()
+
     @app.get("/api/pmo", dependencies=[guard])
     def pmo_view() -> dict[str, Any]:
-        from ..task_engine import TaskEngine
-
         ledger, briefing_file, _ = _pmo_files()
-        if not ledger.exists() and not briefing_file.exists():
+        if not TaskEngine.exists(ledger) and not briefing_file.exists():
             raise HTTPException(status_code=404, detail="no PMO data yet")
 
         briefing = None
@@ -544,7 +551,7 @@ def create_app(
              "suggestion_reason": t.suggestion_reason, "due_date": t.due_date,
              "priority": t.priority, "status": t.status, "blocked": t.blocked,
              "reasons": t.reasons, "templates": t.templates}
-            for t in TaskEngine(ledger).ranked(limit=50)
+            for t in _ranked(ledger)
         ]
         return {"briefing": briefing, "briefing_age_seconds": age, "tasks": tasks}
 
@@ -567,9 +574,6 @@ def create_app(
     @app.post("/api/pmo/assignments/accept")
     def pmo_accept(request: Request, payload: dict[str, Any],
                    role: str = operator_guard) -> dict[str, Any]:
-        from ..pmo_core import PmoCore
-        from ..task_engine import TaskEngine
-
         ledger, _, _ = _pmo_files()
         ref = str(payload.get("ref") or "")
         if not ref:
@@ -588,7 +592,8 @@ def create_app(
                     raise RuntimeError(f"cannot resolve assignee {assignee!r} in Jira")
                 return result
 
-        core = PmoCore(task_engine=TaskEngine(ledger))
+        store = TaskEngine(ledger)
+        core = PmoCore(task_engine=store)
         try:
             task = core.accept_assignment(ref, write=write)
         except KeyError as exc:
@@ -597,6 +602,8 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
+        finally:
+            store.close()
         logger.info("pmo assignment accepted: %s -> %s by %s from %s (jira=%s)",
                     task.id, task.assignee, role, _client_ip(request), write is not None)
         return {"id": task.id, "assignee": task.assignee, "jira_updated": write is not None}

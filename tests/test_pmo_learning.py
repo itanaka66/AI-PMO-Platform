@@ -113,7 +113,7 @@ def test_learned_label_bonus_raises_rank_and_explains_itself(tmp_path):
 
 def test_core_applies_learned_capacity_and_logs_model_change(tmp_path):
     te = TaskEngine(tmp_path / "l.json", now=Clock())
-    te.outcomes = [outcome("ann", 0)] * 10 + [outcome("bob", 4)] * 10
+    te.add_outcomes([outcome("ann", 0)] * 10 + [outcome("bob", 4)] * 10)
     core = PmoCore(task_engine=te, members=[Member("ann", capacity=4),
                                             Member("bob", capacity=4)])
     briefing = core.cycle()
@@ -127,7 +127,7 @@ def test_core_applies_learned_capacity_and_logs_model_change(tmp_path):
 
 def test_learning_can_be_switched_off(tmp_path):
     te = TaskEngine(tmp_path / "l.json", now=Clock())
-    te.outcomes = [outcome("ann", 0)] * 10 + [outcome("bob", 4)] * 10
+    te.add_outcomes([outcome("ann", 0)] * 10 + [outcome("bob", 4)] * 10)
     core = PmoCore(task_engine=te, members=[Member("ann", capacity=4)], learning=False)
     assert core.cycle()["member_loads"][0]["capacity"] == 4
 

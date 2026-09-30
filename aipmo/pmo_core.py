@@ -414,11 +414,17 @@ class PmoCore:
     def cycle(self) -> dict[str, Any]:
         engine = self.task_engine
         now = engine.now()
+        engine.sync()             # ほかのプロセスの更新（実績を含む）を取り込む
         self._learn(now)          # 順位付けの前に。加点が順位に効くため
-        engine.refresh()
-        active = engine.ranked()
-
-        self._propose_assignments(active, now)
+        # 台帳を書き換える部分は1つの取引にまとめる。通知やテンプレート起動
+        # （ネットワーク）は取引の外で行い、書き込みロックを握ったまま待たない。
+        # All ledger writes form one transaction. Notifications and template
+        # launches (network) happen outside it, so the write lock is never
+        # held while waiting on something slow.
+        with engine.transaction():
+            engine.refresh()
+            active = engine.ranked()
+            self._propose_assignments(active, now)
         violations = evaluate_rules(self.rules, active, now)
         self._track_alerts(violations, active, now)
 
@@ -544,7 +550,6 @@ class PmoCore:
         if not self._team():
             return
         loads = member_loads(active, self._team())
-        changed = False
         # すでに出している提案は、その人の負荷に数えてから残りを決める。
         # 周ごとに提案先が入れ替わるのを避けるため。
         # Standing proposals count toward load first, so proposals do not
@@ -553,11 +558,11 @@ class PmoCore:
             held = _member_of(task.suggested_assignee, self._team())
             if not task.suggested_assignee:
                 continue
-            if not task.assignee and held is not None                     and loads[held.name] < held.capacity:
+            if (not task.assignee and held is not None
+                    and loads[held.name] < held.capacity):
                 loads[held.name] += 1
             else:
                 task.suggested_assignee = task.suggestion_reason = None
-                changed = True
 
         for task in active:   # 順位の高い順に先に選ばせる / highest-ranked picks first
             if task.assignee or task.suggested_assignee:
@@ -568,11 +573,8 @@ class PmoCore:
             member, reason = picked
             task.suggested_assignee, task.suggestion_reason = member.name, reason
             loads[member.name] += 1
-            changed = True
             self._log("assignment_proposed", now, task=task.id, title=task.title,
                       assignee=member.name, reason=reason, score=task.score)
-        if changed:
-            self.task_engine.save()
 
     def _track_alerts(self, violations: list[Violation], active: list[Task],
                       now: datetime) -> None:
@@ -684,19 +686,31 @@ class PmoCore:
         untouched, since a ledger that ran ahead of reality would be wrong.
         """
         engine = self.task_engine
-        task = engine.tasks.get(ref) or engine.tasks.get(f"JIRA:{ref.upper()}")
-        if task is None:
+        found = engine.find(ref)
+        if found is None:
             raise KeyError(f"タスクが見つかりません / no such task: {ref}")
-        if not task.suggested_assignee:
+        if not found.suggested_assignee:
             raise ValueError(f"提案がありません / no proposal for {ref}")
 
-        assignee = task.suggested_assignee
-        if write is not None and task.key:
-            write(task.key, assignee)
-        task.assignee = assignee
-        task.suggested_assignee = task.suggestion_reason = None
-        engine.save()
-        self._log("assignment_accepted", engine.now(), task=task.id, assignee=assignee)
+        assignee, key, task_id = found.suggested_assignee, found.key, found.id
+        # 外部への書き込み（ネットワーク）は台帳の取引の外で行う。
+        # The external write (network) happens outside the ledger transaction.
+        if write is not None and key:
+            write(key, assignee)
+
+        with engine.transaction():
+            task = engine.tasks.get(task_id)
+            if task is None:
+                raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+            if task.assignee and task.assignee != assignee:
+                # 待っている間に、別の人が別の担当を確定していた。
+                # Someone confirmed a different assignee while we were writing.
+                raise ValueError(
+                    f"すでに {task.assignee} に確定されています "
+                    f"/ already assigned to {task.assignee}")
+            task.assignee = assignee
+            task.suggested_assignee = task.suggestion_reason = None
+        self._log("assignment_accepted", engine.now(), task=task_id, assignee=assignee)
         return task
 
 

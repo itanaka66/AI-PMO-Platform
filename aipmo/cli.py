@@ -310,7 +310,7 @@ def ledger_path(config: dict[str, Any], base: Path) -> Path:
     """
     section = config.get("task_engine")
     section = section if isinstance(section, dict) else {}
-    path = Path(section.get("file", base / "task-ledger.json"))
+    path = Path(section.get("file", base / "task-ledger.db"))
     return path if path.is_absolute() else base / path
 
 

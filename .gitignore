@@ -16,6 +16,10 @@ deploy/*/config.yaml
 
 # 実行時の状態 / runtime state
 scheduler-state.json
+task-ledger.db
+task-ledger.db-wal
+task-ledger.db-shm
+task-ledger.json.migrated
 *.tmp
 
 # Python
