@@ -133,8 +133,19 @@ def _priority_points(priority: str | None) -> int:
     return _PRIORITY_POINTS.get(priority.strip().lower(), _DEFAULT_PRIORITY_POINTS)
 
 
-def score_task(task: Task, today: date) -> tuple[int, list[str]]:
-    """1件を採点する。戻り値は (点数, 内訳) / score one task with its breakdown."""
+# 保持する完了実績の上限 / how many completion outcomes are kept
+MAX_OUTCOMES = 500
+
+
+def score_task(task: Task, today: date,
+               label_bonus: dict[str, int] | None = None) -> tuple[int, list[str]]:
+    """1件を採点する。戻り値は (点数, 内訳) / score one task with its breakdown.
+
+    `label_bonus` は過去の実績から学習した「遅れやすいラベル」への加点
+    （aipmo/pmo_learning.py）。複数該当しても最大の1つだけ。
+    `label_bonus` is the learned extra weight for labels that tend to finish
+    late; only the largest match applies.
+    """
     points = _priority_points(task.priority)
     reasons = [f"優先度 {task.priority or '未設定'} +{points}"]
 
@@ -167,6 +178,14 @@ def score_task(task: Task, today: date) -> tuple[int, list[str]]:
     if not task.assignee:
         points += 5
         reasons.append("担当者未定 +5")
+
+    if label_bonus:
+        hits = [(label_bonus[label.lower()], label) for label in task.labels
+                if label_bonus.get(label.lower())]
+        if hits:
+            extra, label = max(hits)
+            points += extra
+            reasons.append(f"過去実績で遅れやすいラベル「{label}」 +{extra}")
 
     return points, reasons
 
@@ -243,6 +262,13 @@ class TaskEngine:
         self.stale_days = stale_days
         self._lock = threading.Lock()
         self.tasks: dict[str, Task] = {}
+        # 完了の実績（学習の材料）。タスクが台帳から消えた後も残す。
+        # Completion outcomes (learning material), kept after the task itself
+        # has left the ledger.
+        self.outcomes: list[dict[str, Any]] = []
+        # 学習で得た、ラベルごとの加点。PMO Core が設定する。
+        # Learned per-label bonus; set by the PMO Core.
+        self.label_bonus: dict[str, int] = {}
         self._load()
 
     # -- 永続化 / persistence -------------------------------------------
@@ -252,6 +278,7 @@ class TaskEngine:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return  # 読めなくても止めない / an unreadable ledger is not fatal
+        self.outcomes = list(data.get("outcomes") or [])
         for raw in data.get("tasks", []):
             try:
                 task = Task(**raw)
@@ -266,7 +293,8 @@ class TaskEngine:
 
     def _save(self) -> None:
         payload = {"updated_at": self.now().isoformat(),
-                   "tasks": [asdict(t) for t in self.tasks.values()]}
+                   "tasks": [asdict(t) for t in self.tasks.values()],
+                   "outcomes": self.outcomes}
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             temporary = self.path.with_suffix(".tmp")
@@ -357,6 +385,8 @@ class TaskEngine:
         # 「ブロック中でない」と言えば解除。
         # The latest observation wins: a template reporting it done, or no
         # longer blocked, clears the earlier state.
+        if candidate["done"] and not task.done and not is_new:
+            self._record_outcome(task, stamp)
         task.done = candidate["done"]
         if candidate["blocked"] and not task.blocked:
             task.blocked_since = stamp
@@ -370,6 +400,27 @@ class TaskEngine:
             task.sources.append(source)
             del task.sources[:-_MAX_SOURCES]
         return is_new
+
+    def _record_outcome(self, task: Task, stamp: str) -> None:
+        """完了を観測した瞬間に実績を残す。最初から完了で現れたものは、
+        いつ終わったか分からないので残さない。
+
+        Recorded when completion is *observed*. A task first seen already done
+        is skipped: when it finished is unknown.
+        """
+        done_on = datetime.fromisoformat(stamp).date()
+        due = _parse_date(task.due_date)
+        self.outcomes.append({
+            "task": task.id,
+            "assignee": task.assignee,
+            "labels": list(task.labels),
+            "priority": task.priority,
+            "due_date": task.due_date,
+            "first_seen": task.first_seen,
+            "done_at": stamp,
+            "late_days": (done_on - due).days if due else None,
+        })
+        del self.outcomes[:-MAX_OUTCOMES]
 
     # -- 順位付け / ranking ---------------------------------------------
 
@@ -397,7 +448,7 @@ class TaskEngine:
                 # 完了したものは台帳に残すが順位には入れない（履歴として）。
                 task.score, task.reasons = 0, ["完了"]
                 continue
-            task.score, task.reasons = score_task(task, today)
+            task.score, task.reasons = score_task(task, today, self.label_bonus)
 
     def ranked(self, assignee: str | None = None, limit: int | None = None) -> list[Task]:
         """未完了を優先順に。同点は期限が早い方、それも同じなら id で安定させる。"""

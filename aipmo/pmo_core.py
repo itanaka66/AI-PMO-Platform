@@ -32,11 +32,13 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+import threading
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from .pmo_learning import DEFAULT_MIN_SAMPLES, LearnedModel, learn
 from .task_engine import Task, TaskEngine, _parse_date
 
 logger = logging.getLogger("aipmo.pmo_core")
@@ -246,6 +248,84 @@ def suggest_assignee(task: Task, members: list[Member],
     return chosen, reason
 
 
+# -- 高リスク時の応答 / responses to high risk -------------------------------
+
+_LEVELS = ["low", "medium", "high", "critical"]
+
+
+@dataclass(frozen=True)
+class Response:
+    """「こういう状況になったら、このテンプレートを走らせる」という宣言。
+
+    運用者が config.yaml に書いたものだけが起動できる（許可リスト）。
+    書かれていないテンプレートを、AI の判断で走らせることはない。
+    起動されたテンプレート自身の承認（agent の require_approval など）は
+    そのまま効く。
+
+    A declaration: "in this situation, run that template". Only what the
+    operator wrote into config.yaml can be launched (an allow-list); the Core
+    never picks a template on its own. The launched template's own gates
+    (an agent's require_approval, say) still apply.
+    """
+
+    id: str
+    template: str                           # テンプレート名（templates/ 配下）
+    params: dict[str, Any] = field(default_factory=dict)
+    min_level: str = "high"                 # 全体レベルがこれ以上
+    rules: tuple[str, ...] = ()             # 指定があれば、このルールの警告が出ている
+    min_alerts: int = 1                     # 警告の件数がこれ以上
+    cooldown_hours: float = 24.0
+    max_per_day: int = 3
+
+    def matches(self, briefing: dict[str, Any]) -> list[str] | None:
+        """条件を満たすなら理由の一覧、満たさなければ None。"""
+        level = briefing["overall_level"]
+        if _LEVELS.index(level) < _LEVELS.index(self.min_level):
+            return None
+        alerts = briefing["alerts"]
+        if self.rules:
+            alerts = [a for a in alerts if a["rule"] in self.rules]
+            if not alerts:
+                return None
+        if len(alerts) < self.min_alerts:
+            return None
+        reasons = [f"全体レベル {level}（基準 {self.min_level} 以上）",
+                   f"該当する警告 {len(alerts)} 件"]
+        if self.rules:
+            reasons.append(f"ルール: {', '.join(sorted({a['rule'] for a in alerts}))}")
+        return reasons
+
+
+def load_responses(raw: list[dict[str, Any]] | None) -> list[Response]:
+    responses, seen = [], set()
+    for item in raw or []:
+        rid, template = item.get("id"), item.get("template")
+        if not rid or not template:
+            raise RuleError("pmo_core.responses の各項目に id と template が必要です "
+                            "/ each response needs an id and a template")
+        if rid in seen:
+            raise RuleError(f"応答 id '{rid}' が重複しています / duplicate response id")
+        seen.add(rid)
+        min_level = item.get("min_level", "high")
+        if min_level not in _LEVELS:
+            raise RuleError(f"応答 '{rid}': 不明な min_level {min_level!r}")
+        try:
+            response = Response(
+                id=str(rid), template=str(template),
+                params=dict(item.get("params") or {}), min_level=min_level,
+                rules=tuple(item.get("rules") or ()),
+                min_alerts=int(item.get("min_alerts", 1)),
+                cooldown_hours=float(item.get("cooldown_hours", 24)),
+                max_per_day=int(item.get("max_per_day", 3)),
+            )
+        except (TypeError, ValueError) as exc:
+            raise RuleError(f"応答 '{rid}': 数値の設定が不正です / bad number: {exc}") from exc
+        if response.max_per_day < 1 or response.cooldown_hours < 0:
+            raise RuleError(f"応答 '{rid}': max_per_day は 1 以上、cooldown_hours は 0 以上")
+        responses.append(response)
+    return responses
+
+
 # -- 統括 / the core ---------------------------------------------------------
 
 @dataclass
@@ -260,13 +340,33 @@ class PmoCore:
     # Notification; None means decide and record only.
     notify: Callable[[str], None] | None = None
     renotify_hours: int = 24
+    # 学習（過去の実績からの重み調整）。aipmo/pmo_learning.py
+    # Learning from track record.
+    learning: bool = True
+    min_samples: int = DEFAULT_MIN_SAMPLES
+    learned_path: Path | None = None
+    # 高リスク時のテンプレート自動起動。launcher(response, trigger) が
+    # 実際に走らせる。None なら起動せず「起動するはず」だけを報告する。
+    # Auto-launch of templates on high risk. `launcher(response, trigger)` does
+    # the running; with None nothing is launched and the briefing only reports
+    # what *would* launch.
+    responses: list[Response] = field(default_factory=list)
+    launcher: Callable[[Response, dict[str, Any]], Any] | None = None
+    # True なら別スレッドで走らせ、周（スケジューラのループ）を塞がない。
+    # Run in a worker thread so the scheduler loop is never blocked.
+    background: bool = True
 
     def __post_init__(self) -> None:
         base = self.task_engine.path.parent
         self.state_path = self.state_path or base / "pmo-core-state.json"
         self.decisions_path = self.decisions_path or base / "pmo-decisions.jsonl"
         self.briefing_path = self.briefing_path or base / "pmo-briefing.json"
+        self.learned_path = self.learned_path or base / "pmo-learned.json"
         self._state = self._load_state()
+        self._running: set[str] = set()
+        self._workers: list[threading.Thread] = []
+        self._model = LearnedModel()
+        self._lock = threading.Lock()
 
     # -- 状態と判断ログ / state and decision log --------------------------
 
@@ -313,8 +413,9 @@ class PmoCore:
 
     def cycle(self) -> dict[str, Any]:
         engine = self.task_engine
-        engine.refresh()
         now = engine.now()
+        self._learn(now)          # 順位付けの前に。加点が順位に効くため
+        engine.refresh()
         active = engine.ranked()
 
         self._propose_assignments(active, now)
@@ -322,20 +423,134 @@ class PmoCore:
         self._track_alerts(violations, active, now)
 
         briefing = self.briefing(active, violations, now)
+        briefing["responses"] = self._respond(briefing, now)
+        briefing["learning"] = self._model.as_dict() if self.learning else None
         self._write_json(self.briefing_path, briefing)
         return briefing
 
-    def _propose_assignments(self, active: list[Task], now: datetime) -> None:
-        if not self.members:
+    # -- 学習 / learning ---------------------------------------------------
+
+    def _team(self) -> list[Member]:
+        """実績で補正したキャパシティのメンバー / members at learned capacity."""
+        if not self._model.member_factor:
+            return self.members
+        return [
+            replace(m, capacity=max(1, round(
+                m.capacity * self._model.member_factor.get(m.name.lower(), 1.0))))
+            for m in self.members
+        ]
+
+    def _learn(self, now: datetime) -> None:
+        if not self.learning:
+            self.task_engine.label_bonus = {}
             return
-        loads = member_loads(active, self.members)
+        model = learn(self.task_engine.outcomes, self.min_samples)
+        if (model.member_factor != self._model.member_factor
+                or model.label_bonus != self._model.label_bonus):
+            self._log("model_updated", now, samples=model.samples,
+                      member_factor=model.member_factor,
+                      label_bonus=model.label_bonus,
+                      baseline_late_rate=model.baseline_late_rate)
+            self._write_json(self.learned_path, {"generated_at": now.isoformat(),
+                                                 **model.as_dict()})
+        self._model = model
+        self.task_engine.label_bonus = model.label_bonus
+
+    # -- 高リスク時のテンプレート自動起動 / auto-launching templates -----------
+
+    def _respond(self, briefing: dict[str, Any], now: datetime) -> list[dict[str, Any]]:
+        """条件を満たした応答を、上限の範囲で起動する。結果を報告に載せる。
+
+        起動できるのは config.yaml の `pmo_core.responses` に運用者が書いた
+        テンプレートだけ。条件（全体レベル・ルール・件数）、クールダウン、
+        1日の上限、同じ応答の重複起動禁止、の順に絞る。
+        """
+        report = []
+        with self._lock:
+            history: dict[str, list[str]] = self._state.setdefault("responses", {})
+            for response in self.responses:
+                fired = [datetime.fromisoformat(t) for t in history.get(response.id, [])]
+                fired = [t for t in fired if (now - t).total_seconds() < 86400]
+                history[response.id] = [t.isoformat() for t in fired]
+
+                reasons = response.matches(briefing)
+                if reasons is None:
+                    status = "not_triggered"
+                elif response.id in self._running:
+                    status = "running"
+                elif fired and (now - max(fired)).total_seconds() < response.cooldown_hours * 3600:
+                    status = "cooldown"
+                elif len(fired) >= response.max_per_day:
+                    status = "daily_limit"
+                elif self.launcher is None:
+                    status = "would_launch"
+                else:
+                    self._launch(response, briefing, reasons, now)
+                    history[response.id].append(now.isoformat())
+                    status = "launched"
+                report.append({"id": response.id, "template": response.template,
+                               "status": status})
+            self._save_state()
+        return report
+
+    def _launch(self, response: Response, briefing: dict[str, Any],
+                reasons: list[str], now: datetime) -> None:
+        trigger = {
+            "type": "pmo_core",
+            "response": response.id,
+            "overall_level": briefing["overall_level"],
+            "reasons": reasons,
+            "alerts": briefing["alerts"],
+            "top_priorities": briefing["top_priorities"],
+        }
+        self._running.add(response.id)
+        self._log("response_launched", now, response=response.id,
+                  template=response.template, reasons=reasons)
+
+        def work() -> None:
+            outcome = "finished"
+            try:
+                assert self.launcher is not None
+                self.launcher(response, trigger)
+            except Exception as exc:
+                # 失敗しても再試行の連打はしない（クールダウンは有効なまま）。
+                # A failure is not hammered: the cooldown still applies.
+                outcome = "failed"
+                logger.warning("応答 %s の起動に失敗 / response %s failed: %s",
+                               response.id, response.id, exc)
+                self._log("response_failed", self.task_engine.now(),
+                          response=response.id, error=f"{type(exc).__name__}: {exc}")
+            else:
+                self._log("response_finished", self.task_engine.now(),
+                          response=response.id)
+            finally:
+                self._running.discard(response.id)
+            logger.info("response %s %s", response.id, outcome)
+
+        if self.background:
+            worker = threading.Thread(target=work, name=f"pmo-response-{response.id}",
+                                      daemon=False)
+            self._workers = [w for w in self._workers if w.is_alive()] + [worker]
+            worker.start()
+        else:
+            work()
+
+    def wait(self, timeout: float | None = None) -> None:
+        """起動した応答の完了を待つ（テストと終了処理用）/ wait for launched runs."""
+        for worker in list(self._workers):
+            worker.join(timeout)
+
+    def _propose_assignments(self, active: list[Task], now: datetime) -> None:
+        if not self._team():
+            return
+        loads = member_loads(active, self._team())
         changed = False
         # すでに出している提案は、その人の負荷に数えてから残りを決める。
         # 周ごとに提案先が入れ替わるのを避けるため。
         # Standing proposals count toward load first, so proposals do not
         # shuffle from one cycle to the next.
         for task in active:
-            held = _member_of(task.suggested_assignee, self.members)
+            held = _member_of(task.suggested_assignee, self._team())
             if not task.suggested_assignee:
                 continue
             if not task.assignee and held is not None                     and loads[held.name] < held.capacity:
@@ -347,7 +562,7 @@ class PmoCore:
         for task in active:   # 順位の高い順に先に選ばせる / highest-ranked picks first
             if task.assignee or task.suggested_assignee:
                 continue
-            picked = suggest_assignee(task, self.members, loads)
+            picked = suggest_assignee(task, self._team(), loads)
             if picked is None:
                 continue
             member, reason = picked
@@ -418,10 +633,10 @@ class PmoCore:
         else:
             level = "low"
 
-        loads = member_loads(active, self.members)
+        loads = member_loads(active, self._team())
         overloaded = [
             {"member": m.name, "load": loads[m.name], "capacity": m.capacity}
-            for m in self.members if loads[m.name] > m.capacity
+            for m in self._team() if loads[m.name] > m.capacity
         ]
         by_id = {t.id: t for t in active}
         return {
@@ -446,12 +661,12 @@ class PmoCore:
             ],
             "unassignable": [
                 {"task": t.id, "title": t.title} for t in active
-                if self.members and not t.assignee and not t.suggested_assignee
+                if self._team() and not t.assignee and not t.suggested_assignee
             ],
             "overloaded_members": overloaded,
             "member_loads": [
                 {"member": m.name, "load": loads[m.name], "capacity": m.capacity}
-                for m in self.members
+                for m in self._team()
             ],
         }
 

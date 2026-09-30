@@ -303,7 +303,7 @@ def build_engine(
 
 
 def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
-                       default: bool):
+                       default: bool, launch: bool = False):
     """複数テンプレート横断の Task Engine を Engine に繋ぐ。
 
     常駐する `aipmo schedule` では既定で有効、それ以外は config.yaml に
@@ -327,11 +327,11 @@ def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
         path = base / path
     task_engine = TaskEngine(path, stale_days=int(section.get("stale_days", 30)))
     task_engine.attach(engine)
-    return build_pmo_core(config, task_engine, engine)
+    return build_pmo_core(config, task_engine, engine, base if launch else None)
 
 
 def build_pmo_core(config: dict[str, Any], task_engine: Any,
-                   engine: Engine | None = None):
+                   engine: Engine | None = None, launch_base: Path | None = None):
     """Task Engine の上に PMO Core（担当割当・進捗ルール・統括）を載せる。
 
     `engine` を渡したときだけ、`pmo_core.notify.slack_channel` への通知を
@@ -339,9 +339,13 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
 
     Puts the PMO Core (assignment, progress rules, oversight) on the Task
     Engine. Notification to `pmo_core.notify.slack_channel` is wired only
-    when an `engine` is given — display-only commands never notify.
+    when an `engine` is given — display-only commands never notify. Likewise
+    `pmo_core.responses` templates are launched only when `launch_base` (the
+    config directory) is given, i.e. by the resident `aipmo schedule`; every
+    other command merely reports what would launch.
     """
-    from .pmo_core import PmoCore, RuleError, load_members, load_rules, slack_notifier
+    from .pmo_core import (PmoCore, RuleError, load_members, load_responses,
+                           load_rules, slack_notifier)
 
     section = config.get("pmo_core") or {}
     try:
@@ -355,9 +359,47 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
     if channel and engine is not None and engine.adapters.has("slack"):
         notify = slack_notifier(engine.adapters.get("slack"), channel)
 
+    try:
+        responses = load_responses(section.get("responses"))
+    except RuleError as exc:
+        raise ConfigError(f"pmo_core.responses: {exc}") from exc
+
+    launcher = None
+    if responses:
+        root = Path((config.get("web") or {}).get("templates_dir", "templates"))
+        root = root if root.is_absolute() else (launch_base or Path.cwd()) / root
+        index = _template_index(root)
+        # 3時に初めて気づくより、起動時に落とす。
+        # Fail at startup rather than discover a typo at 3am.
+        missing = sorted({r.template for r in responses} - set(index))
+        if missing:
+            raise ConfigError(
+                f"pmo_core.responses: テンプレートが見つかりません / not found "
+                f"in {root}: {', '.join(missing)}")
+        if engine is not None and launch_base is not None:
+            def launcher(response, trigger):
+                engine.run(index[response.template], params=response.params,
+                           trigger=trigger)
+
+    learning = section.get("learning") or {}
     return PmoCore(task_engine=task_engine, rules=rules,
                    members=load_members(section.get("members")), notify=notify,
-                   renotify_hours=int(notify_config.get("renotify_hours", 24)))
+                   renotify_hours=int(notify_config.get("renotify_hours", 24)),
+                   learning=bool(learning.get("enabled", True)),
+                   min_samples=int(learning.get("min_samples", 5)),
+                   responses=responses, launcher=launcher)
+
+
+def _template_index(root: Path) -> dict[str, Any]:
+    """テンプレート名 → 読み込み済みテンプレート / template name to template."""
+    index: dict[str, Any] = {}
+    for path in sorted(root.rglob("*.yaml")) + sorted(root.rglob("*.yml")):
+        try:
+            template = loader.load_file(path)
+        except loader.TemplateError:
+            continue   # 読めないものは応答に使えない。存在確認で弾かれる。
+        index.setdefault(template.name, template)
+    return index
 
 
 def _open_ledger(args: argparse.Namespace):
@@ -398,6 +440,17 @@ def cmd_pmo(args: argparse.Namespace) -> int:
         print(f"  ! {m['member']} は上限超過 {m['load']}/{m['capacity']}")
     if briefing["unassignable"]:
         print(f"  ! 割り当て先の空きが無い: {len(briefing['unassignable'])} 件")
+    if briefing["responses"]:
+        print("\n高リスク時の応答 / responses")
+        for r in briefing["responses"]:
+            print(f"  {r['id']:<20} {r['template']:<24} {r['status']}")
+    learned = briefing.get("learning")
+    if learned and (learned["member_factor"] or learned["label_bonus"]):
+        print(f"\n学習した補正 / learned adjustments (実績 {learned['samples']} 件)")
+        for who, factor in learned["member_factor"].items():
+            print(f"  {who}: キャパシティ x{factor}")
+        for label, bonus in learned["label_bonus"].items():
+            print(f"  ラベル {label}: 加点 +{bonus}")
     return 0
 
 
@@ -601,7 +654,8 @@ def cmd_schedule(args: argparse.Namespace) -> int:
     base = Path(args.config).resolve().parent
     engine = build_engine(config, base_dir=base)
     try:
-        task_engine = attach_task_engine(engine, config, base, default=True)
+        task_engine = attach_task_engine(engine, config, base, default=True,
+                                         launch=True)
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
