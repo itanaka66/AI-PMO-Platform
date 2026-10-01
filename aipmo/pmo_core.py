@@ -43,6 +43,7 @@ from typing import Any, Callable
 
 from .agent_roles import (KEEP_DISPATCHES, SETTLED_BAD, excerpt_of, fit, latest_dispatch,
                           params_for)
+from .filing import FilingConfig, FilingError, eligible, filing_state
 from .generation import (GenerationConfig, due_date, followup_id, period_key,
                          recurring_id)
 from .judgment import (LABEL, MAX_RETRIES_PER_TASK, REMEDIES, Diagnosis, JudgmentConfig,
@@ -495,6 +496,9 @@ def scope_briefing(briefing: dict[str, Any], active: list[Task],
         "projects": [p for p in briefing.get("projects", [])
                      if p["project"].lower() in allowed],
         "agent_runs": [r for r in briefing.get("agent_runs", []) if mine(r)],
+        "filing": (None if redact_org or not briefing.get("filing") else {
+            **briefing["filing"],
+            "pending": [p for p in briefing["filing"].get("pending", []) if mine(p)]}),
         "generated": {**briefing.get("generated", {"created": []}),
                       "pending": [p for p in (briefing.get("generated") or {}).get("pending", [])
                                   if mine(p)]},
@@ -561,6 +565,11 @@ class PmoCore:
     # (display-only commands show the diagnosis and nothing more).
     judgment: JudgmentConfig | None = None
     acting: bool = False
+    # 課題管理ツールへの起票(aipmo/filing.py)。`filer(task)` が実際に課題を作る。
+    # 設定があっても filer が無い(表示専用の)Core は、起票できない。
+    # Filing into a tracker. `filer(task)` creates the issue; a display-only Core has none.
+    filing: FilingConfig | None = None
+    filer: Callable[[Task], dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
         ledger = self.task_engine.path
@@ -667,8 +676,10 @@ class PmoCore:
         violations = evaluate_rules(self.rules, fresh, now)
         self._track_alerts(violations, fresh, now)
         created = self._generate_followups(violations, fresh, now)
+        filing = self._filing_step(now)
 
         briefing = self.briefing(fresh, violations, now)
+        briefing["filing"] = filing
         briefing["collection"] = collection
         briefing["generated"] = {
             "pending": [{"id": t.id, "title": t.title, "project": t.project,
@@ -1432,6 +1443,109 @@ class PmoCore:
         self._log("proposal_approved" if approve else "proposal_rejected",
                   self.task_engine.now(), task=task.id, title=task.title)
         return task
+
+    # -- 課題管理ツールへの起票 / filing into the tracker ------------------------
+
+    def filing_candidates(self) -> list[Task]:
+        """起票の対象(承認済み・未起票)のタスク。順位の高い順ではなく、古い順。"""
+        if self.filing is None:
+            return []
+        self.task_engine.sync()
+        cfg = self.filing
+        return sorted((t for t in self.task_engine.tasks.values() if eligible(t, cfg)),
+                      key=lambda t: t.first_seen)
+
+    def file_task(self, ref: str,
+                  file: Callable[[Task], dict[str, Any]] | None = None, *,
+                  by: str = "human") -> Task:
+        """タスクを課題管理ツールに起票し、その課題を台帳のタスクに結び付ける。
+
+        外の世界を変えるので、人が確定した操作(`aipmo file --apply`・Web のボタン)と、
+        運用者が `auto` に書いた由来の常駐だけが呼ぶ。失敗したら台帳には「失敗」と理由を
+        残す(課題は作られていない)。書き込みの途中で落ちても、冪等キーがあるので、
+        やり直しで課題が二重にならない。
+
+        Files the task into the tracker and ties the issue to the ledger task. Only a
+        human's confirmed action, or the resident for origins the operator put under
+        `auto`, calls this. On failure the ledger keeps the reason; the idempotency key
+        makes a retry after a crash safe.
+        """
+        if self.filing is None:
+            raise ValueError("起票は設定されていません。pmo_core.filing を書きます "
+                             "/ filing is not configured: add pmo_core.filing")
+        write = file or self.filer
+        if write is None:
+            raise FilingError("このコマンドからは起票できません / cannot file from here",
+                              "adapter")
+        engine = self.task_engine
+        found = engine.find(ref)
+        if found is None:
+            raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+        if filing_state(found).get("state") == "filed":
+            raise ValueError(f"{found.id} はすでに {filing_state(found).get('key')} として"
+                             f"起票済みです / already filed")
+        if not eligible(found, self.filing, declined=True):
+            raise ValueError(f"{found.id} は起票の対象ではありません（承認済みの、"
+                             f"{' / '.join(self.filing.origins)} の開いているタスクだけ） "
+                             f"/ not eligible for filing")
+        try:
+            outcome = write(found)            # ネットワーク。台帳の取引の外で。
+        except FilingError as exc:
+            engine.note_filing(found.id, "failed", str(exc)[:300])
+            self._log("filing_failed", engine.now(), task=found.id, by=by,
+                      reason=exc.kind, error=str(exc)[:300])
+            raise
+        except Exception as exc:              # アダプタの通信エラーなど
+            message = f"{type(exc).__name__}: {exc}"[:300]
+            engine.note_filing(found.id, "failed", message)
+            self._log("filing_failed", engine.now(), task=found.id, by=by,
+                      reason="remote", error=message)
+            raise FilingError(message, "remote") from exc
+        task = engine.record_filing(found.id, outcome)
+        self.last_filing = outcome
+        self._log("task_filed", engine.now(), task=task.id, by=by, tracker=outcome["tracker"],
+                  key=outcome["key"], reused=outcome.get("reused", False),
+                  unassigned=outcome.get("unassigned"))
+        return task
+
+    def decline_filing(self, ref: str) -> Task:
+        """起票を見送る(台帳だけで使う)。一覧から消え、常駐も起票しない。"""
+        if self.filing is None:
+            raise ValueError("起票は設定されていません / filing is not configured")
+        task = self.task_engine.note_filing(ref, "declined")
+        self._log("filing_declined", self.task_engine.now(), task=task.id)
+        return task
+
+    def _filing_step(self, now: datetime) -> dict[str, Any] | None:
+        """周ごとの起票。`auto` に書かれた由来だけ、常駐が上限の範囲で起票する。"""
+        cfg = self.filing
+        if cfg is None:
+            return None
+        filed_now: list[dict[str, Any]] = []
+        failed_now: list[dict[str, Any]] = []
+        if cfg.auto and self.acting and self.filer is not None:
+            for task in self.filing_candidates():
+                if len(filed_now) + len(failed_now) >= cfg.max_auto_per_cycle:
+                    break
+                if task.origin not in cfg.auto:
+                    continue
+                state = filing_state(task)
+                if state.get("state") == "failed" and self._within(
+                        str(state.get("at") or ""), now, 1.0):
+                    continue                  # 失敗したばかりのものは、1 時間おく
+                try:
+                    done = self.file_task(task.id, by="auto")
+                    filed_now.append({"id": done.id, "key": filing_state(done).get("key")})
+                except Exception as exc:      # noqa: BLE001 — 記録済み。次の周へ
+                    failed_now.append({"id": task.id, "error": str(exc)[:200]})
+        pending = [{"id": t.id, "title": t.title, "project": t.project, "origin": t.origin,
+                    "priority": t.priority, "due_date": t.due_date,
+                    "state": filing_state(t).get("state") or "pending",
+                    "error": filing_state(t).get("error")}
+                   for t in self.filing_candidates()]
+        return {"tracker": cfg.tracker, "auto": list(cfg.auto), "pending": pending,
+                "filed_now": filed_now, "failed_now": failed_now,
+                "can_file": self.filer is not None}
 
     def complete_task(self, ref: str) -> Task:
         """台帳だけのタスクを完了にする(実績に残る)。"""

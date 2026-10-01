@@ -398,11 +398,22 @@ wbs:
           depends_on: ["3.9"]
         - id: "6.11"
           name: "承認した提案・定期タスクを、課題管理ツールにも起票する（承認つき）"
-          status: todo
+          status: done
           effort: 5
-          priority: Medium
           depends_on: ["3.11", "3.9"]
-          notes: "いまは台帳だけのタスク。トラッカーに作るのは外の世界を変えるので、別の承認が要る"
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/filing.py"
+            - "aipmo/pmo_core.py::def file_task"
+            - "tests/test_filing.py::test_the_scan_updates_the_filed_task_instead_of_adding_a_duplicate"
+            - "docs/TASK-GENERATION.md"
+          notes: "起票は人の確定した操作と、運用者が auto と書いた由来の常駐だけ。冪等で、起票後は収集が同じ課題を更新する。実サービスでは未検証（6.14）"
+        - id: "6.14"
+          name: "起票を実サービス（Jira・GitHub など）に対して確かめる／プロジェクトごとの起票先"
+          status: todo
+          effort: 3
+          priority: Medium
+          depends_on: ["6.11"]
         - id: "6.12"
           name: "WBS の更新漏れ・証拠の欠けを、対応タスクの提案にする"
           status: todo

@@ -74,6 +74,7 @@ from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
 from ..pmo_core import Member, PmoCore, scope_briefing
+from ..filing import FilingConfig, FilingError, eligible, filing_state, make_filer
 from ..writeback import WritebackError, make_writer, tracker_of, writable_trackers
 from ..ledger_store import LedgerConfigError, LedgerStore, LedgerTenantError
 from ..task_engine import TaskEngine, side_path
@@ -172,6 +173,7 @@ def create_app(
     viewer_projects: list[str] | None = None,
     ledger_store_factory: Callable[[], LedgerStore] | None = None,
     members: list[Member] | None = None,
+    filing: FilingConfig | None = None,
 ):
     runs = store or RunStore()
     # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
@@ -597,9 +599,24 @@ def create_app(
         active: list[Any] = []
         pending: list[Any] = []
         names: list[str] = []
+        filing_view: dict[str, Any] | None = None
         if _ledger_present(ledger):
             store = _open_store(ledger)
             try:
+                if filing is not None and not confined:
+                    # 起票待ちは台帳から今の状態で出す(押した直後に消えるように)。
+                    # Live from the ledger, so a filed task leaves the list at once.
+                    waiting = [t for t in store.tasks.values() if eligible(t, filing)
+                               and (allowed is None or t.project.lower() in allowed)]
+                    filing_view = {
+                        "tracker": filing.tracker, "auto": list(filing.auto),
+                        "can_file": engine.adapters.has(filing.tracker),
+                        "pending": [{"id": t.id, "title": t.title, "project": t.project,
+                                     "origin": t.origin, "priority": t.priority,
+                                     "due_date": t.due_date,
+                                     "state": filing_state(t).get("state") or "pending",
+                                     "error": filing_state(t).get("error")}
+                                    for t in sorted(waiting, key=lambda t: t.first_seen)]}
                 active = store.ranked(projects=allowed)
                 pending = [t for t in store.proposals()
                            if allowed is None or t.project.lower() in allowed]
@@ -627,7 +644,8 @@ def create_app(
                       "priority": t.priority, "due_date": t.due_date,
                       "generated_from": t.generated_from} for t in pending]
         return {"briefing": briefing, "briefing_age_seconds": age, "tasks": tasks,
-                "proposals": proposals, "projects": names, "scoped": confined}
+                "proposals": proposals, "projects": names, "scoped": confined,
+                "filing": filing_view}
 
     @app.get("/api/pmo/decisions", dependencies=[guard])
     def pmo_decisions(limit: int = 50, project: str | None = None,
@@ -694,6 +712,42 @@ def create_app(
         logger.info("pmo proposal %s: %s by %s from %s", decision, task.id, role,
                     _client_ip(request))
         return {"id": task.id, "decision": decision}
+
+    @app.post("/api/pmo/filing")
+    def pmo_filing(request: Request, payload: dict[str, Any],
+                   role: str = operator_guard) -> dict[str, Any]:
+        """承認したタスクを課題管理ツールに起票する／見送る(operator のみ)。
+
+        課題を作るのは外の世界を変える操作なので、閲覧者には許さない。
+        """
+        ledger, _, _ = _pmo_files()
+        ref = str(payload.get("ref") or "")
+        decision = str(payload.get("decision") or "file")
+        if not ref or decision not in ("file", "skip"):
+            raise HTTPException(status_code=422,
+                                detail="ref and decision (file|skip) are required")
+        if filing is None:
+            raise HTTPException(status_code=404, detail="filing is not configured")
+        store = _open_store(ledger)
+        core = PmoCore(task_engine=store, filing=filing)
+        try:
+            if decision == "skip":
+                task = core.decline_filing(ref)
+            else:
+                task = core.file_task(ref, file=make_filer(engine.adapters, members or [], filing))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except FilingError as exc:
+            status = {"adapter": 503, "target": 422}.get(exc.kind, 502)
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        finally:
+            store.close()
+        key = filing_state(task).get("key")
+        logger.info("pmo filing %s: %s -> %s by %s from %s", decision, task.id, key, role,
+                    _client_ip(request))
+        return {"id": task.id, "decision": decision, "key": key}
 
     @app.post("/api/pmo/assignments/accept")
     def pmo_accept(request: Request, payload: dict[str, Any],

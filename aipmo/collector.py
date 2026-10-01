@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .adapters.base import AdapterRegistry
-from .task_engine import Task, TaskEngine, extract_candidates
+from .task_engine import Task, TaskEngine, extract_candidates, filed_key
 from .trackers import TRACKERS, tracker_of
 
 logger = logging.getLogger("aipmo.collector")
@@ -153,7 +153,8 @@ class Collector:
         # scan just returned; the longest-unseen first.
         stale = sorted(
             (t for t in engine.ranked()
-             if not t.origin and t.key and t.key not in seen
+             if (not t.origin or filed_key(t)) and (filed_key(t) or t.key)
+             and (filed_key(t) or t.key) not in seen
              and tracker_of(t) in TRACKERS and tracker_of(t) != "wbs_file"),
             key=lambda t: t.last_seen)[: self.max_refresh]
 
@@ -186,7 +187,8 @@ class Collector:
                 self.task_engine.ingest("collector:refresh:jira", run_id, candidates)
             report["refreshed"] += len(found)
             # 返ってこなかった（削除された・見えなくなった）ものは、状態を変えずに記録する。
-            report["missing"].extend(t.id for t in chunk if t.key not in found)
+            report["missing"].extend(t.id for t in chunk
+                                     if (filed_key(t) or t.key) not in found)
 
     def _refresh_by_id(self, tracker: str, tasks: list[Task], run_id: str,
                        report: dict[str, Any]) -> None:

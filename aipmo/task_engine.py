@@ -161,6 +161,11 @@ class Task:
     # remedy it chose and why, and what came of it. A record, not work — never ranked,
     # assigned or handed to a role AI.
     payload: dict[str, Any] = field(default_factory=dict)
+    # `payload["filing"]` は課題管理ツールへの起票の記録（aipmo/filing.py）。起票したら
+    # `state: filed` と、課題のキー・起票した時刻が入り、`tracker` / `external_id` も
+    # その課題を指す。以後はその課題の状態・担当・完了が収集で反映される。
+    # `payload["filing"]` records filing into a tracker: once filed it holds the issue's
+    # key and time, and `tracker` / `external_id` point at that issue.
     # 役割AIに仕事を任せた記録（新しいものが後ろ。直近のぶんだけ残す）。
     # id / agent / template / at / status(running|done|failed|skipped|abandoned) /
     # run_id / finished_at / error / excerpt。
@@ -195,6 +200,12 @@ class Task:
             if source["template"] not in seen:
                 seen.append(source["template"])
         return seen
+
+
+def filed_key(task: Task) -> str:
+    """起票した課題のキー(`GH:42`・`PROJ-7`)。起票していなければ空。"""
+    filing = task.payload.get("filing") or {}
+    return str(filing.get("key") or "") if filing.get("state") == "filed" else ""
 
 
 def _normalize_title(title: str) -> str:
@@ -673,6 +684,12 @@ class TaskEngine:
         key = candidate["key"]
         if key and key_id(key) in self.tasks:
             return self.tasks[key_id(key)]
+        if key:
+            # PMO Core が起票したタスクの課題は、そのタスクとして扱う(別のタスクを増やさない)。
+            # An issue the PMO Core filed belongs to the task that was filed, not a new one.
+            for task in self.tasks.values():
+                if task.origin and (task.payload.get("filing") or {}).get("key") == key_id(key):
+                    return task
         # キー無しで拾われていた同名タスクに、キーを結び付ける。プロジェクトが
         # 分かる前に拾われた（project が空の）古いものは、同名なら引き継ぐ。
         # Attach a key to a same-titled task first seen without one. An older
@@ -715,7 +732,11 @@ class TaskEngine:
         task.external_id = task.external_id or candidate.get("external_id", "")
         if candidate["key"]:
             task.title = candidate["title"]  # キー付き（課題管理側）の題名を正とする
-        task.assignee = candidate["assignee"] or task.assignee
+        filed_account = (task.payload.get("filing") or {}).get("account")
+        if not (filed_account and candidate["assignee"] == filed_account and task.assignee):
+            # 起票のとき渡したアカウントが返ってきただけなら、台帳のメンバー名を残す。
+            # The account we filed with coming back must not replace the member's name.
+            task.assignee = candidate["assignee"] or task.assignee
         if task.assignee:
             task.suggested_assignee = task.suggestion_reason = None
         if candidate["status"] and candidate["status"] != task.status:
@@ -872,11 +893,60 @@ class TaskEngine:
             if task.proposed:
                 raise ValueError(f"{task.id} は承認待ちです。先に承認してください "
                                  f"/ approve the proposal first")
+            filed = task.payload.get("filing") or {}
+            if filed.get("state") == "filed":
+                raise ValueError(f"{task.id} は {filed.get('key')} として起票済みです。"
+                                 f"そちらで閉じてください（収集で台帳に反映されます） "
+                                 f"/ filed as {filed.get('key')}: close it there")
             if task.done:
                 raise ValueError(f"{task.id} はすでに完了です / already done")
             self._record_outcome(task, stamp)
             task.done, task.status, task.last_seen = True, "Done", stamp
             self._rescore_locked()
+        return task
+
+    def record_filing(self, ref: str, info: dict[str, Any]) -> Task:
+        """課題管理ツールへの起票を台帳に記録する(課題へ結び付ける)。
+
+        `info` は {tracker, key, external_id, account?}。台帳の id は変えない
+        (提案の同一性は id に結び付いている)。起票の途中で課題が先に収集されて
+        別のタスクになっていたら、その行は取り除いて、このタスクに一本化する。
+
+        Ties a ledger task to the issue filed for it. The task id is unchanged (a
+        proposal's identity hangs on it); an issue collection already picked up as a
+        separate task is folded into this one.
+        """
+        found = self.find(ref)
+        if found is None:
+            raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+        stamp = self.now().isoformat()
+        with self.transaction():
+            task = self.tasks.get(found.id)
+            if task is None:
+                raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+            duplicate = self.tasks.get(key_id(info["key"]))
+            if duplicate is not None and duplicate.id != task.id and not duplicate.origin:
+                del self.tasks[duplicate.id]
+            task.tracker, task.external_id = info["tracker"], info["external_id"]
+            task.payload["filing"] = {
+                "state": "filed", "tracker": info["tracker"], "key": info["key"],
+                "account": info.get("account"), "at": stamp, "error": None}
+            task.last_seen = stamp
+        return task
+
+    def note_filing(self, ref: str, state: str, error: str | None = None) -> Task:
+        """起票の失敗(`failed`)または見送り(`declined`)を記録する。"""
+        found = self.find(ref)
+        if found is None:
+            raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+        stamp = self.now().isoformat()
+        with self.transaction():
+            task = self.tasks.get(found.id)
+            if task is None:
+                raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+            if (task.payload.get("filing") or {}).get("state") == "filed":
+                raise ValueError(f"{task.id} はすでに起票済みです / already filed")
+            task.payload["filing"] = {"state": state, "at": stamp, "error": error}
         return task
 
     def judgments(self, limit: int | None = None) -> list[Task]:

@@ -514,6 +514,42 @@ function generatedRow(item) {
   return row;
 }
 
+// 承認したタスクを課題管理ツールに起票する(operator のみ)。起票は外の世界に課題を作る
+// ので、ボタンを押したときだけ。見送ると、この一覧から消える。
+// Filing a task into the tracker (operator only): it creates an issue in the outside
+// world, so only on a click. Skipping removes it from this list.
+function filingRow(item, tracker, canFile) {
+  const row = el("div", "pmo-proposal");
+  row.append(el("div", "pmo-title", item.title));
+  row.append(el("div", "pmo-meta", [item.project, item.origin, item.priority, item.due_date]
+    .filter(Boolean).join(" · ")));
+  if (item.error) row.append(el("div", "card-note error", item.error));
+  if (canRun) {
+    const actions = el("div", "pmo-actions");
+    const choices = [["skip", t("web_pmo_skip_filing", "Skip"), "btn btn-reject"]];
+    if (canFile) choices.unshift(["file", `${t("web_pmo_file", "File")} → ${tracker}`, "btn btn-approve"]);
+    for (const [decision, label, kind] of choices) {
+      const button = el("button", kind, label);
+      button.addEventListener("click", async () => {
+        actions.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+        try {
+          await api("/api/pmo/filing", {
+            method: "POST", body: JSON.stringify({ ref: item.id, decision }),
+          });
+          toast(t("web_pmo_filed", "Filed."));
+          await refreshPmo();
+        } catch (error) {
+          toast(error.message, "error");
+          actions.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+        }
+      });
+      actions.append(button);
+    }
+    row.append(actions);
+  }
+  return row;
+}
+
 function proposalRow(task) {
   const row = el("div", "pmo-proposal");
   row.append(el("div", "pmo-title", task.title));
@@ -634,6 +670,13 @@ function renderPmo(data, decisions) {
       head.append(note);
     }
     if (judgment.diagnoses.length || (judgment.recent || []).length || judgment.paused) host.append(head);
+  }
+
+  const filing = data.filing;
+  if (filing && filing.pending.length) {
+    const block = pmoSection(t("web_pmo_filing", "Waiting to be filed in the tracker"), filing.pending.length);
+    for (const item of filing.pending) block.append(filingRow(item, filing.tracker, filing.can_file));
+    host.append(block);
   }
 
   const generated = data.proposals || [];

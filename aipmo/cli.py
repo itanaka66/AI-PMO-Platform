@@ -500,9 +500,26 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
                 max_refresh=int(collect_config.get("max_refresh", 50)),
                 interval_minutes=int(collect_config.get("interval_minutes", 30)))
 
+    # 起票は `pmo_core.filing` を書いたときだけ。課題を作るのは外の世界を変えるので、
+    # 実際に作れるのは人の確定した操作と、運用者が auto と書いた由来の常駐だけ。
+    # Filing is opt-in. Creating an issue changes the outside world, so only a human's
+    # confirmed action, or the resident for origins listed under `auto`, can do it.
+    from .filing import FilingConfigError, load_filing, make_filer
+
+    try:
+        filing = load_filing(section.get("filing"))
+    except FilingConfigError as exc:
+        raise ConfigError(f"pmo_core.filing: {exc}") from exc
+    filer = None
+    if filing is not None and engine is not None and launch_base is not None:
+        if not engine.adapters.has(filing.tracker):
+            raise ConfigError(f"pmo_core.filing: {filing.tracker} アダプタが設定されていません "
+                              f"/ the {filing.tracker} adapter is not configured")
+        filer = make_filer(engine.adapters, members, filing)
+
     learning = section.get("learning") or {}
     agents_config = section.get("agents") or {}
-    return PmoCore(task_engine=task_engine, rules=rules,
+    return PmoCore(task_engine=task_engine, rules=rules, filing=filing, filer=filer,
                    collector=collector, generation=generation, judgment=judgment,
                    acting=engine is not None and launch_base is not None,
                    members=members, notify=notify,
@@ -515,6 +532,16 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
                    agent_timeout_minutes=int(agents_config.get("timeout_minutes", 60)),
                    agent_max_per_day=int(agents_config.get("max_per_day", 20)),
                    responses=responses, launcher=launcher)
+
+
+def _web_filing(config: dict[str, Any]):
+    """Web の起票ボタン用。設定が壊れていれば、ボタンを出さない(起動は止めない)。"""
+    from .filing import FilingConfigError, load_filing
+
+    try:
+        return load_filing(((config.get("pmo_core") or {}).get("filing")))
+    except FilingConfigError:
+        return None
 
 
 def _template_index(root: Path) -> dict[str, Any]:
@@ -586,6 +613,14 @@ def cmd_pmo(args: argparse.Namespace) -> int:
         print(f"\n承認待ちの提案 / pending proposals ({len(pending)})  — aipmo generated")
         for item in pending[:5]:
             print(f"  {item['title']}")
+    filing = briefing.get("filing")
+    if filing and (filing["pending"] or filing["filed_now"] or filing["failed_now"]):
+        print(f"\n{filing['tracker']} への起票待ち / waiting to be filed ({len(filing['pending'])})"
+              f"  — aipmo file")
+        for item in filing["pending"][:5]:
+            print(f"  {item['title']}" + (f"  ! {item['error']}" if item.get("error") else ""))
+        for item in filing["filed_now"]:
+            print(f"  → 起票しました / filed: {item['id']} = {item['key']}")
     if briefing["responses"]:
         print("\n高リスク時の応答 / responses")
         for r in briefing["responses"]:
@@ -794,6 +829,78 @@ def cmd_collect(args: argparse.Namespace) -> int:
     return 1 if report["failed"] or any(s["error"] for s in report["sources"]) else 0
 
 
+def cmd_file(args: argparse.Namespace) -> int:
+    """承認したタスクを、課題管理ツールにも起票する(承認つき)。
+
+    `aipmo file`                    … 起票待ちの一覧(何も書かない)
+    `aipmo file REF --apply`        … そのタスクを起票する
+    `aipmo file --all --apply`      … 起票待ちを全部起票する
+    `aipmo file REF --skip`         … 起票を見送る(台帳だけで使う)
+    """
+    from .filing import FilingError, make_filer
+
+    try:
+        config, core = _open_ledger(args)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    if core.filing is None:
+        print("起票は設定されていません。config.yaml に pmo_core.filing を書きます "
+              "/ filing is not configured: add pmo_core.filing")
+        return 0
+    cfg = core.filing
+
+    if args.ref and args.skip:
+        try:
+            task = core.decline_filing(args.ref)
+        except (KeyError, ValueError) as exc:
+            print(f"{exc}", file=sys.stderr)
+            return 1
+        print(f"起票を見送りました / skipped: {task.title}")
+        return 0
+
+    if args.ref and not args.apply:
+        print("起票するには --apply を付けてください（見送るなら --skip） "
+              "/ add --apply to file this task (or --skip)", file=sys.stderr)
+        return 1
+    candidates = core.filing_candidates()
+    if not args.apply:
+        print(f"{cfg.tracker} への起票待ち / waiting to be filed ({len(candidates)})"
+              + (f"   自動: {', '.join(cfg.auto)}" if cfg.auto else ""))
+        for task in candidates:
+            state = (task.payload.get("filing") or {}).get("state")
+            print(f"  {task.id}\n      {task.title}  [{task.origin}, {task.priority or '-'}, "
+                  f"期限 {task.due_date or '-'}, 担当 {task.assignee or '未定'}]"
+                  + ("  ! 前回失敗: " + str(task.payload["filing"].get("error"))
+                     if state == "failed" else ""))
+        if candidates:
+            print("\n起票するには / to file: aipmo file REF --apply   (全部: --all --apply)")
+        return 0
+
+    if not args.ref and not args.all:
+        print("起票するタスクの id か --all を指定してください "
+              "/ give a task id or --all", file=sys.stderr)
+        return 1
+    targets = [t.id for t in candidates] if args.all else [args.ref]
+    base = Path(args.config).resolve().parent
+    engine = build_engine(config, base)
+    write = make_filer(engine.adapters, core.members, cfg)
+    failed = 0
+    for ref in targets:
+        try:
+            task = core.file_task(ref, file=write)
+        except (KeyError, ValueError, FilingError) as exc:
+            failed += 1
+            print(f"✗ {ref}: {exc}", file=sys.stderr)
+            continue
+        info = core.last_filing or {}
+        note = " (すでに作成済みの課題に結び付けました)" if info.get("reused") else ""
+        if info.get("unassigned"):
+            note += f" (担当 {info['unassigned']} のアカウント未設定のため担当なしで起票)"
+        print(f"✓ 起票しました / filed: {task.title} → {info.get('key')}{note}")
+    return 1 if failed else 0
+
+
 def cmd_generated(args: argparse.Namespace) -> int:
     """PMO Core が自分で作ったタスク(提案・定期タスク)を見る/決める。
 
@@ -829,8 +936,10 @@ def cmd_generated(args: argparse.Namespace) -> int:
         print(f"  {task.id}\n      {task.title}  [{task.priority or '-'}, 期限 {task.due_date or '-'}]")
     print(f"\n開いている台帳だけのタスク / open ledger-only tasks ({len(own)})")
     for task in own:
+        filed = (task.payload.get("filing") or {}).get("key")
         print(f"  [{task.score:>3}] {task.id}  {task.title}  "
-              f"({task.assignee or '担当未定'}, 期限 {task.due_date or '-'})")
+              f"({task.assignee or '担当未定'}, 期限 {task.due_date or '-'})"
+              + (f"  → {filed}" if filed else ""))
     return 0
 
 
@@ -1085,7 +1194,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      pmo_ledger=ledger_path(config, base),
                      viewer_projects=web.get("viewer_projects"),
                      ledger_store_factory=store_factory,
-                     members=load_members((config.get("pmo_core") or {}).get("members")))
+                     members=load_members((config.get("pmo_core") or {}).get("members")),
+                     filing=_web_filing(config))
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()
@@ -1388,6 +1498,17 @@ def main(argv: list[str] | None = None) -> int:
         generated_actions.add_parser(action_name, help=text).add_argument(
             "ref", help="タスクの id")
     p_generated.set_defaults(func=cmd_generated)
+
+    p_file = sub.add_parser(
+        "file", help="承認したタスクを課題管理ツールにも起票する(承認つき) "
+                     "/ file approved PMO-made tasks into the tracker")
+    p_file.add_argument("ref", nargs="?", help="起票するタスクの id")
+    p_file.add_argument("--apply", action="store_true",
+                        help="起票する(課題管理ツールに課題を作る) / actually create the issue")
+    p_file.add_argument("--all", action="store_true", help="起票待ちを全部 / every waiting task")
+    p_file.add_argument("--skip", action="store_true",
+                        help="起票を見送る(台帳だけ) / do not file this one")
+    p_file.set_defaults(func=cmd_file)
 
     p_agents = sub.add_parser(
         "agents", help="役割AI（開発・テスト・調査・文書・営業）の状況と実行 "
