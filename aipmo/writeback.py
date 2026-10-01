@@ -33,7 +33,7 @@ from typing import Any
 from .adapters.base import AdapterRegistry
 from .pmo_core import Member, _member_of
 from .task_engine import Task
-from .trackers import TRACKERS
+from .trackers import TRACKERS, tracker_of
 
 
 class WritebackError(RuntimeError):
@@ -49,13 +49,6 @@ class WritebackError(RuntimeError):
     def __init__(self, message: str, kind: str) -> None:
         super().__init__(message)
         self.kind = kind
-
-
-def tracker_of(task: Task) -> str:
-    """そのタスクのトラッカー名。以前の Jira の行（tracker が空）も扱う。"""
-    if task.tracker:
-        return task.tracker
-    return "jira" if task.id.startswith("JIRA:") else ""
 
 
 def writable_trackers(adapters: AdapterRegistry) -> set[str]:
@@ -94,6 +87,12 @@ def make_writer(adapters: AdapterRegistry,
                 f"/ the {name} adapter cannot update issues", "adapter")
 
         member = _member_of(assignee, members)
+        if member is not None and member.is_agent:
+            # 役割AIはトラッカーにアカウントを持たない。トラッカーの担当者には
+            # しない（台帳の担当と、その成果の記録だけ）。
+            # A role AI has no account in a tracker, so it never becomes the
+            # tracker's assignee; the ledger and its recorded result are enough.
+            return {"tracker": None, "skipped": "agent"}
         account = member.account(name) if member is not None else None
         if not account:
             if name != "jira":

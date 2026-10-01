@@ -464,7 +464,7 @@ def test_this_projects_own_wbs_tells_the_truth_about_what_is_left():
     analysis = analyse(wbs, ROOT, TODAY, problems)
     open_ids = {leaf.id for leaf in wbs.leaves() if not leaf.done}
     # 既知の未実装・未検証が WBS に載っている（READMEの「未実装」と食い違わない）
-    assert {"6.1", "6.2", "6.3"} <= open_ids
+    assert {"6.1", "6.3", "6.10"} <= open_ids
     assert analysis["summary"]["leaves"] >= 30 and analysis["ready"]
     # 実績から速度が出る（根拠のある予測）
     assert analysis["velocity"]["basis"] in ("history", "declared", "none")

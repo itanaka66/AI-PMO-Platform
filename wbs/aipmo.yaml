@@ -299,10 +299,22 @@ wbs:
           notes: "schedule と serve を別ホストに分けるために必要"
         - id: "6.2"
           name: "役割AIを Task Engine の割当に結び付ける"
-          status: todo
+          status: done
           effort: 8
-          priority: Medium
           depends_on: ["3.8", "3.5"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/agent_roles.py"
+            - "aipmo/pmo_core.py::def dispatch_now"
+            - "tests/test_agent_dispatch.py::test_it_works_through_the_real_developer_template_end_to_end"
+          notes: "人が確定した割当だけを任せる（auto_confirm は運用者のオプトイン）。成果の人による確認は 6.10"
+        - id: "6.10"
+          name: "役割AIの成果を人が確認した記録（レビュー）を台帳に残す"
+          status: todo
+          effort: 3
+          priority: Medium
+          depends_on: ["6.2"]
+          notes: "いまは成果の要約を台帳に残すところまで。確認済みかどうかは人が別途判断する"
         - id: "6.3"
           name: "非 Jira の実サービスでの書き戻し検証（GitHub・Azure DevOps・Plane・OpenProject）"
           status: todo

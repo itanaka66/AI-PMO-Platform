@@ -612,6 +612,7 @@ def create_app(
         tasks = [
             {"id": t.id, "key": t.key, "title": t.title, "score": t.score,
              "project": t.project, "tracker": tracker_of(t),
+             "dispatches": t.dispatches[-3:],
              "external_id": t.external_id or (t.key if tracker_of(t) == "jira" else None),
              "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
              "suggestion_reason": t.suggestion_reason, "due_date": t.due_date,

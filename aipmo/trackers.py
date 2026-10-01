@@ -14,6 +14,7 @@ ledger and the write-back use it.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,16 @@ TRACKERS: dict[str, Tracker] = {
     "wbs_file": Tracker("wbs_file", "WBS", "node_id", str,
                         ("id",), ("name", "title"), ("due", "due_date")),
 }
+
+
+def tracker_of(task: Any) -> str:
+    """そのタスクのトラッカー名。以前の Jira の行（tracker が空）も扱う。
+
+    The task's tracker name. Older Jira rows (empty tracker) count as Jira.
+    """
+    if task.tracker:
+        return str(task.tracker)
+    return "jira" if str(task.id).startswith("JIRA:") else ""
 
 
 def key_id(key: str) -> str:

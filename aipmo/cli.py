@@ -433,29 +433,45 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
     except RuleError as exc:
         raise ConfigError(f"pmo_core.responses: {exc}") from exc
 
+    try:
+        members = load_members(section.get("members"))
+    except RuleError as exc:
+        raise ConfigError(f"pmo_core.members: {exc}") from exc
+
+    # 高リスク時の応答と、役割AI（`kind: agent` のメンバー）は、どちらも
+    # テンプレートを起動する。起動できるのは、運用者が設定に書いたものだけ。
+    # Responses to high risk and role AIs (`kind: agent` members) both launch
+    # templates, and only the ones the operator wrote into the config.
     launcher = None
-    if responses:
+    wanted = ({r.template for r in responses}
+              | {str(m.template) for m in members if m.is_agent})
+    if wanted:
         root = Path((config.get("web") or {}).get("templates_dir", "templates"))
         root = root if root.is_absolute() else (launch_base or Path.cwd()) / root
         index = _template_index(root)
         # 3時に初めて気づくより、起動時に落とす。
         # Fail at startup rather than discover a typo at 3am.
-        missing = sorted({r.template for r in responses} - set(index))
+        missing = sorted(wanted - set(index))
         if missing:
             raise ConfigError(
-                f"pmo_core.responses: テンプレートが見つかりません / not found "
-                f"in {root}: {', '.join(missing)}")
+                f"pmo_core: テンプレートが見つかりません（responses / 役割AI）"
+                f" / not found in {root}: {', '.join(missing)}")
         if engine is not None and launch_base is not None:
             def launcher(response, trigger):
-                engine.run(index[response.template], params=response.params,
-                           trigger=trigger)
+                # 結果（実行の記録）を返す。役割AIの成果を台帳に残すのに使う。
+                # Returns the run so a role AI's result can be recorded.
+                return engine.run(index[response.template], params=response.params,
+                                  trigger=trigger)
 
     learning = section.get("learning") or {}
+    agents_config = section.get("agents") or {}
     return PmoCore(task_engine=task_engine, rules=rules,
-                   members=load_members(section.get("members")), notify=notify,
+                   members=members, notify=notify,
                    renotify_hours=int(notify_config.get("renotify_hours", 24)),
                    learning=bool(learning.get("enabled", True)),
                    min_samples=int(learning.get("min_samples", 5)),
+                   agent_timeout_minutes=int(agents_config.get("timeout_minutes", 60)),
+                   agent_max_per_day=int(agents_config.get("max_per_day", 20)),
                    responses=responses, launcher=launcher)
 
 
@@ -605,6 +621,72 @@ def cmd_tasks(args: argparse.Namespace) -> int:
         if args.why:
             for reason in task.reasons:
                 print(f"        - {reason}")
+    return 0
+
+
+def cmd_agents(args: argparse.Namespace) -> int:
+    """役割AIの状況を見る／タスクをいま任せる（失敗の再試行にも）。
+
+    `aipmo agents`            … 役割AIごとの件数と、直近の実行
+    `aipmo agents run REF`    … 役割AIに割り当てられたタスクを、いま任せて結果を待つ
+    """
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+
+    if args.agents_command == "run":
+        # 実行するので、常駐のときと同じ形でエンジンを組み立てる。
+        # Running one needs a real engine, built as the resident process builds it.
+        try:
+            engine = build_engine(config, base_dir=base)
+            core = attach_task_engine(engine, config, base, default=True, launch=True)
+        except ConfigError as exc:
+            print(f"設定エラー / config error: {exc}", file=sys.stderr)
+            return 1
+        if core is None:
+            print("台帳が無効です / the ledger is disabled", file=sys.stderr)
+            return 1
+        try:
+            outcome = core.dispatch_now(args.ref)
+        except (KeyError, ValueError, RuntimeError) as exc:
+            print(f"{exc}", file=sys.stderr)
+            return 1
+        latest = outcome.get("latest") or {}
+        print(f"{outcome['status']}: {outcome['task']} → {outcome['agent']}"
+              + (f"（{outcome['reason']}）" if outcome.get("reason") else ""))
+        if latest.get("status") == "done":
+            print(f"完了 / done  run={latest.get('run_id')}")
+            if latest.get("excerpt"):
+                print("\n" + latest["excerpt"])
+        elif latest.get("status") in ("failed", "skipped"):
+            print(f"{latest['status']}: {latest.get('error')}", file=sys.stderr)
+            return 1
+        return 0
+
+    try:
+        _, core = _open_ledger(args)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    agents = [m for m in core.members if m.is_agent]
+    if not agents:
+        print("役割AIはありません。config.yaml の pmo_core.members に kind: agent の"
+              "メンバーを書きます / no role AIs: add members with `kind: agent`")
+        return 0
+    briefing = core.cycle()
+    print("役割AI / role AIs")
+    for item in briefing["agents"]:
+        print(f"  {item['member']:<14} {item['template']:<18} 割当 {item['open_assigned']}"
+              f"（実行中 {item['running']}・待ち {item['waiting']}）"
+              f"  今日 {item['dispatched_today']} 件  上限 {item['capacity']}"
+              + ("  自動確定" if item["auto_confirm"] else ""))
+    runs = briefing["agent_runs"]
+    print(f"\n直近の実行 / recent runs ({len(runs)})")
+    for run in runs:
+        print(f"  [{run['status']:<9}] {run['agent']:<12} {run['title'][:40]}")
+        if run.get("error"):
+            print(f"      ! {run['error']}")
+        elif run.get("excerpt"):
+            print("      " + run["excerpt"].splitlines()[0][:100])
     return 0
 
 
@@ -1072,6 +1154,15 @@ def main(argv: list[str] | None = None) -> int:
     p_migrate.add_argument("--force", action="store_true",
                            help="移行先に行があっても、同じ id を上書きする")
     p_ledger.set_defaults(func=cmd_ledger)
+
+    p_agents = sub.add_parser(
+        "agents", help="役割AI（開発・テスト・調査・文書・営業）の状況と実行 "
+                       "/ role AIs: status and running one now")
+    agents_actions = p_agents.add_subparsers(dest="agents_command")
+    p_agent_run = agents_actions.add_parser(
+        "run", help="役割AIに割り当てられたタスクを、いま任せる（失敗の再試行にも）")
+    p_agent_run.add_argument("ref", help="タスクの id か課題のキー")
+    p_agents.set_defaults(func=cmd_agents)
 
     p_wbs = sub.add_parser(
         "wbs", help="PMO AI 自身の開発 WBS の検証・状況 / validate or show the project's own WBS")

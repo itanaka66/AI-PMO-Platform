@@ -459,6 +459,19 @@ function taskRow(task) {
   for (const reason of task.reasons || []) list.append(el("li", null, reason));
   if (task.blocked) list.append(el("li", null, "blocked"));
   row.append(list);
+
+  // 役割AIに任せた記録。直近の 1 件だけ（状態と、結果または理由）。
+  // 外部由来の文字列なので textContent で入れる。
+  // What a role AI did for this task: the latest run only, with its result or
+  // reason. Goes in through textContent, since it is text from outside.
+  const last = (task.dispatches || []).slice(-1)[0];
+  if (last) {
+    const note = el("div", "pmo-agent", `${t("web_pmo_agent", "Role AI")} ${last.agent}: ${last.status}`);
+    note.dataset.status = last.status;
+    row.append(note);
+    const text = last.error || last.excerpt;
+    if (text) row.append(el("div", "pmo-meta pmo-agent-result", text));
+  }
   return row;
 }
 

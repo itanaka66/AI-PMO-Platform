@@ -137,6 +137,11 @@ class Task:
     # starting `JIRA:` is Jira.
     tracker: str = ""
     external_id: str = ""
+    # 役割AIに仕事を任せた記録（新しいものが後ろ。直近のぶんだけ残す）。
+    # id / agent / template / at / status(running|done|failed|skipped|abandoned) /
+    # run_id / finished_at / error / excerpt。
+    # What was handed to a role AI for this task (newest last; only recent ones kept).
+    dispatches: list[dict[str, Any]] = field(default_factory=list)
     # 現在の状態／ブロックになってからの時刻。進捗ルール（停滞・長期ブロック）
     # が「どれだけ続いているか」を数えるのに使う。
     # When the current status / blocked state began; progress rules use these
