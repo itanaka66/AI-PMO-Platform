@@ -139,6 +139,7 @@ aipmo schedule    # 決まった時刻の自動実行を始める
 aipmo tasks       # 複数のテンプレートを横断した、やることの優先順位
 aipmo pmo         # 全体の状況・警告・担当の提案をまとめて見る
 aipmo assign      # 担当の提案を見る（確定は assign キー --apply）
+aipmo ledger info # やることの台帳が、どこに何件あるか
 ```
 
 ---

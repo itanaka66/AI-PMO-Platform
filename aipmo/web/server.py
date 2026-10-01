@@ -52,6 +52,7 @@ import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 # FastAPI は注釈をモジュールの名前空間で解決する。
@@ -73,7 +74,8 @@ from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
 from ..pmo_core import PmoCore, scope_briefing
-from ..task_engine import LedgerTenantError, TaskEngine, side_path
+from ..ledger_store import LedgerConfigError, LedgerStore, LedgerTenantError
+from ..task_engine import TaskEngine, side_path
 
 logger = logging.getLogger("aipmo.web")
 
@@ -167,6 +169,7 @@ def create_app(
     cors_origins: list[str] | None = None,
     pmo_ledger: Path | None = None,
     viewer_projects: list[str] | None = None,
+    ledger_store_factory: Callable[[], LedgerStore] | None = None,
 ):
     runs = store or RunStore()
     # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
@@ -530,13 +533,22 @@ def create_app(
         return (pmo_ledger, side_path(pmo_ledger, "pmo-briefing.json"),
                 side_path(pmo_ledger, "pmo-decisions.jsonl"))
 
+    def _ledger_present(ledger: Path) -> bool:
+        # PostgreSQL の台帳は、ファイルの有無では分からない（接続できれば有る）。
+        # A PostgreSQL ledger cannot be told by a file; if it connects, it is there.
+        return ledger_store_factory is not None or TaskEngine.exists(ledger)
+
     def _open_store(ledger: Path) -> TaskEngine:
         try:
-            return TaskEngine(ledger, tenant=tenant or None)
+            return TaskEngine(ledger, tenant=tenant or None,
+                              store=ledger_store_factory() if ledger_store_factory else None)
         except LedgerTenantError as exc:
             # 別テナントの台帳を指している。データには一切触れずに断る。
             # Pointed at another tenant's ledger: refuse without touching data.
             logger.error("ledger tenant mismatch: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except LedgerConfigError as exc:
+            logger.error("ledger unavailable: %s", exc)
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     def _allowed_projects(role: str, requested: str | None) -> set[str] | None:
@@ -565,7 +577,7 @@ def create_app(
     @app.get("/api/pmo", dependencies=[guard])
     def pmo_view(project: str | None = None, role: str = guard) -> dict[str, Any]:
         ledger, briefing_file, _ = _pmo_files()
-        if not TaskEngine.exists(ledger) and not briefing_file.exists():
+        if not _ledger_present(ledger) and not briefing_file.exists():
             raise HTTPException(status_code=404, detail="no PMO data yet")
         allowed = _allowed_projects(role, project)
         confined = role == "viewer" and scoped_projects is not None
@@ -581,7 +593,7 @@ def create_app(
 
         active: list[Any] = []
         names: list[str] = []
-        if TaskEngine.exists(ledger):
+        if _ledger_present(ledger):
             store = _open_store(ledger)
             try:
                 active = store.ranked(projects=allowed)
@@ -625,7 +637,7 @@ def create_app(
             # allowed projects are returned; organisation-wide decisions
             # (a learned-model update, say) are not.
             visible = set()
-            if TaskEngine.exists(ledger):
+            if _ledger_present(ledger):
                 store = _open_store(ledger)
                 try:
                     visible = {t.id for t in store.tasks.values()

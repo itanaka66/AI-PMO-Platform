@@ -7,6 +7,23 @@ on:
 jobs:
   pytest:
     runs-on: ubuntu-latest
+    # 台帳の PostgreSQL 版のテスト用。無ければ該当テストは飛ばされる。
+    # For the PostgreSQL ledger tests; without it those tests are skipped.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: testpw
+          POSTGRES_DB: aipmo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AIPMO_TEST_PG_DSN: postgresql://postgres:testpw@localhost:5432/aipmo
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

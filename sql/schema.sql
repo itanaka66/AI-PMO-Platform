@@ -452,3 +452,31 @@ CREATE TABLE IF NOT EXISTS dt_health_diagnostics (
 CREATE INDEX IF NOT EXISTS idx_dt_diagnostics_project ON dt_health_diagnostics (tenant, project_id);
 CREATE INDEX IF NOT EXISTS idx_dt_diagnostics_date
     ON dt_health_diagnostics (tenant, project_id, diagnosed_at DESC);
+
+-- 台帳（Task Engine）の PostgreSQL 保存先 / the Task Engine ledger on PostgreSQL.
+-- `task_engine.backend: postgres` のとき、起動時に自動で作られる（CREATE TABLE
+-- IF NOT EXISTS）。この定義は参照用。テナントは行で分け、他テナントの行には
+-- 触れない。aipmo/ledger_store.py の POSTGRES_SCHEMA と同じ内容。
+-- Created automatically on start when `task_engine.backend: postgres`; this is
+-- for reference. Tenants are separated by row. Same as POSTGRES_SCHEMA in
+-- aipmo/ledger_store.py.
+CREATE TABLE IF NOT EXISTS ledger_tasks (
+    tenant TEXT NOT NULL,
+    id     TEXT NOT NULL,
+    data   JSONB NOT NULL,
+    PRIMARY KEY (tenant, id)
+);
+
+CREATE TABLE IF NOT EXISTS ledger_outcomes (
+    seq    BIGSERIAL PRIMARY KEY,
+    tenant TEXT NOT NULL,
+    data   JSONB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ledger_outcomes_tenant ON ledger_outcomes (tenant, seq);
+
+CREATE TABLE IF NOT EXISTS ledger_meta (
+    tenant TEXT NOT NULL,
+    key    TEXT NOT NULL,
+    value  TEXT NOT NULL,
+    PRIMARY KEY (tenant, key)
+);

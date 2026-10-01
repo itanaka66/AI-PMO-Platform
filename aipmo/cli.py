@@ -314,17 +314,54 @@ def ledger_path(config: dict[str, Any], base: Path) -> Path:
     return path if path.is_absolute() else base / path
 
 
-def open_ledger(config: dict[str, Any], base: Path, **kwargs: Any):
-    """台帳を開く。設定のテナントの持ち物でなければ設定エラーにする。
+def ledger_store_factory(config: dict[str, Any]):
+    """台帳の保存先を作る関数。SQLite（既定）なら None を返す。
 
-    Opens the ledger; one that belongs to another tenant is a config error.
+    `task_engine.backend` が `postgres` のとき、接続先は `task_engine.dsn`、
+    なければ `adapters.postgres.dsn`。設定の誤り（テナントが無い、接続先が
+    無い、知らない種類）は、起動時にここで分かる。
+
+    Returns a function that builds the ledger's store, or None for the default
+    SQLite. With `task_engine.backend: postgres` the DSN is `task_engine.dsn`,
+    else `adapters.postgres.dsn`. A misconfiguration (no tenant, no DSN,
+    unknown kind) is found here at startup.
     """
-    from .task_engine import LedgerTenantError, TaskEngine
+    from .ledger_store import LedgerConfigError, PostgresStore
 
+    section = config.get("task_engine")
+    section = section if isinstance(section, dict) else {}
+    backend = str(section.get("backend") or "sqlite").lower()
+    if backend == "sqlite":
+        return None
+    if backend != "postgres":
+        raise ConfigError(
+            f"task_engine.backend が不正です: {backend!r}（sqlite か postgres）"
+            f" / unknown task_engine.backend {backend!r} (sqlite or postgres)")
+
+    dsn = section.get("dsn") or ((config.get("adapters") or {}).get("postgres") or {}).get("dsn")
+    tenant = config.get("tenant") or None
+    try:
+        PostgresStore(str(dsn or ""), tenant)         # 設定の検査だけ（接続はしない）
+    except LedgerConfigError as exc:
+        raise ConfigError(str(exc)) from exc
+    return lambda: PostgresStore(str(dsn), tenant)
+
+
+def open_ledger(config: dict[str, Any], base: Path, **kwargs: Any):
+    """台帳を開く。設定の誤り・別テナントの台帳・接続失敗は設定エラーにする。
+
+    Opens the ledger. A misconfiguration, another tenant's ledger or a failed
+    connection becomes a config error.
+    """
+    from .ledger_store import LedgerConfigError, LedgerTenantError
+    from .task_engine import TaskEngine
+
+    factory = ledger_store_factory(config)
     try:
         return TaskEngine(ledger_path(config, base),
-                          tenant=config.get("tenant") or None, **kwargs)
-    except LedgerTenantError as exc:
+                          tenant=config.get("tenant") or None,
+                          store=factory() if factory else None, **kwargs)
+    except (LedgerTenantError, LedgerConfigError) as exc:
         raise ConfigError(str(exc)) from exc
 
 
@@ -564,6 +601,69 @@ def cmd_tasks(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ledger(args: argparse.Namespace) -> int:
+    """台帳の保存先を調べる／SQLite から PostgreSQL へ移す。"""
+    from .ledger_store import (LedgerConfigError, LedgerTenantError, SqliteStore,
+                               Snapshot)
+    from .task_engine import MAX_OUTCOMES, TaskEngine
+
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    try:
+        target = open_ledger(config, base)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.ledger_command == "info":
+        target.sync()
+        open_tasks = [t for t in target.tasks.values() if not t.done]
+        print(f"保存先 / store:     {target.describe()}")
+        print(f"テナント / tenant:   {target.tenant or '-'}")
+        print(f"タスク / tasks:      {len(target.tasks)}（未完了 {len(open_tasks)}）")
+        print(f"完了実績 / outcomes: {len(target.outcomes)}")
+        print(f"プロジェクト / projects: {', '.join(target.projects()) or '-'}")
+        return 0
+
+    # migrate
+    if target.backend != "postgres":
+        print("移行先が PostgreSQL ではありません。config.yaml で "
+              "task_engine.backend: postgres を設定してください "
+              "/ the target is not PostgreSQL: set task_engine.backend: postgres",
+              file=sys.stderr)
+        return 1
+    source_path = TaskEngine.resolve_path(args.from_sqlite or ledger_path(config, base))
+    if not source_path.exists():
+        print(f"移行元が見つかりません / source not found: {source_path}", file=sys.stderr)
+        return 1
+
+    source = SqliteStore(source_path)
+    try:
+        source.prepare(config.get("tenant") or None, None)
+        snapshot = source.read()
+    except (LedgerTenantError, LedgerConfigError) as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        source.close()
+
+    existing = len(target._store.read().tasks)
+    if existing and not args.force:
+        print(f"移行先にはすでに {existing} 件のタスクがあります。同じ id の行を上書きして"
+              f"よければ --force を付けてください / the target already holds {existing} "
+              f"tasks; add --force to overwrite rows with the same id", file=sys.stderr)
+        return 1
+
+    with target._store.write() as tx:
+        tx.apply(snapshot.tasks, [], snapshot.outcomes, MAX_OUTCOMES)
+    moved = Snapshot(tasks=snapshot.tasks, outcomes=snapshot.outcomes)
+    print(f"移行しました / migrated: {len(moved.tasks)} tasks, "
+          f"{len(moved.outcomes)} outcomes  {source_path} -> {target.describe()}")
+    print("移行元のファイルは残してあります（確認後に削除してください）"
+          " / the source file is left in place; delete it once you have checked")
+    return 0
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     from .setup_wizard import SetupError
 
@@ -633,6 +733,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
     engine = build_engine(config)
     try:
         attach_task_engine(engine, config, base, default=False)
+        store_factory = ledger_store_factory(config)
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
@@ -641,7 +742,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      tenant=config.get("tenant", ""), lang=config.get("lang"),
                      cors_origins=cors_origins or None,
                      pmo_ledger=ledger_path(config, base),
-                     viewer_projects=web.get("viewer_projects"))
+                     viewer_projects=web.get("viewer_projects"),
+                     ledger_store_factory=store_factory)
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()
@@ -905,6 +1007,18 @@ def main(argv: list[str] | None = None) -> int:
     p_assign.add_argument("--jira", action="store_true",
                           help="確定時に Jira の担当者も更新 / also update the Jira assignee")
     p_assign.set_defaults(func=cmd_assign)
+
+    p_ledger = sub.add_parser(
+        "ledger", help="台帳の保存先 / the ledger's storage (info, migrate)")
+    ledger_actions = p_ledger.add_subparsers(dest="ledger_command", required=True)
+    ledger_actions.add_parser("info", help="保存先・件数を表示 / show store and counts")
+    p_migrate = ledger_actions.add_parser(
+        "migrate", help="SQLite の台帳を PostgreSQL へ移す / copy a SQLite ledger to PostgreSQL")
+    p_migrate.add_argument("--from-sqlite", metavar="PATH",
+                           help="移行元（既定は設定の台帳ファイル）/ source file")
+    p_migrate.add_argument("--force", action="store_true",
+                           help="移行先に行があっても、同じ id を上書きする")
+    p_ledger.set_defaults(func=cmd_ledger)
 
     p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")
     p_setup.add_argument("--dir", default=".", help="設定の出力先 / where to write config")

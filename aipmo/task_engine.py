@@ -44,7 +44,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sqlite3
 import threading
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -52,6 +51,15 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
+
+from .ledger_store import (  # noqa: F401  (LedgerTenantError は従来の場所からも使える)
+    LedgerConfigError,
+    LedgerStore,
+    LedgerTenantError,
+    Snapshot,
+    SqliteStore,
+    WriteTx,
+)
 
 logger = logging.getLogger("aipmo.task_engine")
 
@@ -78,10 +86,6 @@ _CORROBORATION_CAP = 15
 # 履歴に残す出どころの数。台帳が際限なく太らないように。
 # Sources kept per task, so the ledger does not grow without bound.
 _MAX_SOURCES = 10
-
-
-class LedgerTenantError(Exception):
-    """台帳の持ち主と違うテナントで開こうとした / opened by the wrong tenant."""
 
 
 _KEY_PROJECT = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)-\d+$")
@@ -272,14 +276,6 @@ def extract_candidates(output: Any) -> list[dict[str, Any]]:
     return candidates
 
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS outcomes (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-"""
-
-
 def _dump(task: Task) -> str:
     return json.dumps(asdict(task), ensure_ascii=False, sort_keys=True)
 
@@ -290,27 +286,29 @@ class TaskEngine:
     `attach(engine)` で Engine の実行完了フックに繋ぐ。以降、どのテンプレート
     が走っても（scheduler / run / serve のどこから起動されても）自動で集まる。
 
-    台帳は SQLite（WAL）に置く。`aipmo schedule`・`aipmo serve`・`aipmo run`
-    は別プロセスで同じ台帳を使うため、ファイルを丸ごと書き戻す方式では、
-    あとから保存した側が先の更新を消してしまう。書き込みは
-    `transaction()` の中で行う: **書き込みロックを取り、最新の状態を読み直し、
+    台帳の保存先は SQLite（既定）か PostgreSQL（[aipmo/ledger_store.py]
+    (aipmo/ledger_store.py)）。`aipmo schedule`・`aipmo serve`・`aipmo run`
+    は別プロセス（PostgreSQL なら別ホスト）で同じ台帳を使うため、全体を丸ごと
+    書き戻す方式では、あとから保存した側が先の更新を消してしまう。書き込みは
+    `transaction()` の中で行う: **排他的な取引に入り、最新の状態を読み直し、
     変更し、差分だけを書いて確定する**。これで更新が失われない。
     メモリ上の `tasks` は、その時点の写しにすぎない。
 
-    以前の `task-ledger.json` があれば、初回の起動で取り込み、
+    以前の `task-ledger.json` があれば、SQLite の初回の起動で取り込み、
     `.json.migrated` に改名する。
 
     Holds the ledger, merges after every run, ranks. `attach(engine)` hooks it
     to the engine's run-completion listeners so any template, however it was
     started, feeds it.
 
-    The ledger lives in SQLite (WAL). The scheduler, the web server and
-    `aipmo run` are separate processes sharing one ledger, and writing a whole
-    file back lets whoever saves last erase an earlier update. Every write
-    happens in `transaction()`: take the write lock, **re-read the latest
-    state, change it, write only the difference, commit** — no update is
-    lost. The in-memory `tasks` is only a copy as of that moment. A legacy
-    `task-ledger.json` is imported on first start and renamed `.json.migrated`.
+    The rows live in SQLite (default) or PostgreSQL. The scheduler, the web
+    server and `aipmo run` are separate processes — hosts, with PostgreSQL —
+    sharing one ledger, and writing the whole thing back lets whoever saves
+    last erase an earlier update. Every write happens in `transaction()`: enter
+    an exclusive transaction, **re-read the latest state, change it, write only
+    the difference, commit** — no update is lost. The in-memory `tasks` is only
+    a copy as of that moment. A legacy `task-ledger.json` is imported on the
+    first SQLite start and renamed `.json.migrated`.
     """
 
     def __init__(
@@ -319,7 +317,13 @@ class TaskEngine:
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         stale_days: int = 30,
         tenant: str | None = None,
+        store: LedgerStore | None = None,
     ) -> None:
+        # `path` は SQLite の台帳ファイルであり、台帳の隣のファイル
+        # （ブリーフィング・判断ログ）の置き場所でもある。PostgreSQL では
+        # 後者の役割だけが残る。
+        # `path` is the SQLite file and also where the files beside the ledger
+        # (briefing, decision log) live; with PostgreSQL only the latter is left.
         self.path = self.resolve_path(path)
         self.tenant = tenant or None
         self.now = now
@@ -329,7 +333,7 @@ class TaskEngine:
         # template names any more cannot sit in the ranking forever.
         self.stale_days = stale_days
         self._lock = threading.RLock()
-        self._conn: sqlite3.Connection | None = None
+        self._store: LedgerStore = store if store is not None else SqliteStore(self.path)
         self._depth = 0
         self._persisted: dict[str, str] = {}
         self._n_outcomes = 0
@@ -341,8 +345,16 @@ class TaskEngine:
         # 学習で得た、ラベルごとの加点。PMO Core が設定する。
         # Learned per-label bonus; set by the PMO Core.
         self.label_bonus: dict[str, int] = {}
-        self._init_db()
+        self._prepare_store()
         self.sync()
+
+    @property
+    def backend(self) -> str:
+        """保存先の種類（`sqlite` / `postgres`）/ which store holds the rows."""
+        return self._store.kind
+
+    def describe(self) -> str:
+        return self._store.describe()
 
     # -- 場所 / location ---------------------------------------------------
 
@@ -363,41 +375,38 @@ class TaskEngine:
 
     # -- 永続化 / persistence -------------------------------------------
 
-    def _connect(self) -> sqlite3.Connection:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        # isolation_level=None: BEGIN/COMMIT は自分で書く。
-        # Autocommit mode; BEGIN/COMMIT are explicit.
-        conn = sqlite3.connect(self.path, timeout=30, isolation_level=None,
-                               check_same_thread=False)
-        # WAL では NORMAL で破損しない。電源断で直近のコミットを失うことは
-        # あるが、台帳は次の周で各テンプレートの出力から作り直せる。
-        # FULL はコミットごとの fsync で、周ごとの書き込みには重い。
-        # In WAL, NORMAL cannot corrupt the file; a power cut may lose the last
-        # commit, which the next cycle rebuilds from the templates' output.
-        # FULL fsyncs on every commit, too heavy for a write every cycle.
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
+    def _legacy_snapshot(self) -> Snapshot | None:
+        """旧形式 `task-ledger.json` を、保存先の行の形に読み替える。"""
+        legacy = self.path.with_suffix(".json")
+        try:
+            data = json.loads(legacy.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return Snapshot()
+        snapshot = Snapshot()
+        for raw in data.get("tasks", []):
+            try:
+                task = Task(**raw)
+            except TypeError:
+                continue
+            snapshot.tasks[task.id] = _dump(task)
+        snapshot.outcomes = [json.dumps(o, ensure_ascii=False)
+                             for o in data.get("outcomes") or []]
+        return snapshot
 
-    def _db(self) -> sqlite3.Connection:
-        """インスタンスごとに1本の接続を使い回す。
-
-        操作のたびに開いて閉じると、最後の接続を閉じるたびに WAL の
-        チェックポイント（fsync）が走り、実測で 1 回 約 100ms かかった。
-        使い終えたら `close()` を呼ぶ。
-
-        One connection per instance. Opening and closing per operation made
-        every close checkpoint the WAL (an fsync) — about 100 ms each when
-        measured. Call `close()` when done.
-        """
-        if self._conn is None:
-            self._conn = self._connect()
-        return self._conn
+    def _prepare_store(self) -> None:
+        legacy = self.path.with_suffix(".json")
+        sqlite = isinstance(self._store, SqliteStore)
+        self._store.prepare(self.tenant, self._legacy_snapshot
+                            if sqlite and legacy.exists() else None)
+        if sqlite and legacy.exists():
+            try:
+                legacy.replace(legacy.with_name(legacy.name + ".migrated"))
+            except OSError:
+                pass    # 別プロセスが先に改名した / another process renamed it first
 
     def close(self) -> None:
         with self._lock:
-            if self._conn is not None:
-                self._conn.close()
-                self._conn = None
+            self._store.close()
 
     def __del__(self) -> None:
         try:
@@ -405,81 +414,9 @@ class TaskEngine:
         except Exception:
             pass
 
-    def _init_db(self) -> None:
-        conn = self._db()
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.executescript(_SCHEMA)
-        self._import_legacy(conn)
-        self._claim_tenant(conn)
-
-    def _claim_tenant(self, conn: sqlite3.Connection) -> None:
-        """台帳にテナントを刻印し、食い違う持ち主での起動を拒否する。
-
-        別テナントの設定で、同じ台帳ファイルを指してしまう事故（設定の
-        コピー、ボリュームの取り違え）を、データが混ざる前に止める。
-        刻印の無い既存の台帳は、最初に開いたテナントのものになる。
-
-        Stamps the ledger with its tenant and refuses a different one, so a
-        copied config or a mixed-up volume is stopped before any data mixes.
-        A pre-existing unstamped ledger belongs to the first tenant to open it.
-        """
-        if self.tenant is None:
-            return
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            row = conn.execute("SELECT value FROM meta WHERE key = 'tenant'").fetchone()
-            if row is None:
-                conn.execute("INSERT INTO meta VALUES ('tenant', ?)", (self.tenant,))
-            owner = row[0] if row else self.tenant
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        if owner != self.tenant:
-            raise LedgerTenantError(
-                f"この台帳はテナント '{owner}' のものです（'{self.tenant}' では開けません）: "
-                f"{self.path} / this ledger belongs to tenant '{owner}', "
-                f"not '{self.tenant}'")
-
-    def _import_legacy(self, conn: sqlite3.Connection) -> None:
-        legacy = self.path.with_suffix(".json")
-        if not legacy.exists():
-            return
-        # 複数プロセスが同時に起動しても、取り込みは一度だけ。
-        # Once only, even if several processes start at the same moment.
-        conn.execute("BEGIN IMMEDIATE")
-        try:
-            done = conn.execute(
-                "SELECT 1 FROM meta WHERE key = 'legacy_imported'").fetchone()
-            if not done:
-                try:
-                    data = json.loads(legacy.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    data = {}
-                for raw in data.get("tasks", []):
-                    try:
-                        task = Task(**raw)
-                    except TypeError:
-                        continue
-                    conn.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?)",
-                                 (task.id, _dump(task)))
-                for outcome in data.get("outcomes") or []:
-                    conn.execute("INSERT INTO outcomes (data) VALUES (?)",
-                                 (json.dumps(outcome, ensure_ascii=False),))
-                conn.execute("INSERT INTO meta VALUES ('legacy_imported', ?)",
-                             (self.now().isoformat(),))
-            conn.execute("COMMIT")
-        except BaseException:
-            conn.execute("ROLLBACK")
-            raise
-        try:
-            legacy.replace(legacy.with_name(legacy.name + ".migrated"))
-        except OSError:
-            pass    # 別プロセスが先に改名した / another process renamed it first
-
-    def _load_from(self, conn: sqlite3.Connection) -> None:
+    def _load_snapshot(self, snapshot: Snapshot) -> None:
         tasks: dict[str, Task] = {}
-        for (data,) in conn.execute("SELECT data FROM tasks"):
+        for data in snapshot.tasks.values():
             try:
                 task = Task(**json.loads(data))
             except (TypeError, ValueError):
@@ -489,27 +426,18 @@ class TaskEngine:
             tasks[task.id] = task
         self.tasks = tasks
         self._persisted = {tid: _dump(t) for tid, t in tasks.items()}
-        self.outcomes = [json.loads(data) for (data,) in conn.execute(
-            "SELECT data FROM outcomes ORDER BY seq")]
+        self.outcomes = [json.loads(data) for data in snapshot.outcomes]
         self._n_outcomes = len(self.outcomes)
 
-    def _persist(self, conn: sqlite3.Connection) -> None:
+    def _persist(self, tx: WriteTx) -> None:
         """この取引で変わった行だけを書く / write only the rows that changed."""
         current = {tid: _dump(t) for tid, t in self.tasks.items()}
-        for tid, data in current.items():
-            if self._persisted.get(tid) != data:
-                conn.execute("INSERT OR REPLACE INTO tasks VALUES (?, ?)", (tid, data))
-        for tid in set(self._persisted) - set(current):
-            conn.execute("DELETE FROM tasks WHERE id = ?", (tid,))
-
-        added = self.outcomes[self._n_outcomes:]
-        for outcome in added:
-            conn.execute("INSERT INTO outcomes (data) VALUES (?)",
-                         (json.dumps(outcome, ensure_ascii=False),))
-        if added:
-            conn.execute(
-                "DELETE FROM outcomes WHERE seq <= "
-                "(SELECT MAX(seq) FROM outcomes) - ?", (MAX_OUTCOMES,))
+        changed = {tid: data for tid, data in current.items()
+                   if self._persisted.get(tid) != data}
+        removed = set(self._persisted) - set(current)
+        added = [json.dumps(o, ensure_ascii=False)
+                 for o in self.outcomes[self._n_outcomes:]]
+        tx.apply(changed, removed, added, MAX_OUTCOMES)
         self._persisted = current
         self._n_outcomes = len(self.outcomes)
 
@@ -522,12 +450,7 @@ class TaskEngine:
         with self._lock:
             if self._depth:
                 return
-            conn = self._db()
-            conn.execute("BEGIN")     # 2つの SELECT を同じ時点で読む
-            try:
-                self._load_from(conn)
-            finally:
-                conn.execute("COMMIT")
+            self._load_snapshot(self._store.read())
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -535,12 +458,12 @@ class TaskEngine:
 
         中で例外が出れば何も書かず、メモリも元に戻す。入れ子にできる
         （外側の取引に加わる）。**中でネットワーク呼び出しをしないこと** —
-        書き込みロックを握ったまま待つと、ほかのプロセスを止める。
+        排他を握ったまま待つと、ほかのプロセスを止める。
 
         Reload, change, write the difference — as one exclusive transaction.
         An exception writes nothing and restores memory. Nestable (joins the
         outer one). **No network calls inside**: waiting while holding the
-        write lock stalls every other process.
+        exclusive lock stalls every other process.
         """
         with self._lock:
             if self._depth:
@@ -551,23 +474,22 @@ class TaskEngine:
                     self._depth -= 1
                 return
 
-            conn = self._db()
-            conn.execute("BEGIN IMMEDIATE")
             try:
-                self._load_from(conn)
-                self._depth = 1
-                try:
-                    yield
-                finally:
-                    self._depth = 0
-                self._persist(conn)
-                conn.execute("COMMIT")
+                with self._store.write() as tx:
+                    self._load_snapshot(tx.snapshot)
+                    self._depth = 1
+                    try:
+                        yield
+                    finally:
+                        self._depth = 0
+                    self._persist(tx)
             except BaseException:
+                # 取り消された。メモリを保存先の状態に戻す。
+                # Rolled back: bring memory back to what the store holds.
                 try:
-                    conn.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass        # SQLite がすでに取り消していた / already rolled back
-                self._load_from(conn)
+                    self._load_snapshot(self._store.read())
+                except Exception:       # noqa: BLE001
+                    pass
                 raise
 
     def add_outcomes(self, outcomes: list[dict[str, Any]]) -> None:
