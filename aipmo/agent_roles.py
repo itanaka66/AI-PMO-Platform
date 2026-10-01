@@ -40,6 +40,16 @@ KEEP_DISPATCHES = 5
 
 SETTLED_BAD = ("failed", "skipped", "abandoned")
 
+# 人が役割AIの成果を確かめた結果。accepted = 認めた、rejected = 差し戻した。
+# What a human decided about a role AI's result.
+REVIEW_DECISIONS = ("accepted", "rejected")
+
+
+def review_of(entry: dict[str, Any] | None) -> dict[str, Any]:
+    """実行記録のレビュー（無ければ空）/ the review on a dispatch record, or empty."""
+    value = (entry or {}).get("review")
+    return value if isinstance(value, dict) else {}
+
 
 @dataclass(frozen=True)
 class RolePreset:

@@ -469,6 +469,11 @@ function taskRow(task) {
     const note = el("div", "pmo-agent", `${t("web_pmo_agent", "Role AI")} ${last.agent}: ${last.status}`);
     note.dataset.status = last.status;
     row.append(note);
+    if (last.review) {
+      const verdict = last.review.decision === "accepted" ? t("web_pmo_review_accepted", "accepted")
+        : t("web_pmo_review_rejected", "sent back");
+      row.append(el("div", "pmo-meta", `${verdict} · ${last.review.by}${last.review.note ? ` — ${last.review.note}` : ""}`));
+    }
     const text = last.error || last.excerpt;
     if (text) row.append(el("div", "pmo-meta pmo-agent-result", text));
   }
@@ -537,6 +542,45 @@ function filingRow(item, tracker, canFile) {
             method: "POST", body: JSON.stringify({ ref: item.id, decision }),
           });
           toast(t("web_pmo_filed", "Filed."));
+          await refreshPmo();
+        } catch (error) {
+          toast(error.message, "error");
+          actions.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+        }
+      });
+      actions.append(button);
+    }
+    row.append(actions);
+  }
+  return row;
+}
+
+// 役割AIの成果を、人が確かめて「認める／差し戻す」(operator のみ)。差し戻しには理由が要る。
+// 外部由来の文字列は textContent で入れる。
+// A human checks a role AI's result: accept, or send back with a reason (operator only).
+function reviewRow(item) {
+  const row = el("div", "pmo-proposal");
+  row.append(el("div", "pmo-title", item.title));
+  row.append(el("div", "pmo-meta", `${t("web_pmo_agent", "Role AI")} ${item.agent} · ${item.task}`));
+  if (item.excerpt) row.append(el("div", "pmo-meta pmo-agent-result", item.excerpt));
+  if (canRun) {
+    const note = el("input");
+    note.type = "text";
+    note.placeholder = t("web_pmo_review_note", "Reason (required to send back)");
+    row.append(note);
+    const actions = el("div", "pmo-actions");
+    for (const [decision, label, kind] of [
+      ["accept", t("web_pmo_review_accept", "Accept"), "btn btn-approve"],
+      ["reject", t("web_pmo_review_reject", "Send back"), "btn btn-reject"]]) {
+      const button = el("button", kind, label);
+      button.addEventListener("click", async () => {
+        actions.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+        try {
+          await api("/api/pmo/agents/review", {
+            method: "POST",
+            body: JSON.stringify({ ref: item.task, dispatch: item.dispatch, decision, note: note.value }),
+          });
+          toast(t("web_pmo_reviewed", "Recorded."));
           await refreshPmo();
         } catch (error) {
           toast(error.message, "error");
@@ -670,6 +714,13 @@ function renderPmo(data, decisions) {
       head.append(note);
     }
     if (judgment.diagnoses.length || (judgment.recent || []).length || judgment.paused) host.append(head);
+  }
+
+  const reviews = data.agent_review || [];
+  if (reviews.length) {
+    const block = pmoSection(t("web_pmo_review", "Role AI results awaiting review"), reviews.length);
+    for (const item of reviews) block.append(reviewRow(item));
+    host.append(block);
   }
 
   const filing = data.filing;

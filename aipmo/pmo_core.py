@@ -41,8 +41,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
-from .agent_roles import (KEEP_DISPATCHES, SETTLED_BAD, excerpt_of, fit, latest_dispatch,
-                          params_for)
+from .agent_roles import (KEEP_DISPATCHES, REVIEW_DECISIONS, SETTLED_BAD, excerpt_of, fit,
+                          latest_dispatch, params_for, review_of)
 from .filing import FilingConfig, FilingError, eligible, filing_state
 from .generation import (GenerationConfig, due_date, followup_id, period_key,
                          recurring_id, wbs_drift_id)
@@ -172,6 +172,14 @@ def evaluate_rule(rule: Rule, task: Task, now: datetime) -> Violation | None:
             reason = latest.get("error") or ""
             message = (f"役割AI {latest['agent']} の実行が {latest['status']} で終わりました"
                        + (f": {reason}" if reason else "") + "（人が引き取ってください）")
+        elif (latest is not None and review_of(latest).get("decision") == "rejected"
+                and (task.assignee or "").lower() == str(latest.get("agent", "")).lower()):
+            # 人が成果を差し戻した。理由つきで、人が引き取るか、もう一度任せる。
+            # A human sent the result back: take it over, or hand it over again.
+            note = review_of(latest).get("note") or ""
+            message = (f"役割AI {latest['agent']} の成果が差し戻されました"
+                       + (f": {note}" if note else "")
+                       + "（人が引き取るか、aipmo agents run でもう一度任せてください）")
 
     if message is None:
         return None
@@ -432,6 +440,7 @@ def _agent_runs(active: list[Task], limit: int = 10) -> list[dict[str, Any]]:
             runs.append({"task": task.id, "title": task.title, "project": task.project,
                          "agent": entry.get("agent"), "status": entry.get("status"),
                          "at": entry.get("at"), "run_id": entry.get("run_id"),
+                         "id": entry.get("id"), "review": review_of(entry) or None,
                          "error": entry.get("error"), "excerpt": entry.get("excerpt")})
     runs.sort(key=lambda r: str(r["at"] or ""), reverse=True)
     return runs[:limit]
@@ -496,6 +505,9 @@ def scope_briefing(briefing: dict[str, Any], active: list[Task],
         "projects": [p for p in briefing.get("projects", [])
                      if p["project"].lower() in allowed],
         "agent_runs": [r for r in briefing.get("agent_runs", []) if mine(r)],
+        "agent_review": (None if redact_org or not briefing.get("agent_review") else {
+            **briefing["agent_review"],
+            "pending": [p for p in briefing["agent_review"].get("pending", []) if mine(p)]}),
         "filing": (None if redact_org or not briefing.get("filing") else {
             **briefing["filing"],
             "pending": [p for p in briefing["filing"].get("pending", []) if mine(p)]}),
@@ -565,6 +577,9 @@ class PmoCore:
     # (display-only commands show the diagnosis and nothing more).
     judgment: JudgmentConfig | None = None
     acting: bool = False
+    # 役割AIのレビュー件数の読み込み位置と、実行ごとの最後の判断(判断ログを追記分だけ読む)。
+    _review_cache: dict[str, Any] = field(
+        default_factory=lambda: {"offset": 0, "last": {}}, repr=False)
     # 課題管理ツールへの起票(aipmo/filing.py)。`filer(task)` が実際に課題を作る。
     # 設定があっても filer が無い(表示専用の)Core は、起票できない。
     # Filing into a tracker. `filer(task)` creates the issue; a display-only Core has none.
@@ -1685,6 +1700,8 @@ class PmoCore:
                 "waiting": sum(1 for t in mine if latest_dispatch(t, member.name) is None),
                 "dispatched_today": self._dispatched_today(member.name, now),
                 "capacity": member.capacity, "auto_confirm": member.auto_confirm,
+                **self._review_tally().get(member.name, {"accepted": 0, "rejected": 0}),
+                "awaiting_review": sum(1 for t in mine if self._unreviewed(t, member.name)),
             })
         return summary
 
@@ -1805,6 +1822,137 @@ class PmoCore:
         self._log("agent_finished" if status == "done" else "agent_failed", finished,
                   task=task_id, agent=agent, dispatch=dispatch_id, run_id=run_id, error=error)
 
+    # -- 成果のレビュー / reviewing a role AI's result ---------------------------------------
+
+    @staticmethod
+    def _unreviewed(task: Task, agent: str | None = None) -> dict[str, Any] | None:
+        """レビュー待ちの実行（直近が完了で、まだ誰も確かめていない）。"""
+        latest = latest_dispatch(task, agent)
+        if latest is not None and latest.get("status") == "done" and not review_of(latest):
+            return latest
+        return None
+
+    def _review_tally(self) -> dict[str, dict[str, int]]:
+        """役割AIごとの、認めた／差し戻した件数。判断ログから数える。
+
+        状態ファイルには置かない：常駐と CLI は別のプロセスで、常駐が自分の写しで状態ファイルを
+        書き戻すと、CLI が足した件数が消える（実測）。判断ログは追記だけなので、どのプロセス
+        から記録しても失われず、同じ実行を確かめ直した分も「最後の判断」だけを数える。
+        追記された分だけを読み足す。
+
+        Counted from the decision log, not the state file: the resident and the CLI are
+        separate processes, and the resident rewriting the state file from its own copy
+        erased what the CLI added (observed). The log is append-only, and a re-reviewed run
+        counts once, by its last decision. Only the appended part is read each time.
+        """
+        path = self.decisions_path
+        cache = self._review_cache
+        if path is None or not path.exists():
+            return {}
+        size = path.stat().st_size
+        if size < cache["offset"]:                      # 切り詰め・入れ替え: 最初から
+            cache["offset"], cache["last"] = 0, {}
+        if size > cache["offset"]:
+            with path.open("rb") as handle:
+                handle.seek(cache["offset"])
+                data = handle.read()
+            end = data.rfind(b"\n") + 1                  # 書きかけの最後の行は次回に回す
+            for raw in data[:end].splitlines():
+                if b'"agent_reviewed"' not in raw:
+                    continue
+                try:
+                    entry = json.loads(raw.decode("utf-8"))
+                except ValueError:
+                    continue
+                if entry.get("kind") == "agent_reviewed":
+                    cache["last"][(entry.get("task"), entry.get("dispatch"))] = (
+                        str(entry.get("agent", "")), entry.get("decision"))
+            cache["offset"] += end
+        tally: dict[str, dict[str, int]] = {}
+        for agent, decision in cache["last"].values():
+            counts = tally.setdefault(agent, {"accepted": 0, "rejected": 0})
+            if decision in ("accepted", "rejected"):
+                counts["accepted" if decision == "accepted" else "rejected"] += 1
+        return tally
+
+    def reviews_pending(self, active: list[Task] | None = None) -> list[dict[str, Any]]:
+        """人のレビューを待つ役割AIの成果（古い順）。"""
+        tasks = active if active is not None else self.task_engine.ranked()
+        out = []
+        for task in tasks:
+            latest = self._unreviewed(task)
+            if latest is None:
+                continue
+            out.append({"task": task.id, "title": task.title, "project": task.project,
+                        "agent": latest.get("agent"), "dispatch": latest.get("id"),
+                        "finished_at": latest.get("finished_at") or latest.get("at"),
+                        "excerpt": latest.get("excerpt"), "run_id": latest.get("run_id")})
+        out.sort(key=lambda r: str(r["finished_at"] or ""))
+        return out
+
+    def review_dispatch(self, ref: str, decision: str, reviewer: str, note: str = "",
+                        dispatch_id: str | None = None) -> dict[str, Any]:
+        """役割AIの成果を人が確かめた記録を、台帳の実行記録に残す。
+
+        `decision` は `accepted`（認めた）か `rejected`（差し戻した。理由が要る）。
+        確かめられるのは**完了した**実行だけ（失敗は警告で人に渡る）。**役割AI自身は
+        レビューできない**（AI が AI の成果を認めても、人が確かめたことにならない）。
+        差し戻した成果は警告（`agent_attention`）になり、人が引き取るか、もう一度任せる。
+        同じ実行を確かめ直すと上書きされ、前の判断は `previous` に残る。記録は判断ログにも
+        追記する（実行記録は新しい 5 件しか持たないので、古いレビューもそちらに残る）。
+
+        Records that a human checked a role AI's result, on the dispatch record in the
+        ledger. Only a *finished* run can be reviewed; a role AI can never review (an AI
+        approving an AI is not a human checking); a rejection needs a reason and raises an
+        alert. Reviewing again overwrites, keeping the earlier decision as `previous`; the
+        decision log also keeps every review (the ledger keeps only the latest 5 runs).
+        """
+        if decision not in REVIEW_DECISIONS:
+            raise ValueError(f"decision は {' / '.join(REVIEW_DECISIONS)} のどちらかです "
+                             f"/ decision must be one of {', '.join(REVIEW_DECISIONS)}")
+        reviewer = (reviewer or "").strip()
+        if not reviewer:
+            raise ValueError("だれが確かめたか（reviewer）が要ります / a reviewer is required")
+        if reviewer.lower() in self._agent_members():
+            raise ValueError(f"役割AI（{reviewer}）はレビューできません。人が確かめてください "
+                             f"/ a role AI cannot review; a human must")
+        note = (note or "").strip()
+        if decision == "rejected" and not note:
+            raise ValueError("差し戻すときは理由（note）を書いてください "
+                             "/ a rejection needs a note saying why")
+        engine = self.task_engine
+        found = engine.find(ref)
+        if found is None:
+            raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+        stamp = engine.now().isoformat()
+        with engine.transaction():
+            task = engine.tasks.get(found.id)
+            if task is None:
+                raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+            if dispatch_id:
+                entry = next((e for e in task.dispatches if e.get("id") == dispatch_id), None)
+            else:
+                entry = latest_dispatch(task)
+                entry = next((e for e in task.dispatches
+                              if entry is not None and e.get("id") == entry.get("id")), None)
+            if entry is None:
+                raise ValueError(f"{task.id} に役割AIの実行記録がありません "
+                                 f"/ no role-AI run on {task.id}")
+            if entry.get("status") != "done":
+                raise ValueError(f"レビューできるのは完了した実行だけです（この実行は "
+                                 f"{entry.get('status')}）/ only a finished run can be reviewed")
+            previous = review_of(entry)
+            review: dict[str, Any] = {"decision": decision, "by": reviewer, "at": stamp,
+                                      "note": note}
+            if previous:
+                review["previous"] = {k: previous.get(k) for k in ("decision", "by", "at", "note")}
+            entry["review"] = review
+            agent, run = str(entry.get("agent", "")), dict(entry)
+        self._log("agent_reviewed", engine.now(), task=found.id, agent=agent,
+                  dispatch=run.get("id"), run_id=run.get("run_id"), decision=decision,
+                  by=reviewer, note=note, revised=bool(previous))
+        return {"task": found.id, "agent": agent, "dispatch": run.get("id"), **review}
+
     def dispatch_now(self, ref: str) -> dict[str, Any]:
         """役割AIに割り当てられたタスクを、いま任せる（失敗の再試行にも使う）。
 
@@ -1919,6 +2067,8 @@ class PmoCore:
             ],
             "projects": _project_summary(active, violations),
             "agents": self._agent_summary(active, now),
+            "agent_review": {"pending": self.reviews_pending(active),
+                             "tally": self._review_tally()},
             "agent_runs": _agent_runs(active),
             "overloaded_members": overloaded,
             "member_loads": [

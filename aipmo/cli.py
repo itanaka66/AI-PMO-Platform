@@ -962,9 +962,48 @@ def cmd_agents(args: argparse.Namespace) -> int:
 
     `aipmo agents`            … 役割AIごとの件数と、直近の実行
     `aipmo agents run REF`    … 役割AIに割り当てられたタスクを、いま任せて結果を待つ
+    `aipmo agents review`     … 人のレビューを待つ成果の一覧
+    `aipmo agents review REF --accept|--reject [--note 理由] [--by 名前]`
+                              … 成果を人が確かめた記録を台帳に残す(差し戻しには理由が要る)
     """
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
+
+    if args.agents_command == "review":
+        try:
+            _, core = _open_ledger(args)
+        except ConfigError as exc:
+            print(f"設定エラー / config error: {exc}", file=sys.stderr)
+            return 1
+        if not args.ref:
+            pending = core.reviews_pending()
+            print(f"レビュー待ちの成果 / results awaiting review ({len(pending)})")
+            for item in pending:
+                print(f"  {item['task']}  [{item['agent']}]  {item['title'][:50]}")
+                if item.get("excerpt"):
+                    print("      " + str(item["excerpt"]).splitlines()[0][:100])
+            if pending:
+                print("\n確かめたら / after checking: aipmo agents review REF --accept   "
+                      "または / or  --reject --note 理由")
+            return 0
+        if bool(args.accept) == bool(args.reject):
+            print("--accept か --reject のどちらか一つを指定してください "
+                  "/ give exactly one of --accept / --reject", file=sys.stderr)
+            return 1
+        import getpass
+
+        try:
+            review = core.review_dispatch(
+                args.ref, "accepted" if args.accept else "rejected",
+                args.by or getpass.getuser(), args.note or "", args.dispatch)
+        except (KeyError, ValueError) as exc:
+            print(f"{exc}", file=sys.stderr)
+            return 1
+        verb = "認めました / accepted" if args.accept else "差し戻しました / sent back"
+        print(f"{verb}: {review['task']}  [{review['agent']}]  by {review['by']}"
+              + ("  (前のレビューを上書き / overwrote the earlier review)"
+                 if review.get("previous") else ""))
+        return 0
 
     if args.agents_command == "run":
         # 実行するので、常駐のときと同じ形でエンジンを組み立てる。
@@ -1011,11 +1050,16 @@ def cmd_agents(args: argparse.Namespace) -> int:
         print(f"  {item['member']:<14} {item['template']:<18} 割当 {item['open_assigned']}"
               f"（実行中 {item['running']}・待ち {item['waiting']}）"
               f"  今日 {item['dispatched_today']} 件  上限 {item['capacity']}"
-              + ("  自動確定" if item["auto_confirm"] else ""))
+              + ("  自動確定" if item["auto_confirm"] else "")
+              + f"  レビュー: 認めた {item['accepted']}・差し戻し {item['rejected']}"
+              f"・待ち {item['awaiting_review']}")
     runs = briefing["agent_runs"]
     print(f"\n直近の実行 / recent runs ({len(runs)})")
     for run in runs:
-        print(f"  [{run['status']:<9}] {run['agent']:<12} {run['title'][:40]}")
+        verdict = (run.get("review") or {}).get("decision")
+        print(f"  [{run['status']:<9}] {run['agent']:<12} {run['title'][:40]}"
+              + (f"  ({'認めた' if verdict == 'accepted' else '差し戻し'}: "
+                 f"{run['review']['by']})" if verdict else ""))
         if run.get("error"):
             print(f"      ! {run['error']}")
         elif run.get("excerpt"):
@@ -1531,6 +1575,14 @@ def main(argv: list[str] | None = None) -> int:
     p_agent_run = agents_actions.add_parser(
         "run", help="役割AIに割り当てられたタスクを、いま任せる（失敗の再試行にも）")
     p_agent_run.add_argument("ref", help="タスクの id か課題のキー")
+    p_review = agents_actions.add_parser(
+        "review", help="役割AIの成果を人が確かめた記録を残す（引数なしで待ちの一覧）")
+    p_review.add_argument("ref", nargs="?", help="タスクの id か課題のキー")
+    p_review.add_argument("--accept", action="store_true", help="成果を認める")
+    p_review.add_argument("--reject", action="store_true", help="成果を差し戻す（--note が要る）")
+    p_review.add_argument("--note", help="理由・メモ")
+    p_review.add_argument("--by", help="確かめた人の名前（既定はOSのユーザー名）")
+    p_review.add_argument("--dispatch", help="実行記録の id（既定は直近の完了した実行）")
     p_agents.set_defaults(func=cmd_agents)
 
     p_wbs = sub.add_parser(

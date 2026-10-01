@@ -600,9 +600,17 @@ def create_app(
         pending: list[Any] = []
         names: list[str] = []
         filing_view: dict[str, Any] | None = None
+        review_view: list[dict[str, Any]] | None = None
         if _ledger_present(ledger):
             store = _open_store(ledger)
             try:
+                if not confined and any(m.is_agent for m in (members or [])):
+                    # 役割AIの成果のレビュー待ち。台帳から今の状態で出す。
+                    # Results awaiting a human's review, live from the ledger.
+                    review_view = [
+                        r for r in PmoCore(task_engine=store, members=members or []
+                                           ).reviews_pending(store.ranked(projects=allowed))
+                        if allowed is None or (r.get("project") or "").lower() in allowed]
                 if filing is not None and not confined:
                     # 起票待ちは台帳から今の状態で出す(押した直後に消えるように)。
                     # Live from the ledger, so a filed task leaves the list at once.
@@ -645,7 +653,7 @@ def create_app(
                       "generated_from": t.generated_from} for t in pending]
         return {"briefing": briefing, "briefing_age_seconds": age, "tasks": tasks,
                 "proposals": proposals, "projects": names, "scoped": confined,
-                "filing": filing_view}
+                "filing": filing_view, "agent_review": review_view}
 
     @app.get("/api/pmo/decisions", dependencies=[guard])
     def pmo_decisions(limit: int = 50, project: str | None = None,
@@ -712,6 +720,35 @@ def create_app(
         logger.info("pmo proposal %s: %s by %s from %s", decision, task.id, role,
                     _client_ip(request))
         return {"id": task.id, "decision": decision}
+
+    @app.post("/api/pmo/agents/review")
+    def pmo_agent_review(request: Request, payload: dict[str, Any],
+                         role: str = operator_guard) -> dict[str, Any]:
+        """役割AIの成果を人が確かめた記録を残す(operator のみ)。
+
+        decision は accept か reject(reject には note が要る)。役割AIはレビューできない。
+        """
+        ledger, _, _ = _pmo_files()
+        ref = str(payload.get("ref") or "")
+        decision = str(payload.get("decision") or "")
+        if not ref or decision not in ("accept", "reject"):
+            raise HTTPException(status_code=422,
+                                detail="ref and decision (accept|reject) are required")
+        reviewer = str(payload.get("by") or "").strip() or "web operator"
+        store = _open_store(ledger)
+        try:
+            review = PmoCore(task_engine=store, members=members or []).review_dispatch(
+                ref, "accepted" if decision == "accept" else "rejected", reviewer,
+                str(payload.get("note") or ""), str(payload.get("dispatch") or "") or None)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        finally:
+            store.close()
+        logger.info("pmo agent review %s: %s by %s from %s", decision, review["task"], role,
+                    _client_ip(request))
+        return review
 
     @app.post("/api/pmo/filing")
     def pmo_filing(request: Request, payload: dict[str, Any],
