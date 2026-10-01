@@ -58,6 +58,35 @@ aipmo wbs status --json
 > 見積りが事後の目安である以上、完了見込みは「このペースが続けば」の目安です。
 > 日付を約束するものではありません。
 
+
+## PR で更新漏れを知らせる / Telling the PR about drift
+
+WBS は人が PR で更新します。実装を足したのに WBS を更新し忘れる（証拠が揃ったのに未完了＝`maybe_done`）、
+証拠のファイルを消したのに「完了」のままにする（`evidence_missing`）、は `aipmo wbs check` では warning や error に
+なるだけで、PR を見ている人の目に入りません。`wbs-drift` ワークフロー（`.github/workflows/wbs-drift.yml`）が、
+PR に**コメント**で知らせます。
+
+```bash
+aipmo wbs notify --base origin/main                      # コメントの本文を表示するだけ（何も書かない）
+aipmo wbs notify --base origin/main --pr 12 --post       # PR #12 に、目印つきのコメントを作る／更新する
+aipmo wbs notify --changed src/a.py docs/b.md            # git を使わず、変更ファイルを直接渡す
+```
+
+- **この PR に関係するものを先に出す。** PR で変えたファイル（`--base` との差分。消したファイルも含む）が、ある作業の
+  証拠に当たるとき、「この PR に関係する」として先頭に並べる。証拠の一部だけ揃った作業は、進み具合として添える。
+- **完了にする書き方を添える。** `status: done` と `done_on:`（基準日）。WBS を書き換えるのは PR の著者で、ここは書かない。
+- **コメントは 1 つだけ。** 目印（`<!-- aipmo-wbs-drift -->`）で始まる、**Bot（`GITHUB_TOKEN`）が書いた**コメントを
+  見つけて更新する。PR を更新するたびに増えない。変わらなければ書かない。直れば「ありません」に更新し、もともと
+  指摘が無ければ何も投稿しない。個人のトークンで書くときは `--author その login` を渡す。他の人が目印を真似て
+  書いたコメントは、更新の対象にしない。
+- **PR の著者が変えられる文字を、そのまま流さない。** 作業名・パスは PR で変えられるので、HTML・メンション・
+  バッククォート・見出しを無害にし、長さを切る。
+- **PR を失敗にしない。** 知らせるだけ（失敗にするのは CI の `aipmo wbs check`）。ワークフローは `continue-on-error`、
+  権限は `contents: read` と `pull-requests: write` だけ、`pull_request_target` は使わない。**fork からの PR では
+  `GITHUB_TOKEN` が読み取り専用なので、動かさない**（コメントされない）。
+- 既定は表示だけ。GitHub に書くのは `--post` を付けたときだけ（トークンは環境変数 `GITHUB_TOKEN`、リポジトリは
+  `GITHUB_REPOSITORY`、API の場所は `GITHUB_API_URL`）。
+
 ## 週次の運用 / Weekly cadence
 
 `config.yaml` にアダプタを有効にして、`aipmo schedule` を動かします。

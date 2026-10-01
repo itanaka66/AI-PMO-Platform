@@ -1,0 +1,37 @@
+name: WBS drift
+
+# PR で WBS の更新漏れ・証拠の欠けを、コメントで知らせる（docs/SELF-WBS.md）。
+# 知らせるだけで、PR を失敗にはしない（失敗にするのは tests.yml の `aipmo wbs check`）。
+# Comments on the PR when the WBS looks out of step with reality. Informational: it never
+# fails the PR (that is `aipmo wbs check` in tests.yml).
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  notify:
+    # fork からの PR では GITHUB_TOKEN が読み取り専用で、コメントを書けない。
+    # On a fork PR the token is read-only and cannot comment.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+      - name: Comment on the PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          BASE: origin/${{ github.base_ref }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python -m aipmo.cli wbs notify wbs/aipmo.yaml --base "$BASE" --pr "$PR" --post

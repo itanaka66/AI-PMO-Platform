@@ -141,6 +141,7 @@ aipmo pmo         # 全体の状況・警告・担当の提案をまとめて見
 aipmo assign      # 担当の提案を見る（確定は assign キー --apply。--writeback で Jira・GitHub などにも書く）
 aipmo ledger info # やることの台帳が、どこに何件あるか
 aipmo wbs status  # このプロジェクト自身の開発の進み具合（wbs/aipmo.yaml）
+aipmo wbs notify  # WBS の更新漏れ・証拠の欠けを PR のコメントにする（--post で書く）
 aipmo wbs proposals  # WBS 変更提案を見る・承認して WBS ファイルへ反映する（approve / reject / apply）
 aipmo agents      # 役割AI（開発・テスト・調査…）に任せた仕事と、その結果（review で成果を人が確かめた記録を残す）
 aipmo collect     # 課題管理ツールの進み具合を、いま台帳へ集める（読むだけ）

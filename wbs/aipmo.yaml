@@ -329,10 +329,22 @@ wbs:
           depends_on: ["5.5"]
         - id: "5.6"
           name: "WBS の更新漏れ（maybe_done）を PR に知らせる"
-          status: todo
+          status: done
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/wbs_notify.py"
+            - ".github/workflows/wbs-drift.yml"
+            - "tests/test_wbs_notify.py::test_a_comment_that_merely_imitates_the_marker_is_never_updated"
+            - "docs/SELF-WBS.md"
           effort: 3
-          priority: Low
           depends_on: ["5.3"]
+          notes: "実際の GitHub の PR では未検証。偽の GitHub サーバーと実 git の通しまで（5.8）"
+        - id: "5.8"
+          name: "WBS の更新漏れの PR コメントを、実際の GitHub の PR で確かめる"
+          status: todo
+          effort: 1
+          priority: Low
+          depends_on: ["5.6"]
     - id: "6"
       name: "残作業（既知の未実装・未検証）"
       children:

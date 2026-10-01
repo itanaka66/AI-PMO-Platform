@@ -1165,6 +1165,8 @@ def cmd_wbs(args: argparse.Namespace) -> int:
 
     if args.wbs_command == "proposals":
         return cmd_wbs_proposals(args)
+    if args.wbs_command == "notify":
+        return cmd_wbs_notify(args)
 
     root = Path(args.root).resolve() if args.root else Path.cwd()
     target = (root / args.file).resolve()
@@ -1195,6 +1197,60 @@ def cmd_wbs(args: argparse.Namespace) -> int:
     failed = analysis["error_count"] > 0 or (
         args.wbs_command == "check" and args.strict and analysis["warning_count"] > 0)
     return 1 if failed else 0
+
+
+def cmd_wbs_notify(args: argparse.Namespace) -> int:
+    """WBS の更新漏れ・証拠の欠けを、PR のコメントにする（既定は本文を表示するだけ）。
+
+    `aipmo wbs notify --base origin/main`               … 本文を表示（何も書かない）
+    `aipmo wbs notify --base origin/main --pr 12 --post` … PR #12 の目印つきコメントを作る／更新する
+    """
+    from datetime import date
+
+    from .wbs import WbsError, load_wbs
+    from .wbs_notify import GitHubComments, NotifyError, changed_files, collect, render
+
+    root = Path(args.root).resolve() if args.root else Path.cwd()
+    target = (root / args.file).resolve()
+    try:
+        as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+    except ValueError:
+        print(f"--as-of は YYYY-MM-DD で / bad date: {args.as_of}", file=sys.stderr)
+        return 1
+    try:
+        wbs, _ = load_wbs(target)
+        changed: list[str] | None = None
+        if args.changed:
+            changed = list(args.changed)
+        elif args.base:
+            changed = changed_files(args.base, root)
+        findings = collect(wbs, root, as_of, changed)
+        try:
+            shown = str(target.relative_to(root)).replace("\\", "/")
+        except ValueError:
+            shown = target.name
+        body = render(findings, file=shown, as_of=as_of, changed_known=changed is not None)
+        if not args.post:
+            print(body)
+            print(f"\n（表示だけです。PR に書くには --pr 番号 --post / dry run: {len(findings)} 件）",
+                  file=sys.stderr)
+            return 0
+        if not args.pr:
+            print("--post には --pr（PR の番号）が要ります / --post needs --pr", file=sys.stderr)
+            return 1
+        client = GitHubComments(
+            args.repo or os.environ.get("GITHUB_REPOSITORY", ""), os.environ.get("GITHUB_TOKEN", ""),
+            os.environ.get("GITHUB_API_URL", "https://api.github.com"), author=args.author)
+        result = client.post_or_update(args.pr, body, has_findings=bool(findings))
+    except (WbsError, NotifyError) as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    said = {"created": "コメントを作りました", "updated": "コメントを更新しました",
+            "unchanged": "コメントは更新の必要がありません",
+            "skipped": "コメントは投稿しませんでした（指摘なし）"}[result["action"]]
+    print(f"PR #{args.pr}: {said}（{len(findings)} 件）"
+          + (f" {result['url']}" if result.get("url") else ""))
+    return 0
 
 
 def cmd_wbs_proposals(args: argparse.Namespace) -> int:
@@ -1812,6 +1868,21 @@ def main(argv: list[str] | None = None) -> int:
                                   help="warning があっても失敗にする")
         else:
             p_action.add_argument("--json", action="store_true", help="JSON で出力")
+    p_notify = wbs_actions.add_parser(
+        "notify", help="WBS の更新漏れ・証拠の欠けを PR のコメントにする（--post で書く）")
+    p_notify.add_argument("file", nargs="?", default="wbs/aipmo.yaml",
+                          help="WBS ファイル（既定 wbs/aipmo.yaml）")
+    p_notify.add_argument("--root", help="証拠のパスの基準（既定はカレントディレクトリ）")
+    p_notify.add_argument("--as-of", help="基準日 YYYY-MM-DD（既定は今日）")
+    p_notify.add_argument("--base", help="PR の土台のブランチ（例 origin/main）。git diff で、この PR の"
+                                         "変更ファイルを調べる")
+    p_notify.add_argument("--changed", nargs="*", help="変更ファイルを直接渡す（--base の代わり）")
+    p_notify.add_argument("--pr", type=int, help="コメントする PR の番号")
+    p_notify.add_argument("--repo", help="owner/name（既定は環境変数 GITHUB_REPOSITORY）")
+    p_notify.add_argument("--author", help="目印つきコメントの書き手の login（既定は Bot。"
+                                           "個人のトークンで書くときに指定する）")
+    p_notify.add_argument("--post", action="store_true",
+                          help="GitHub に書く（トークンは環境変数 GITHUB_TOKEN）")
     p_props = wbs_actions.add_parser(
         "proposals", help="承認待ちの WBS 変更提案（wbs_replan）を見る・承認して WBS ファイルへ反映する")
     p_props.add_argument("proposals_command", nargs="?",
