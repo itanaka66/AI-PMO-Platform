@@ -168,6 +168,19 @@ class GitHubProjectsAdapter(Adapter):
         return {"items": items, "count": len(items),
                 "total_count": data.get("total_count", len(items))}
 
+    @action()
+    def get_issue(self, issue_number: int) -> dict[str, Any]:
+        """Issue を 1 件読む（読み取り専用）/ read one issue.
+
+        検索に載らなくなった（閉じられた）Issue の最新の状態を確かめるのに使う。
+        Used to see the current state of an issue that has left the search results.
+        """
+        self._headers()
+        status, data = self._request(
+            "GET", f"/repos/{self.owner}/{self.repo}/issues/{issue_number}")
+        data = self._require(status, data, f"#{issue_number} の取得 / fetching")
+        return _flatten(data)
+
     @action(writes=True)
     def create_issues(self, issues: list[dict[str, Any]],
                       idempotency_key: str | None = None) -> dict[str, Any]:

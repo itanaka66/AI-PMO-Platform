@@ -199,6 +199,18 @@ class AzureDevOpsAdapter(Adapter):
         )
         return self.search(wiql=wiql)
 
+    @action()
+    def get_issue(self, work_item_id: int) -> dict[str, Any]:
+        """Work Item を 1 件読む（読み取り専用）/ read one work item."""
+        fields = ("System.Title", "System.State", "System.AssignedTo",
+                  "System.Tags", self.due_date_field)
+        status, data = self._request(
+            "GET",
+            f"/_apis/wit/workitems/{work_item_id}?fields={','.join(fields)}"
+            f"&api-version={API_VERSION}")
+        data = self._require(status, data, f"{work_item_id} の取得 / fetching")
+        return _flatten(data, self.due_date_field)
+
     @action(writes=True)
     def create_issues(self, issues: list[dict[str, Any]],
                       work_item_type: str | None = None,

@@ -170,6 +170,13 @@ class OpenProjectAdapter(Adapter):
                     f'{{"dueDate":{{"operator":"<t-","values":["{cutoff}"]}}}}]')
         return result
 
+    @action()
+    def get_issue(self, work_package_id: int) -> dict[str, Any]:
+        """Work Package を 1 件読む（読み取り専用）/ read one work package."""
+        status, data = self._request("GET", f"/api/v3/work_packages/{work_package_id}")
+        data = self._require(status, data, f"{work_package_id} の取得 / fetching")
+        return _flatten(data)
+
     @action(writes=True)
     def create_issues(self, issues: list[dict[str, Any]],
                       work_package_type_id: int | None = None,

@@ -172,6 +172,13 @@ class PlaneAdapter(Adapter):
         ]
         return {"items": overdue, "count": len(overdue)}
 
+    @action()
+    def get_issue(self, issue_id: str) -> dict[str, Any]:
+        """課題を 1 件読む（読み取り専用）/ read one issue."""
+        status, data = self._request("GET", self._issues_path(f"{issue_id}/"))
+        data = self._require(status, data, f"{issue_id} の取得 / fetching")
+        return _flatten(data)
+
     @action(writes=True)
     def create_issues(self, issues: list[dict[str, Any]],
                       idempotency_key: str | None = None) -> dict[str, Any]:

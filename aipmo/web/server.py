@@ -595,11 +595,14 @@ def create_app(
             briefing = None
 
         active: list[Any] = []
+        pending: list[Any] = []
         names: list[str] = []
         if _ledger_present(ledger):
             store = _open_store(ledger)
             try:
                 active = store.ranked(projects=allowed)
+                pending = [t for t in store.proposals()
+                           if allowed is None or t.project.lower() in allowed]
                 names = [n for n in store.projects()
                          if not confined or scoped_projects is None
                          or n.lower() in scoped_projects]
@@ -611,7 +614,7 @@ def create_app(
 
         tasks = [
             {"id": t.id, "key": t.key, "title": t.title, "score": t.score,
-             "project": t.project, "tracker": tracker_of(t),
+             "project": t.project, "tracker": tracker_of(t), "origin": t.origin,
              "dispatches": t.dispatches[-3:],
              "external_id": t.external_id or (t.key if tracker_of(t) == "jira" else None),
              "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
@@ -620,8 +623,11 @@ def create_app(
              "reasons": t.reasons, "templates": t.templates}
             for t in active[:50]
         ]
+        proposals = [{"id": t.id, "title": t.title, "project": t.project,
+                      "priority": t.priority, "due_date": t.due_date,
+                      "generated_from": t.generated_from} for t in pending]
         return {"briefing": briefing, "briefing_age_seconds": age, "tasks": tasks,
-                "projects": names, "scoped": confined}
+                "proposals": proposals, "projects": names, "scoped": confined}
 
     @app.get("/api/pmo/decisions", dependencies=[guard])
     def pmo_decisions(limit: int = 50, project: str | None = None,
@@ -665,6 +671,29 @@ def create_app(
             if len(items) >= limit:
                 break
         return {"items": items}
+
+    @app.post("/api/pmo/proposals/decide")
+    def pmo_decide(request: Request, payload: dict[str, Any],
+                   role: str = operator_guard) -> dict[str, Any]:
+        """PMO Core が起こした対応タスクの提案を、承認する／却下する(operator のみ)。"""
+        ledger, _, _ = _pmo_files()
+        ref = str(payload.get("ref") or "")
+        decision = str(payload.get("decision") or "")
+        if not ref or decision not in ("approve", "reject"):
+            raise HTTPException(status_code=422,
+                                detail="ref and decision (approve|reject) are required")
+        store = _open_store(ledger)
+        try:
+            task = PmoCore(task_engine=store).decide_proposal(ref, decision == "approve")
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        finally:
+            store.close()
+        logger.info("pmo proposal %s: %s by %s from %s", decision, task.id, role,
+                    _client_ip(request))
+        return {"id": task.id, "decision": decision}
 
     @app.post("/api/pmo/assignments/accept")
     def pmo_accept(request: Request, payload: dict[str, Any],

@@ -64,6 +64,10 @@ def make_writer(adapters: AdapterRegistry,
     """`accept_assignment(write=...)` に渡す、書き戻し関数を作る。"""
 
     def write(task: Task, assignee: str) -> dict[str, Any]:
+        if task.origin:
+            # PMO Core が作った台帳だけのタスクには、書き戻す先が無い。
+            # A task the PMO Core made itself has no tracker to write to.
+            return {"tracker": None, "skipped": "ledger-only"}
         name = tracker_of(task)
         spec = TRACKERS.get(name)
         if spec is None:

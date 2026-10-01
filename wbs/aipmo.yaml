@@ -188,6 +188,28 @@ wbs:
             - "aipmo/writeback.py"
             - "aipmo/trackers.py"
             - "tests/test_writeback.py"
+        - id: "3.10"
+          name: "進捗の自動収集（収集元の走査と、既知タスクの再読み込み）"
+          status: done
+          effort: 5
+          depends_on: ["3.4", "2.2"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/collector.py"
+            - "aipmo/adapters/github_projects.py::def get_issue"
+            - "tests/test_collect_generate.py::test_an_issue_that_left_the_query_is_re_read_and_seen_to_be_done"
+          notes: "読み取り専用。閉じられて検索から外れた課題の完了を観測し、実績（学習の材料）にする"
+        - id: "3.11"
+          name: "タスクの生成（定期タスク・警告からの対応タスクの提案）"
+          status: done
+          effort: 5
+          depends_on: ["3.5"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/generation.py"
+            - "aipmo/pmo_core.py::def _generate_followups"
+            - "tests/test_collect_generate.py::test_a_persistent_serious_alert_raises_a_proposal_that_is_not_work_yet"
+          notes: "台帳だけのタスク。提案は人の承認待ちで、承認までは仕事にならない"
     - id: "4"
       name: "基盤・運用"
       children:
@@ -362,3 +384,16 @@ wbs:
           effort: 5
           priority: Low
           depends_on: ["3.9"]
+        - id: "6.11"
+          name: "承認した提案・定期タスクを、課題管理ツールにも起票する（承認つき）"
+          status: todo
+          effort: 5
+          priority: Medium
+          depends_on: ["3.11", "3.9"]
+          notes: "いまは台帳だけのタスク。トラッカーに作るのは外の世界を変えるので、別の承認が要る"
+        - id: "6.12"
+          name: "WBS の更新漏れ・証拠の欠けを、対応タスクの提案にする"
+          status: todo
+          effort: 3
+          priority: Low
+          depends_on: ["3.11", "5.3"]

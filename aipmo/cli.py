@@ -463,9 +463,37 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
                 return engine.run(index[response.template], params=response.params,
                                   trigger=trigger)
 
+    from .collector import CollectError, Collector, load_sources
+    from .generation import GenerationError, load_generation
+
+    try:
+        generation = load_generation(section.get("generate"))
+    except GenerationError as exc:
+        raise ConfigError(f"pmo_core.generate: {exc}") from exc
+
+    # 進捗の自動収集は、`pmo_core.collect` を書いたときだけ(課題管理ツールを読むので
+    # オプトイン)。実際に動かすのは常駐のときだけで、表示専用のコマンドは読みに行かない。
+    # Collection is opt-in (it reads trackers) and runs only in the resident process;
+    # display-only commands never go out and read.
+    collector = None
+    collect_config = section.get("collect")
+    if collect_config is not None:
+        collect_config = collect_config or {}
+        try:
+            sources = load_sources(collect_config.get("sources"))
+        except CollectError as exc:
+            raise ConfigError(f"pmo_core.collect: {exc}") from exc
+        if engine is not None and launch_base is not None:
+            collector = Collector(
+                task_engine=task_engine, adapters=engine.adapters, sources=sources,
+                refresh_known=bool(collect_config.get("refresh_known", True)),
+                max_refresh=int(collect_config.get("max_refresh", 50)),
+                interval_minutes=int(collect_config.get("interval_minutes", 30)))
+
     learning = section.get("learning") or {}
     agents_config = section.get("agents") or {}
     return PmoCore(task_engine=task_engine, rules=rules,
+                   collector=collector, generation=generation,
                    members=members, notify=notify,
                    renotify_hours=int(notify_config.get("renotify_hours", 24)),
                    learning=bool(learning.get("enabled", True)),
@@ -536,6 +564,17 @@ def cmd_pmo(args: argparse.Namespace) -> int:
         print(f"  ! {m['member']} は上限超過 {m['load']}/{m['capacity']}")
     if briefing["unassignable"]:
         print(f"  ! 割り当て先の空きが無い: {len(briefing['unassignable'])} 件")
+    collection = briefing.get("collection")
+    if collection:
+        problems = sum(1 for s in collection["sources"] if s["error"]) + collection["failed"]
+        print(f"\n進捗の収集 / collection ({collection['at'][:16]})  "
+              f"再読み込み {collection['refreshed']} 件・完了と分かった "
+              f"{collection['completed']} 件" + (f"・問題 {problems} 件" if problems else ""))
+    pending = (briefing.get("generated") or {}).get("pending") or []
+    if pending:
+        print(f"\n承認待ちの提案 / pending proposals ({len(pending)})  — aipmo generated")
+        for item in pending[:5]:
+            print(f"  {item['title']}")
     if briefing["responses"]:
         print("\n高リスク時の応答 / responses")
         for r in briefing["responses"]:
@@ -640,6 +679,80 @@ def cmd_tasks(args: argparse.Namespace) -> int:
         if args.why:
             for reason in task.reasons:
                 print(f"        - {reason}")
+    return 0
+
+
+def cmd_collect(args: argparse.Namespace) -> int:
+    """課題管理ツールの今の状態を、いま台帳へ集める(読み取り専用)。
+
+    設定の `pmo_core.collect` の収集元を走査し、走査に現れなかった未完了タスクを
+    1 件ずつ読み直す。閉じられた課題はここで完了と分かり、実績に残る。
+    """
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    try:
+        engine = build_engine(config, base_dir=base)
+        core = attach_task_engine(engine, config, base, default=True, launch=True)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    if core is None or core.collector is None:
+        print("収集が設定されていません。config.yaml に pmo_core.collect を書きます "
+              "/ collection is not configured: add pmo_core.collect", file=sys.stderr)
+        return 1
+    report = core.collect_now()
+    if report.get("error"):
+        print(f"収集に失敗しました / failed: {report['error']}", file=sys.stderr)
+        return 1
+    for source in report["sources"]:
+        status = (f"! {source['error']}" if source["error"]
+                  else f"{source['items']} 件（新規 {source['new']}）")
+        print(f"  {source['id']:<18} {source['adapter']:<16} {status}")
+    print(f"再読み込み {report['refreshed']} 件、失敗 {report['failed']} 件、"
+          f"見つからない {len(report['missing'])} 件、"
+          f"新たに完了と分かった {report['completed']} 件")
+    for line in (report.get("errors") or [])[:5]:
+        print(f"  ! {line}", file=sys.stderr)
+    return 1 if report["failed"] or any(s["error"] for s in report["sources"]) else 0
+
+
+def cmd_generated(args: argparse.Namespace) -> int:
+    """PMO Core が自分で作ったタスク(提案・定期タスク)を見る/決める。
+
+    `aipmo generated`              … 承認待ちの提案と、開いている台帳だけのタスク
+    `aipmo generated approve REF`  … 提案を承認する(仕事になる)
+    `aipmo generated reject REF`   … 提案を却下する(記録は残る)
+    `aipmo generated done REF`     … 台帳だけのタスクを完了にする
+    """
+    try:
+        _, core = _open_ledger(args)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    command = args.generated_command or "list"
+    if command in ("approve", "reject", "done"):
+        try:
+            if command == "done":
+                task = core.complete_task(args.ref)
+            else:
+                task = core.decide_proposal(args.ref, command == "approve")
+        except (KeyError, ValueError) as exc:
+            print(f"{exc}", file=sys.stderr)
+            return 1
+        verb = {"approve": "承認しました", "reject": "却下しました", "done": "完了にしました"}
+        print(f"{verb[command]} / {command}: {task.title}")
+        return 0
+
+    engine = core.task_engine
+    pending = engine.proposals()
+    own = [t for t in engine.ranked() if t.origin]
+    print(f"承認待ちの提案 / pending proposals ({len(pending)})")
+    for task in pending:
+        print(f"  {task.id}\n      {task.title}  [{task.priority or '-'}, 期限 {task.due_date or '-'}]")
+    print(f"\n開いている台帳だけのタスク / open ledger-only tasks ({len(own)})")
+    for task in own:
+        print(f"  [{task.score:>3}] {task.id}  {task.title}  "
+              f"({task.assignee or '担当未定'}, 期限 {task.due_date or '-'})")
     return 0
 
 
@@ -1173,6 +1286,21 @@ def main(argv: list[str] | None = None) -> int:
     p_migrate.add_argument("--force", action="store_true",
                            help="移行先に行があっても、同じ id を上書きする")
     p_ledger.set_defaults(func=cmd_ledger)
+
+    p_collect = sub.add_parser(
+        "collect", help="課題管理ツールの今の状態を台帳へ集める(読み取り専用) "
+                        "/ collect progress from the trackers now (read-only)")
+    p_collect.set_defaults(func=cmd_collect)
+
+    p_generated = sub.add_parser(
+        "generated", help="PMO Core が作ったタスク(提案・定期)を見る・決める "
+                          "/ tasks the PMO Core made: list, approve, reject, done")
+    generated_actions = p_generated.add_subparsers(dest="generated_command")
+    for action_name, text in (("approve", "提案を承認する"), ("reject", "提案を却下する"),
+                              ("done", "台帳だけのタスクを完了にする")):
+        generated_actions.add_parser(action_name, help=text).add_argument(
+            "ref", help="タスクの id")
+    p_generated.set_defaults(func=cmd_generated)
 
     p_agents = sub.add_parser(
         "agents", help="役割AI（開発・テスト・調査・文書・営業）の状況と実行 "

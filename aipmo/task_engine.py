@@ -143,6 +143,17 @@ class Task:
     # starting `JIRA:` is Jira.
     tracker: str = ""
     external_id: str = ""
+    # どこから生まれたタスクか。空は、課題管理ツールかテンプレートの出力から来たもの。
+    # `recurring`（運用者が設定した定期タスク）と `followup`（PMO Core が警告から
+    # 起こした提案）は、PMO Core が自分で作ったもの — 課題管理ツールには存在しない、
+    # 台帳だけのタスクで、完了も人がここで記録する。`proposed` は人の承認待ち。
+    # Where the task came from. Empty: a tracker or a template's output. `recurring`
+    # (set up by the operator) and `followup` (proposed by the PMO Core from an
+    # alert) were made by the PMO Core itself — ledger-only tasks that exist in no
+    # tracker, closed by a person here. `proposed` means awaiting approval.
+    origin: str = ""
+    proposed: bool = False
+    generated_from: str = ""
     # 役割AIに仕事を任せた記録（新しいものが後ろ。直近のぶんだけ残す）。
     # id / agent / template / at / status(running|done|failed|skipped|abandoned) /
     # run_id / finished_at / error / excerpt。
@@ -763,6 +774,99 @@ class TaskEngine:
             "duration_days": (done_on - started).days if started else None,
         })
 
+    # -- 台帳だけのタスク / ledger-only tasks -----------------------------------
+
+    def create_task(self, task_id: str, title: str, *, origin: str, proposed: bool,
+                    project: str = "", priority: str | None = None,
+                    due_date: str | None = None, assignee: str | None = None,
+                    labels: Iterable[str] = (), generated_from: str = "") -> Task | None:
+        """PMO Core が自分でタスクを作る。同じ id が既にあれば何もしない（冪等）。
+
+        id は呼び出し側が決める（`PMO:rec:週次レビュー:2026-W40` のように、
+        「どの定期タスクの、どの期間」「どの警告の、どの回」を表す）。決定済みの
+        提案（却下を含む）も id が残るので、同じものが何度も出直さない。
+
+        The PMO Core makes a task itself. Idempotent on the id, which the caller
+        builds to mean "this recurring task, this period" or "this alert, this
+        episode". A decided proposal (a rejected one too) keeps its id, so the
+        same thing never comes back.
+        """
+        stamp = self.now().isoformat()
+        with self.transaction():
+            if task_id in self.tasks:
+                return None
+            task = Task(
+                id=task_id, key=task_id, title=title, project=project, priority=priority,
+                due_date=due_date, assignee=assignee, labels=sorted(set(labels)),
+                origin=origin, proposed=proposed, generated_from=generated_from,
+                status="Proposed" if proposed else "To Do", status_since=stamp,
+                first_seen=stamp, last_seen=stamp,
+                sources=[{"template": f"pmo_core:{origin}", "run_id": task_id,
+                          "seen_at": stamp}],
+            )
+            self.tasks[task_id] = task
+            self._rescore_locked()
+        return task
+
+    def decide_proposal(self, ref: str, approve: bool) -> Task:
+        """提案を承認する（仕事になる）か、却下する（記録は残し、順位には入れない）。"""
+        stamp = self.now().isoformat()
+        found = self.find(ref)
+        if found is None:
+            raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+        with self.transaction():
+            task = self.tasks.get(found.id)
+            if task is None:
+                raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+            if not task.proposed:
+                raise ValueError(f"{task.id} は承認待ちの提案ではありません "
+                                 f"/ not a pending proposal")
+            task.proposed = False
+            task.status_since = stamp
+            task.last_seen = stamp
+            if approve:
+                task.status = "To Do"
+            else:
+                # 却下も記録に残す（同じ提案を出し直さないため）。完了実績にはしない。
+                # A rejection is kept (so it is not proposed again) but is not an outcome.
+                task.status, task.done = "Rejected", True
+            self._rescore_locked()
+        return task
+
+    def complete(self, ref: str) -> Task:
+        """台帳だけのタスクを完了にする。課題管理ツールのタスクは、そちらで閉じる。
+
+        Closes a ledger-only task. A tracker's task is closed in the tracker — the
+        ledger would only be contradicted by the next sync.
+        """
+        stamp = self.now().isoformat()
+        found = self.find(ref)
+        if found is None:
+            raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+        with self.transaction():
+            task = self.tasks.get(found.id)
+            if task is None:
+                raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+            if not task.origin:
+                raise ValueError(f"{task.id} は課題管理ツール側のタスクです。そちらで閉じて"
+                                 f"ください / close it in its tracker")
+            if task.proposed:
+                raise ValueError(f"{task.id} は承認待ちです。先に承認してください "
+                                 f"/ approve the proposal first")
+            if task.done:
+                raise ValueError(f"{task.id} はすでに完了です / already done")
+            self._record_outcome(task, stamp)
+            task.done, task.status, task.last_seen = True, "Done", stamp
+            self._rescore_locked()
+        return task
+
+    def proposals(self) -> list[Task]:
+        """承認待ちの提案（新しい順）/ pending proposals, newest first."""
+        self.sync()
+        with self._lock:
+            pending = [t for t in self.tasks.values() if t.proposed]
+        return sorted(pending, key=lambda t: t.first_seen, reverse=True)
+
     # -- 順位付け / ranking ---------------------------------------------
 
     def refresh(self) -> None:
@@ -781,7 +885,12 @@ class TaskEngine:
         for task_id in list(self.tasks):
             task = self.tasks[task_id]
             seen = datetime.fromisoformat(task.last_seen)
-            if (cutoff - seen).days > self.stale_days:
+            # 台帳だけのタスクは、どのテンプレートも挙げないのが普通。開いている間は
+            # 消さない（承認待ちの提案と、終わったものだけが期限で消える）。
+            # Ledger-only tasks are never named by a template; while open they are kept
+            # (only unanswered proposals and finished ones age out).
+            if (cutoff - seen).days > self.stale_days and not (
+                    task.origin and not task.done and not task.proposed):
                 del self.tasks[task_id]
                 continue
             if task.done:
@@ -794,7 +903,8 @@ class TaskEngine:
         """未完了タスクがあるプロジェクト名（重複なし・並び順固定）。"""
         self.sync()
         with self._lock:
-            names = {t.project for t in self.tasks.values() if not t.done and t.project}
+            names = {t.project for t in self.tasks.values()
+                     if not t.done and not t.proposed and t.project}
         return sorted(names, key=str.lower)
 
     def ranked(self, assignee: str | None = None, limit: int | None = None,
@@ -807,7 +917,9 @@ class TaskEngine:
         """
         self.sync()
         with self._lock:
-            active = [t for t in self.tasks.values() if not t.done]
+            # 承認待ちの提案は、まだ仕事ではない。順位にも担当提案にも入れない。
+            # An unapproved proposal is not work yet: not ranked, not assigned.
+            active = [t for t in self.tasks.values() if not t.done and not t.proposed]
         if assignee is not None:
             active = [t for t in active if t.assignee == assignee]
         allowed = {p.lower() for p in projects} if projects is not None else None

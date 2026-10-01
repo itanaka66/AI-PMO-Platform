@@ -483,6 +483,37 @@ function canWriteBack(task) {
   return Boolean(task.tracker && task.external_id && writableTrackers.has(task.tracker));
 }
 
+function generatedRow(item) {
+  const row = el("div", "pmo-proposal");
+  row.append(el("div", "pmo-title", item.title));
+  row.append(el("div", "pmo-meta", [item.project, item.priority, item.due_date]
+    .filter(Boolean).join(" · ")));
+  if (canRun) {
+    const actions = el("div", "pmo-actions");
+    for (const [decision, label, kind] of [
+      ["approve", t("web_approve", "Approve"), "btn btn-approve"],
+      ["reject", t("web_reject", "Reject"), "btn btn-reject"]]) {
+      const button = el("button", kind, label);
+      button.addEventListener("click", async () => {
+        actions.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+        try {
+          await api("/api/pmo/proposals/decide", {
+            method: "POST", body: JSON.stringify({ ref: item.id, decision }),
+          });
+          toast(t("web_pmo_decided", "Done."));
+          await refreshPmo();
+        } catch (error) {
+          toast(error.message, "error");
+          actions.querySelectorAll("button").forEach((b) => { b.disabled = false; });
+        }
+      });
+      actions.append(button);
+    }
+    row.append(actions);
+  }
+  return row;
+}
+
 function proposalRow(task) {
   const row = el("div", "pmo-proposal");
   row.append(el("div", "pmo-title", task.title));
@@ -574,6 +605,15 @@ function renderPmo(data, decisions) {
       }
       host.append(block);
     }
+  }
+
+  // PMO Core が警告から起こした対応タスクの提案。承認されるまで仕事ではない。
+  // Follow-up tasks the PMO Core proposed from an alert; not work until approved.
+  const generated = data.proposals || [];
+  if (generated.length) {
+    const block = pmoSection(t("web_pmo_generated", "Proposed tasks"), generated.length);
+    for (const item of generated) block.append(generatedRow(item));
+    host.append(block);
   }
 
   const proposals = tasks.filter((task) => task.suggested_assignee && !task.assignee);

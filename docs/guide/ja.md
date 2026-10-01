@@ -142,6 +142,8 @@ aipmo assign      # 担当の提案を見る（確定は assign キー --apply�
 aipmo ledger info # やることの台帳が、どこに何件あるか
 aipmo wbs status  # このプロジェクト自身の開発の進み具合（wbs/aipmo.yaml）
 aipmo agents      # 役割AI（開発・テスト・調査…）に任せた仕事と、その結果
+aipmo collect     # 課題管理ツールの進み具合を、いま台帳へ集める（読むだけ）
+aipmo generated   # PMO Core が作ったタスク（提案・定期）を見る・承認する
 ```
 
 ---

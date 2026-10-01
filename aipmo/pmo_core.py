@@ -43,6 +43,8 @@ from typing import Any, Callable
 
 from .agent_roles import (KEEP_DISPATCHES, SETTLED_BAD, excerpt_of, fit, latest_dispatch,
                           params_for)
+from .generation import (GenerationConfig, due_date, followup_id, period_key,
+                         recurring_id)
 from .pmo_learning import (DEFAULT_MAX_ESTIMATE_ERROR, DEFAULT_MIN_SAMPLES, LearnedModel,
                            learn)
 from .task_engine import IN_PROGRESS_STATUSES, Task, TaskEngine, _parse_date, side_path
@@ -491,11 +493,14 @@ def scope_briefing(briefing: dict[str, Any], active: list[Task],
         "projects": [p for p in briefing.get("projects", [])
                      if p["project"].lower() in allowed],
         "agent_runs": [r for r in briefing.get("agent_runs", []) if mine(r)],
+        "generated": {**briefing.get("generated", {"created": []}),
+                      "pending": [p for p in (briefing.get("generated") or {}).get("pending", [])
+                                  if mine(p)]},
         "scope": sorted(allowed),
     }
     if redact_org:
         scoped.update(member_loads=[], overloaded_members=[], responses=[],
-                      learning=None, agents=[], agent_dispatch=[])
+                      learning=None, agents=[], agent_dispatch=[], collection=None)
     return scoped
 
 
@@ -541,6 +546,12 @@ class PmoCore:
     # timed out; and a per-role-AI daily ceiling.
     agent_timeout_minutes: int = 60
     agent_max_per_day: int = 20
+    # 進捗の自動収集（aipmo/collector.py）。None なら収集しない。常駐のときだけ渡される。
+    # Automatic progress collection; None means none. Given only to the resident process.
+    collector: Any = None
+    # タスクの生成（aipmo/generation.py）。既定は何も作らない。
+    # Task generation; by default nothing is generated.
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
 
     def __post_init__(self) -> None:
         ledger = self.task_engine.path
@@ -621,6 +632,9 @@ class PmoCore:
     def cycle(self) -> dict[str, Any]:
         engine = self.task_engine
         now = engine.now()
+        # 収集は課題管理ツールを読むので、台帳の取引の外で、最初に行う。
+        # Collection reads trackers, so it runs first and outside any ledger transaction.
+        collection = self._collect(now)
         engine.sync()             # ほかのプロセスの更新（実績を含む）を取り込む
         self._learn(now)          # 順位付けの前に。加点が順位に効くため
         # 台帳を書き換える部分は1つの取引にまとめる。通知やテンプレート起動
@@ -631,6 +645,7 @@ class PmoCore:
         with engine.transaction():
             engine.refresh()
             self._expire_dispatches(now)
+            self._generate_recurring(now)
             active = engine.ranked()
             self._propose_assignments(active, now)
         # 役割AIへ任せる（起動は取引の外で）。記録は自分の取引で行う。
@@ -640,8 +655,16 @@ class PmoCore:
         fresh = engine.ranked()      # 役割AIへ任せた記録も含む最新の状態
         violations = evaluate_rules(self.rules, fresh, now)
         self._track_alerts(violations, fresh, now)
+        created = self._generate_followups(violations, fresh, now)
 
         briefing = self.briefing(fresh, violations, now)
+        briefing["collection"] = collection
+        briefing["generated"] = {
+            "pending": [{"id": t.id, "title": t.title, "project": t.project,
+                         "priority": t.priority, "due_date": t.due_date,
+                         "origin": t.origin, "generated_from": t.generated_from}
+                        for t in engine.proposals()],
+            "created": created}
         briefing["agent_dispatch"] = dispatch_report
         briefing["responses"] = self._respond(briefing, now)
         briefing["learning"] = self._model.as_dict() if self.learning else None
@@ -816,6 +839,110 @@ class PmoCore:
             task.suggested_assignee, task.suggestion_reason = member.name, reason
             self._log("assignment_proposed", now, task=task.id, title=task.title,
                       assignee=member.name, reason=reason, score=task.score)
+
+    # -- 進捗の自動収集 / automatic progress collection ------------------------------
+
+    def _collect(self, now: datetime) -> dict[str, Any] | None:
+        """間隔が来ていれば収集する。結果（直近のもの）を返す。"""
+        state = self._state.setdefault("collector", {})
+        if self.collector is None:
+            return state.get("last")
+        last_run = state.get("last_run")
+        if last_run and (now - datetime.fromisoformat(last_run)).total_seconds() \
+                < self.collector.interval_minutes * 60:
+            return state.get("last")
+        return self.collect_now()
+
+    def collect_now(self) -> dict[str, Any]:
+        """いま収集する(間隔を待たない)。失敗は結果に残し、周を止めない。"""
+        if self.collector is None:
+            raise RuntimeError("収集が設定されていません（pmo_core.collect）"
+                               " / collection is not configured")
+        try:
+            report = self.collector.run_once()
+        except Exception as exc:                           # noqa: BLE001
+            report = {"at": self.task_engine.now().isoformat(), "sources": [],
+                      "refreshed": 0, "failed": 0, "missing": [], "completed": 0,
+                      "error": f"{type(exc).__name__}: {exc}"}
+            logger.warning("収集に失敗 / collection failed", exc_info=True)
+        now = self.task_engine.now()
+        with self._lock:
+            self._state["collector"] = {"last_run": now.isoformat(), "last": report}
+            self._save_state()
+        self._log("collected", now,
+                  sources={s["id"]: (s["error"] or s["items"]) for s in report["sources"]},
+                  refreshed=report["refreshed"], failed=report["failed"],
+                  missing=len(report["missing"]), completed=report["completed"],
+                  error=report.get("error"))
+        return report
+
+    # -- タスクの生成 / task generation ------------------------------------------------
+
+    def _generate_recurring(self, now: datetime) -> None:
+        """運用者が設定した定期タスクを、期間ごとに一度だけ作る(取引の中で呼ぶ)。"""
+        for rec in self.generation.recurring:
+            period = period_key(rec, now)
+            if period is None:
+                continue
+            task = self.task_engine.create_task(
+                recurring_id(rec, period), rec.title, origin="recurring", proposed=False,
+                project=rec.project, priority=rec.priority, assignee=rec.assignee,
+                labels=rec.labels, generated_from=f"recurring:{rec.id}",
+                due_date=due_date(now, rec.due_in_days, rec.timezone))
+            if task is not None:
+                self._log("task_generated", now, task=task.id, title=task.title,
+                          origin="recurring", period=period)
+
+    def _generate_followups(self, violations: list[Violation], active: list[Task],
+                            now: datetime) -> list[str]:
+        """続いている重大な警告から、対応を決めるタスクを**提案**する(承認待ち)。"""
+        if not self.generation.followups:
+            return []
+        rules = {f.rule: f for f in self.generation.followups}
+        open_alerts: dict[str, dict[str, str]] = self._state["open_alerts"]
+        by_id = {t.id: t for t in active}
+        created: list[str] = []
+        for violation in violations:
+            follow = rules.get(violation.rule)
+            task = by_id.get(violation.task_id)
+            # 生成したタスク自身の警告からは、さらに提案を作らない（連鎖を断つ）。
+            # No proposals from a generated task's own alerts: that would chain.
+            if follow is None or task is None or task.origin:
+                continue
+            raised = (open_alerts.get(violation.key) or {}).get("raised_at")
+            if not raised or (now - datetime.fromisoformat(raised)).days < follow.after_days:
+                continue
+            proposal = self.task_engine.create_task(
+                followup_id(violation.rule, task.id, raised),
+                f"対応を決める: {task.title} — {violation.message}",
+                origin="followup", proposed=True, project=task.project,
+                priority=follow.priority, due_date=due_date(now, follow.due_in_days),
+                labels=(*follow.labels, violation.rule),
+                generated_from=f"alert:{violation.key}")
+            if proposal is None:
+                continue
+            created.append(proposal.id)
+            self._log("task_generated", now, task=proposal.id, title=proposal.title,
+                      origin="followup", alert=violation.key, pending=True)
+            if self.notify is not None:
+                try:
+                    self.notify(f"[提案] {proposal.title}（承認待ち: aipmo generated）")
+                except Exception:                          # noqa: BLE001
+                    logger.warning("提案の通知に失敗 / proposal notice failed", exc_info=True)
+        return created
+
+    def decide_proposal(self, ref: str, approve: bool) -> Task:
+        """提案を承認する／却下する。決定は判断ログに残る。"""
+        task = self.task_engine.decide_proposal(ref, approve)
+        self._log("proposal_approved" if approve else "proposal_rejected",
+                  self.task_engine.now(), task=task.id, title=task.title)
+        return task
+
+    def complete_task(self, ref: str) -> Task:
+        """台帳だけのタスクを完了にする(実績に残る)。"""
+        task = self.task_engine.complete(ref)
+        self._log("task_completed", self.task_engine.now(), task=task.id, title=task.title)
+        return task
 
     # -- 役割AIへ任せる / handing work to role AIs ------------------------------
 

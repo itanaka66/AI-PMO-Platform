@@ -461,6 +461,8 @@ h2:first-of-type { margin-top: 4px; }
 .pmo-agent[data-status="failed"], .pmo-agent[data-status="skipped"],
 .pmo-agent[data-status="abandoned"] { color: var(--fail); }
 .pmo-agent-result { white-space: pre-wrap; max-height: 12em; overflow: auto; margin-top: 2px; }
+.pmo-actions { display: flex; gap: 8px; margin-top: 4px; }
+.pmo-actions .btn { min-height: var(--tap); }
 .pmo-decisions { margin-top: 12px; }
 .pmo-decisions summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .pmo-decisions .pmo-meta { padding: 2px 0; font-family: var(--mono); }
