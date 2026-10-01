@@ -421,6 +421,7 @@ function empty(message) {
  */
 
 let jiraWritable = false;
+let pmoProject = "";          // 選択中のプロジェクト。空は「すべて」 / "" means all
 const STALE_SECONDS = 15 * 60;
 
 function el(tag, className, text) {
@@ -449,7 +450,8 @@ function taskRow(task) {
   const summary = el("summary");
   summary.append(el("span", "tag score", String(task.score)));
   summary.append(el("span", "pmo-title", task.title));
-  const meta = [task.key, task.assignee || task.suggested_assignee && `→ ${task.suggested_assignee}`,
+  const meta = [task.project, task.key,
+    task.assignee || task.suggested_assignee && `→ ${task.suggested_assignee}`,
     task.due_date].filter(Boolean).join(" · ");
   if (meta) summary.append(el("span", "pmo-meta", meta));
   row.append(summary);
@@ -464,7 +466,8 @@ function proposalRow(task) {
   const row = el("div", "pmo-proposal");
   row.append(el("div", "pmo-title", task.title));
   row.append(el("div", "pmo-meta",
-    `${task.key || ""} → ${task.suggested_assignee} — ${task.suggestion_reason || ""}`));
+    `${[task.project, task.key].filter(Boolean).join(" · ")} → ${task.suggested_assignee}`
+    + ` — ${task.suggestion_reason || ""}`));
   if (canRun) {
     const button = el("button", "btn btn-approve", t("web_pmo_accept", "Confirm assignee"));
     button.addEventListener("click", async () => {
@@ -490,6 +493,29 @@ function renderPmo(data, decisions) {
   const host = $("pmo");
   host.replaceChildren();
   const { briefing, tasks } = data;
+
+  // プロジェクトが2つ以上見えるときだけ、絞り込みを出す。閲覧者を1つに
+  // 限定しているなら、選ぶ余地が無いので出さない。
+  // The filter appears only when two or more projects are visible; a viewer
+  // confined to one has nothing to choose.
+  if ((data.projects || []).length > 1) {
+    const select = el("select", "pmo-project");
+    select.setAttribute("aria-label", t("web_pmo_all_projects", "All projects"));
+    const all = el("option", null, t("web_pmo_all_projects", "All projects"));
+    all.value = "";
+    select.append(all);
+    for (const name of data.projects) {
+      const option = el("option", null, name);
+      option.value = name;
+      select.append(option);
+    }
+    select.value = pmoProject;
+    select.addEventListener("change", () => {
+      pmoProject = select.value;
+      refreshPmo();
+    });
+    host.append(select);
+  }
 
   if (!briefing) {
     host.append(empty(t("web_pmo_none", "No PMO data yet.")));
@@ -588,8 +614,10 @@ async function refreshPmo() {
   // A deployment with no PMO data answers 404; that is an unused feature,
   // not an error, so the heading is hidden rather than toasting each refresh.
   try {
-    const data = await api("/api/pmo");
-    const { items } = await api("/api/pmo/decisions?limit=20").catch(() => ({ items: [] }));
+    const filter = pmoProject ? `project=${encodeURIComponent(pmoProject)}` : "";
+    const data = await api(filter ? `/api/pmo?${filter}` : "/api/pmo");
+    const { items } = await api(`/api/pmo/decisions?limit=20${filter ? "&" + filter : ""}`)
+      .catch(() => ({ items: [] }));
     $("h-pmo").hidden = false;
     renderPmo(data, items);
   } catch (error) {

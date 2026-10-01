@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .pmo_learning import DEFAULT_MIN_SAMPLES, LearnedModel, learn
-from .task_engine import Task, TaskEngine, _parse_date
+from .task_engine import Task, TaskEngine, _parse_date, side_path
 
 logger = logging.getLogger("aipmo.pmo_core")
 
@@ -187,6 +187,9 @@ class Member:
     name: str
     capacity: int = 5                    # 同時に持てる未完了タスク数 / open tasks at once
     skills: tuple[str, ...] = ()         # タスクのラベルと突き合わせる / matched to labels
+    # 担当してよいプロジェクト（小文字）。空なら全プロジェクト。
+    # Projects they may be assigned to (lower-case); empty means all.
+    projects: tuple[str, ...] = ()
 
 
 def load_members(raw: list[Any] | None) -> list[Member]:
@@ -199,6 +202,7 @@ def load_members(raw: list[Any] | None) -> list[Member]:
                 name=str(item["name"]),
                 capacity=max(1, int(item.get("capacity", 5))),
                 skills=tuple(str(s).lower() for s in item.get("skills") or []),
+                projects=tuple(str(p).lower() for p in item.get("projects") or []),
             ))
     return members
 
@@ -234,7 +238,13 @@ def suggest_assignee(task: Task, members: list[Member],
     room is better than silently piling more on someone.
     """
     labels = {label.lower() for label in task.labels}
-    open_members = [m for m in members if loads.get(m.name, 0) < m.capacity]
+    # 担当してよいプロジェクトを限られた人には、その外のタスクを提案しない。
+    # プロジェクトの分からないタスクは、制限の無い人にだけ。
+    # Someone limited to certain projects is never offered a task outside them;
+    # a task with no known project goes only to the unrestricted.
+    project = (getattr(task, "project", "") or "").lower()
+    eligible = [m for m in members if not m.projects or project in m.projects]
+    open_members = [m for m in eligible if loads.get(m.name, 0) < m.capacity]
     if not open_members:
         return None
 
@@ -326,6 +336,79 @@ def load_responses(raw: list[dict[str, Any]] | None) -> list[Response]:
     return responses
 
 
+# -- プロジェクトでの絞り込み / project scoping ---------------------------------
+
+def _priority_item(t: Task) -> dict[str, Any]:
+    return {"id": t.id, "title": t.title, "score": t.score, "assignee": t.assignee,
+            "due_date": t.due_date, "reasons": t.reasons, "project": t.project}
+
+
+def _level_of(severities: list[str]) -> str:
+    if "critical" in severities:
+        return "critical"
+    if "high" in severities:
+        return "high"
+    return "medium" if severities else "low"
+
+
+def _project_summary(active: list[Task], violations: list[Violation]) -> list[dict[str, Any]]:
+    """プロジェクトごとの件数・警告・レベル / per-project counts, alerts, level."""
+    by_id = {t.id: t for t in active}
+    names = sorted({t.project for t in active if t.project}, key=str.lower)
+    summary = []
+    for name in names:
+        mine = [v for v in violations
+                if v.task_id in by_id and by_id[v.task_id].project == name]
+        summary.append({
+            "project": name,
+            "active_count": sum(1 for t in active if t.project == name),
+            "alert_count": len(mine),
+            "level": _level_of([v.severity for v in mine]),
+        })
+    return summary
+
+
+def scope_briefing(briefing: dict[str, Any], active: list[Task],
+                   projects: set[str], *, redact_org: bool,
+                   top: int = 5) -> dict[str, Any]:
+    """ブリーフィングを、指定したプロジェクトのぶんだけに絞る。
+
+    `active` は絞り込み済みの未完了タスク（順位順）。全体レベル・件数・
+    優先順位は、絞った範囲で作り直す。`redact_org` が真のとき（閲覧者を
+    プロジェクトに限定しているとき）は、ほかのプロジェクトや組織全体が
+    透けるもの — メンバーの負荷、学習した補正、応答、ほかのプロジェクトの
+    一覧 — を取り除く。
+
+    Narrows a briefing to the given projects. `active` is the already-filtered
+    open tasks (ranked); level, count and priorities are rebuilt from them.
+    With `redact_org` (a viewer confined to some projects) everything that
+    would reveal other projects or the organisation as a whole — member load,
+    learned adjustments, responses, the other projects' list — is removed.
+    """
+    allowed = {p.lower() for p in projects}
+
+    def mine(item: dict[str, Any]) -> bool:
+        return (item.get("project") or "").lower() in allowed
+
+    alerts = [a for a in briefing["alerts"] if mine(a)]
+    scoped = {
+        **briefing,
+        "overall_level": _level_of([a["severity"] for a in alerts]),
+        "active_count": len(active),
+        "top_priorities": [_priority_item(t) for t in active[:top]],
+        "alerts": alerts,
+        "assignment_proposals": [p for p in briefing["assignment_proposals"] if mine(p)],
+        "unassignable": [u for u in briefing["unassignable"] if mine(u)],
+        "projects": [p for p in briefing.get("projects", [])
+                     if p["project"].lower() in allowed],
+        "scope": sorted(allowed),
+    }
+    if redact_org:
+        scoped.update(member_loads=[], overloaded_members=[], responses=[],
+                      learning=None)
+    return scoped
+
+
 # -- 統括 / the core ---------------------------------------------------------
 
 @dataclass
@@ -357,11 +440,11 @@ class PmoCore:
     background: bool = True
 
     def __post_init__(self) -> None:
-        base = self.task_engine.path.parent
-        self.state_path = self.state_path or base / "pmo-core-state.json"
-        self.decisions_path = self.decisions_path or base / "pmo-decisions.jsonl"
-        self.briefing_path = self.briefing_path or base / "pmo-briefing.json"
-        self.learned_path = self.learned_path or base / "pmo-learned.json"
+        ledger = self.task_engine.path
+        self.state_path = self.state_path or side_path(ledger, "pmo-core-state.json")
+        self.decisions_path = self.decisions_path or side_path(ledger, "pmo-decisions.jsonl")
+        self.briefing_path = self.briefing_path or side_path(ledger, "pmo-briefing.json")
+        self.learned_path = self.learned_path or side_path(ledger, "pmo-learned.json")
         self._state = self._load_state()
         self._running: set[str] = set()
         self._workers: list[threading.Thread] = []
@@ -645,26 +728,24 @@ class PmoCore:
             "generated_at": now.isoformat(),
             "overall_level": level,
             "active_count": len(active),
-            "top_priorities": [
-                {"id": t.id, "title": t.title, "score": t.score, "assignee": t.assignee,
-                 "due_date": t.due_date, "reasons": t.reasons}
-                for t in active[:top]
-            ],
+            "top_priorities": [_priority_item(t) for t in active[:top]],
             "alerts": [
                 {"rule": v.rule, "task": v.task_id,
                  "title": by_id[v.task_id].title if v.task_id in by_id else v.task_id,
+                 "project": by_id[v.task_id].project if v.task_id in by_id else "",
                  "severity": v.severity, "message": v.message}
                 for v in violations
             ],
             "assignment_proposals": [
                 {"task": t.id, "title": t.title, "assignee": t.suggested_assignee,
-                 "reason": t.suggestion_reason}
+                 "reason": t.suggestion_reason, "project": t.project}
                 for t in active if t.suggested_assignee
             ],
             "unassignable": [
-                {"task": t.id, "title": t.title} for t in active
+                {"task": t.id, "title": t.title, "project": t.project} for t in active
                 if self._team() and not t.assignee and not t.suggested_assignee
             ],
+            "projects": _project_summary(active, violations),
             "overloaded_members": overloaded,
             "member_loads": [
                 {"member": m.name, "load": loads[m.name], "capacity": m.capacity}

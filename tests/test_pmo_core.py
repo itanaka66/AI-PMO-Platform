@@ -31,7 +31,7 @@ def cand(**kw):
 
 def make(tmp_path, members=None, clock=None, notify=None, **kw):
     clock = clock or Clock()
-    te = TaskEngine(tmp_path / "ledger.json", now=clock)
+    te = TaskEngine(tmp_path / "task-ledger.json", now=clock)
     core = PmoCore(task_engine=te, members=members or [], notify=notify, **kw)
     return te, core, clock
 
@@ -203,7 +203,7 @@ def test_alert_state_survives_restart_without_renotifying(tmp_path):
     te, core, clock = make(tmp_path, notify=sent.append)
     te.ingest("t", "r", [cand(key="P-1", title="a", assignee="x", due_date="2026-09-25")])
     core.cycle()
-    te2 = TaskEngine(tmp_path / "ledger.json", now=clock)
+    te2 = TaskEngine(tmp_path / "task-ledger.json", now=clock)
     PmoCore(task_engine=te2, notify=sent.append).cycle()
     assert len(sent) == 1
 

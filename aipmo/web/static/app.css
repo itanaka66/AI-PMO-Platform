@@ -427,6 +427,11 @@ h2:first-of-type { margin-top: 4px; }
 }
 
 /* ---------- PMO Core ---------- */
+.pmo-project {
+  width: 100%; min-height: var(--tap); margin-bottom: 8px; padding: 0 10px;
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 4px;
+}
 .pmo-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .tag.level[data-level="critical"], .tag.level[data-level="high"] { color: var(--fail); border-color: var(--fail); }
 .tag.level[data-level="medium"] { color: var(--warn); border-color: var(--warn); }

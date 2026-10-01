@@ -72,8 +72,8 @@ from ..dsl import loader
 from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
-from ..pmo_core import PmoCore
-from ..task_engine import TaskEngine
+from ..pmo_core import PmoCore, scope_briefing
+from ..task_engine import LedgerTenantError, TaskEngine, side_path
 
 logger = logging.getLogger("aipmo.web")
 
@@ -166,8 +166,15 @@ def create_app(
     store: RunStore | None = None,
     cors_origins: list[str] | None = None,
     pmo_ledger: Path | None = None,
+    viewer_projects: list[str] | None = None,
 ):
     runs = store or RunStore()
+    # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
+    # 空のリストを「何も見せない」と読むと、設定の書き忘れで画面が空に
+    # なるだけで原因に気づけないので、制限なしとして扱う。
+    # Projects the viewer token may see; unset or empty means no limit (an
+    # empty list read as "show nothing" would only look like a broken screen).
+    scoped_projects = {p.lower() for p in (viewer_projects or []) if p} or None
     ui_lang = normalize(lang) if lang else detect()
     rate_limiter = RateLimiter(limit=10, window_seconds=60.0)
 
@@ -520,21 +527,48 @@ def create_app(
     def _pmo_files() -> tuple[Path, Path, Path]:
         if pmo_ledger is None:
             raise HTTPException(status_code=404, detail="PMO Core is not configured")
-        base = pmo_ledger.parent
-        return pmo_ledger, base / "pmo-briefing.json", base / "pmo-decisions.jsonl"
+        return (pmo_ledger, side_path(pmo_ledger, "pmo-briefing.json"),
+                side_path(pmo_ledger, "pmo-decisions.jsonl"))
 
-    def _ranked(ledger: Path) -> list[Any]:
-        store = TaskEngine(ledger)
+    def _open_store(ledger: Path) -> TaskEngine:
         try:
-            return store.ranked(limit=50)
-        finally:
-            store.close()
+            return TaskEngine(ledger, tenant=tenant or None)
+        except LedgerTenantError as exc:
+            # 別テナントの台帳を指している。データには一切触れずに断る。
+            # Pointed at another tenant's ledger: refuse without touching data.
+            logger.error("ledger tenant mismatch: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    def _allowed_projects(role: str, requested: str | None) -> set[str] | None:
+        """この呼び出しが見てよいプロジェクト（小文字）。None は制限なし。
+
+        閲覧用トークンに `web.viewer_projects` を設定していれば、閲覧者は
+        そのプロジェクトだけを見られる。絞り込み（?project=）はその内側でのみ。
+        範囲外のプロジェクトを名指しされたら 403 — 「無い」と答えて存在を
+        教えるより、権限が無いと答える方が、利用者が原因に気づける。
+
+        The projects this call may see (lower-case); None means no limit. With
+        `web.viewer_projects` set, a viewer sees those projects only, and a
+        ?project= filter narrows within them. Naming a project outside the
+        scope is a 403.
+        """
+        confined = scoped_projects if role == "viewer" else None
+        if requested:
+            wanted = requested.lower()
+            if confined is not None and wanted not in confined:
+                raise HTTPException(
+                    status_code=403,
+                    detail="this token cannot see that project")
+            return {wanted}
+        return confined
 
     @app.get("/api/pmo", dependencies=[guard])
-    def pmo_view() -> dict[str, Any]:
+    def pmo_view(project: str | None = None, role: str = guard) -> dict[str, Any]:
         ledger, briefing_file, _ = _pmo_files()
         if not TaskEngine.exists(ledger) and not briefing_file.exists():
             raise HTTPException(status_code=404, detail="no PMO data yet")
+        allowed = _allowed_projects(role, project)
+        confined = role == "viewer" and scoped_projects is not None
 
         briefing = None
         age = None
@@ -545,30 +579,74 @@ def create_app(
         except (OSError, ValueError, KeyError):
             briefing = None
 
+        active: list[Any] = []
+        names: list[str] = []
+        if TaskEngine.exists(ledger):
+            store = _open_store(ledger)
+            try:
+                active = store.ranked(projects=allowed)
+                names = [n for n in store.projects()
+                         if not confined or scoped_projects is None
+                         or n.lower() in scoped_projects]
+            finally:
+                store.close()
+
+        if briefing is not None and allowed is not None:
+            briefing = scope_briefing(briefing, active, allowed, redact_org=confined)
+
         tasks = [
             {"id": t.id, "key": t.key, "title": t.title, "score": t.score,
+             "project": t.project,
              "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
              "suggestion_reason": t.suggestion_reason, "due_date": t.due_date,
              "priority": t.priority, "status": t.status, "blocked": t.blocked,
              "reasons": t.reasons, "templates": t.templates}
-            for t in _ranked(ledger)
+            for t in active[:50]
         ]
-        return {"briefing": briefing, "briefing_age_seconds": age, "tasks": tasks}
+        return {"briefing": briefing, "briefing_age_seconds": age, "tasks": tasks,
+                "projects": names, "scoped": confined}
 
     @app.get("/api/pmo/decisions", dependencies=[guard])
-    def pmo_decisions(limit: int = 50) -> dict[str, Any]:
-        _, _, decisions = _pmo_files()
+    def pmo_decisions(limit: int = 50, project: str | None = None,
+                      role: str = guard) -> dict[str, Any]:
+        ledger, _, decisions = _pmo_files()
         limit = max(1, min(limit, 200))
+        allowed = _allowed_projects(role, project)
         try:
-            lines = decisions.read_text(encoding="utf-8").splitlines()[-limit:]
+            lines = decisions.read_text(encoding="utf-8").splitlines()
         except OSError:
             return {"items": []}
+
+        visible: set[str] | None = None
+        if allowed is not None:
+            # 判断ログの行はタスクの id を持つ。範囲内のプロジェクトのタスクの
+            # 行だけを返し、組織全体の判断（学習の更新など）は返さない。
+            # A log line carries its task id. Only lines about tasks in the
+            # allowed projects are returned; organisation-wide decisions
+            # (a learned-model update, say) are not.
+            visible = set()
+            if TaskEngine.exists(ledger):
+                store = _open_store(ledger)
+                try:
+                    visible = {t.id for t in store.tasks.values()
+                               if t.project.lower() in allowed}
+                finally:
+                    store.close()
+            lines = lines[-2000:]
+        else:
+            lines = lines[-limit:]
+
         items = []
         for line in reversed(lines):        # 新しい順 / newest first
             try:
-                items.append(json.loads(line))
+                entry = json.loads(line)
             except ValueError:
                 continue
+            if visible is not None and entry.get("task") not in visible:
+                continue
+            items.append(entry)
+            if len(items) >= limit:
+                break
         return {"items": items}
 
     @app.post("/api/pmo/assignments/accept")
@@ -592,7 +670,7 @@ def create_app(
                     raise RuntimeError(f"cannot resolve assignee {assignee!r} in Jira")
                 return result
 
-        store = TaskEngine(ledger)
+        store = _open_store(ledger)
         core = PmoCore(task_engine=store)
         try:
             task = core.accept_assignment(ref, write=write)

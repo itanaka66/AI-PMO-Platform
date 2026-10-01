@@ -46,7 +46,7 @@ import logging
 import re
 import sqlite3
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timezone
@@ -80,6 +80,34 @@ _CORROBORATION_CAP = 15
 _MAX_SOURCES = 10
 
 
+class LedgerTenantError(Exception):
+    """台帳の持ち主と違うテナントで開こうとした / opened by the wrong tenant."""
+
+
+_KEY_PROJECT = re.compile(r"^([A-Za-z][A-Za-z0-9_]*)-\d+$")
+
+
+def project_of_key(key: str | None) -> str:
+    """`PROJ-123` → `PROJ`。課題キーの形でなければ空 / project from an issue key."""
+    match = _KEY_PROJECT.match(key or "")
+    return match.group(1) if match else ""
+
+
+def side_path(ledger: Path | str, name: str) -> Path:
+    """台帳の隣に置くファイル（ブリーフィング・判断ログなど）の場所。
+
+    既定の台帳 `task-ledger.db` では従来の名前のまま。別名の台帳
+    （`acme.db` など）では `acme.` を前に付け、同じディレクトリに置いた
+    複数の台帳がお互いのファイルを上書きしないようにする。
+
+    Where the files beside a ledger live. The default ledger keeps the
+    traditional names; a ledger named otherwise (`acme.db`) prefixes its own
+    stem, so several ledgers in one directory never overwrite each other's.
+    """
+    db = TaskEngine.resolve_path(ledger)
+    return db.parent / (name if db.stem == "task-ledger" else f"{db.stem}.{name}")
+
+
 @dataclass
 class Task:
     id: str                       # 統合キー / merge key ("JIRA:PROJ-1" or "T:<title>")
@@ -92,6 +120,11 @@ class Task:
     blocked: bool = False
     done: bool = False
     labels: list[str] = field(default_factory=list)
+    # 所属プロジェクト。課題キーの接頭辞、または出力の project、なければ
+    # 実行パラメータ（jira_project / project）から決まる。
+    # The project it belongs to: the issue-key prefix, an explicit `project`
+    # in the output, else the run's jira_project / project parameter.
+    project: str = ""
     # 現在の状態／ブロックになってからの時刻。進捗ルール（停滞・長期ブロック）
     # が「どれだけ続いているか」を数えるのに使う。
     # When the current status / blocked state began; progress rules use these
@@ -227,6 +260,7 @@ def extract_candidates(output: Any) -> list[dict[str, Any]]:
             "priority": _text(item.get("priority")),
             "status": status,
             "labels": [str(label) for label in labels],
+            "project": _text(item.get("project")) or project_of_key(key),
             "blocked": (
                 any(str(label).lower() in _BLOCKED_MARKERS for label in labels)
                 or bool(status and status.lower() in _BLOCKED_MARKERS)
@@ -284,8 +318,10 @@ class TaskEngine:
         path: Path,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         stale_days: int = 30,
+        tenant: str | None = None,
     ) -> None:
         self.path = self.resolve_path(path)
+        self.tenant = tenant or None
         self.now = now
         # 最後に挙がってからこの日数を過ぎた未完了は台帳から外す。
         # どのテンプレートももう挙げないものが、永久に上位を占めないように。
@@ -374,6 +410,36 @@ class TaskEngine:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(_SCHEMA)
         self._import_legacy(conn)
+        self._claim_tenant(conn)
+
+    def _claim_tenant(self, conn: sqlite3.Connection) -> None:
+        """台帳にテナントを刻印し、食い違う持ち主での起動を拒否する。
+
+        別テナントの設定で、同じ台帳ファイルを指してしまう事故（設定の
+        コピー、ボリュームの取り違え）を、データが混ざる前に止める。
+        刻印の無い既存の台帳は、最初に開いたテナントのものになる。
+
+        Stamps the ledger with its tenant and refuses a different one, so a
+        copied config or a mixed-up volume is stopped before any data mixes.
+        A pre-existing unstamped ledger belongs to the first tenant to open it.
+        """
+        if self.tenant is None:
+            return
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute("SELECT value FROM meta WHERE key = 'tenant'").fetchone()
+            if row is None:
+                conn.execute("INSERT INTO meta VALUES ('tenant', ?)", (self.tenant,))
+            owner = row[0] if row else self.tenant
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        if owner != self.tenant:
+            raise LedgerTenantError(
+                f"この台帳はテナント '{owner}' のものです（'{self.tenant}' では開けません）: "
+                f"{self.path} / this ledger belongs to tenant '{owner}', "
+                f"not '{self.tenant}'")
 
     def _import_legacy(self, conn: sqlite3.Connection) -> None:
         legacy = self.path.with_suffix(".json")
@@ -418,6 +484,8 @@ class TaskEngine:
                 task = Task(**json.loads(data))
             except (TypeError, ValueError):
                 continue     # 読めない行は飛ばす / skip an unreadable row
+            if not task.project and task.key:
+                task.project = project_of_key(task.key)   # 以前の行 / older rows
             tasks[task.id] = task
         self.tasks = tasks
         self._persisted = {tid: _dump(t) for tid, t in tasks.items()}
@@ -525,42 +593,70 @@ class TaskEngine:
                 if result.status == "success":
                     harvested.extend(extract_candidates(result.output))
             if harvested:
-                self.ingest(template_name, ctx.run_id, harvested)
+                params = getattr(ctx, "params", None) or {}
+                default = _text(params.get("jira_project") or params.get("project"))
+                self.ingest(template_name, ctx.run_id, harvested, project=default)
         except Exception:
             logger.warning("%s: タスクの収集に失敗 / harvest failed",
                            template_name, exc_info=True)
 
     def ingest(self, template: str, run_id: str,
-               candidates: list[dict[str, Any]]) -> int:
-        """候補を台帳へ統合する。戻り値は新規に増えたタスク数。"""
+               candidates: list[dict[str, Any]], project: str | None = None) -> int:
+        """候補を台帳へ統合する。戻り値は新規に増えたタスク数。
+
+        `project` は、候補自身が project を持たないときの既定（実行パラメータ由来）。
+        `project` is the default for candidates that name none themselves.
+        """
         stamp = self.now().isoformat()
         created = 0
         with self.transaction():
             for candidate in candidates:
-                if self._merge(candidate, template, run_id, stamp):
+                if self._merge(candidate, template, run_id, stamp, project):
                     created += 1
             self._rescore_locked()
         return created
+
+    @staticmethod
+    def _title_id(project: str, title: str) -> str:
+        # キー無しタスクの同一性はプロジェクト内だけ。別プロジェクトの
+        # 同名タスク（「議事録を共有する」など）を1件にしてしまわない。
+        # Keyless identity holds only within a project: same-titled tasks in
+        # different projects must never be merged into one.
+        normalized = _normalize_title(title)
+        return f"T:{project.lower()}:{normalized}" if project else f"T:{normalized}"
 
     def _find(self, candidate: dict[str, Any]) -> Task | None:
         key = candidate["key"]
         if key and f"JIRA:{key}" in self.tasks:
             return self.tasks[f"JIRA:{key}"]
-        # キー無しで拾われていた同名タスクに、キーを結び付ける。
-        # Attach a key to a same-titled task first seen without one.
-        title_id = f"T:{_normalize_title(candidate['title'])}"
-        return self.tasks.get(title_id)
+        # キー無しで拾われていた同名タスクに、キーを結び付ける。プロジェクトが
+        # 分かる前に拾われた（project が空の）古いものは、同名なら引き継ぐ。
+        # Attach a key to a same-titled task first seen without one. An older
+        # task picked up before its project was known (project empty) is
+        # adopted when the title matches.
+        project = candidate["project"]
+        for title_id in dict.fromkeys([self._title_id(project, candidate["title"]),
+                                       self._title_id("", candidate["title"])]):
+            found = self.tasks.get(title_id)
+            if found is not None and (not found.project or not project
+                                      or found.project.lower() == project.lower()):
+                return found
+        return None
 
     def _merge(self, candidate: dict[str, Any], template: str,
-               run_id: str, stamp: str) -> bool:
+               run_id: str, stamp: str, default_project: str | None = None) -> bool:
         source = {"template": template, "run_id": run_id, "seen_at": stamp}
+        candidate = {**candidate,
+                     "project": (candidate.get("project") or project_of_key(candidate["key"])
+                                or default_project or "")}
         task = self._find(candidate)
         is_new = task is None
 
         if task is None:
             key = candidate["key"]
             task = Task(
-                id=f"JIRA:{key}" if key else f"T:{_normalize_title(candidate['title'])}",
+                id=(f"JIRA:{key}" if key
+                    else self._title_id(candidate["project"], candidate["title"])),
                 title=candidate["title"], first_seen=stamp, status_since=stamp,
             )
             self.tasks[task.id] = task
@@ -570,6 +666,7 @@ class TaskEngine:
             self.tasks[task.id] = task
 
         task.key = task.key or candidate["key"]
+        task.project = task.project or candidate["project"]
         if candidate["key"]:
             task.title = candidate["title"]  # キー付き（課題管理側）の題名を正とする
         task.assignee = candidate["assignee"] or task.assignee
@@ -655,7 +752,16 @@ class TaskEngine:
                 continue
             task.score, task.reasons = score_task(task, today, self.label_bonus)
 
-    def ranked(self, assignee: str | None = None, limit: int | None = None) -> list[Task]:
+    def projects(self) -> list[str]:
+        """未完了タスクがあるプロジェクト名（重複なし・並び順固定）。"""
+        self.sync()
+        with self._lock:
+            names = {t.project for t in self.tasks.values() if not t.done and t.project}
+        return sorted(names, key=str.lower)
+
+    def ranked(self, assignee: str | None = None, limit: int | None = None,
+               project: str | None = None,
+               projects: Iterable[str] | None = None) -> list[Task]:
         """未完了を優先順に。同点は期限が早い方、それも同じなら id で安定させる。
 
         取引の外では、先に最新の台帳を読み直す。
@@ -666,5 +772,12 @@ class TaskEngine:
             active = [t for t in self.tasks.values() if not t.done]
         if assignee is not None:
             active = [t for t in active if t.assignee == assignee]
+        allowed = {p.lower() for p in projects} if projects is not None else None
+        if project is not None:
+            allowed = {project.lower()} if allowed is None else allowed & {project.lower()}
+        if allowed is not None:
+            # project の無いタスクは、絞り込みの対象外（見せない）。
+            # A task with no project is never shown through a project filter.
+            active = [t for t in active if t.project.lower() in allowed]
         active.sort(key=lambda t: (-t.score, t.due_date or "9999-12-31", t.id))
         return active[:limit] if limit else active

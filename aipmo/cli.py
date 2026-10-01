@@ -314,6 +314,20 @@ def ledger_path(config: dict[str, Any], base: Path) -> Path:
     return path if path.is_absolute() else base / path
 
 
+def open_ledger(config: dict[str, Any], base: Path, **kwargs: Any):
+    """台帳を開く。設定のテナントの持ち物でなければ設定エラーにする。
+
+    Opens the ledger; one that belongs to another tenant is a config error.
+    """
+    from .task_engine import LedgerTenantError, TaskEngine
+
+    try:
+        return TaskEngine(ledger_path(config, base),
+                          tenant=config.get("tenant") or None, **kwargs)
+    except LedgerTenantError as exc:
+        raise ConfigError(str(exc)) from exc
+
+
 def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
                        default: bool, launch: bool = False):
     """複数テンプレート横断の Task Engine を Engine に繋ぐ。
@@ -325,8 +339,6 @@ def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
     resident `aipmo schedule`; elsewhere only when config.yaml has a
     `task_engine:` section. `enabled: false` always turns it off.
     """
-    from .task_engine import TaskEngine
-
     section = config.get("task_engine")
     if isinstance(section, dict):
         enabled = bool(section.get("enabled", True))
@@ -334,8 +346,7 @@ def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
         section, enabled = {}, default
     if not enabled:
         return None
-    path = ledger_path(config, base)
-    task_engine = TaskEngine(path, stale_days=int(section.get("stale_days", 30)))
+    task_engine = open_ledger(config, base, stale_days=int(section.get("stale_days", 30)))
     task_engine.attach(engine)
     return build_pmo_core(config, task_engine, engine, base if launch else None)
 
@@ -413,26 +424,37 @@ def _template_index(root: Path) -> dict[str, Any]:
 
 
 def _open_ledger(args: argparse.Namespace):
-    from .task_engine import TaskEngine
-
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
-    return config, build_pmo_core(config, TaskEngine(ledger_path(config, base)))
+    return config, build_pmo_core(config, open_ledger(config, base))
 
 
 def cmd_pmo(args: argparse.Namespace) -> int:
     """PMO Core のブリーフィングを表示する / show the PMO Core briefing."""
+    from .pmo_core import scope_briefing
+
     try:
         _, core = _open_ledger(args)
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
     briefing = core.cycle()
+    if args.project:
+        # 周は組織全体で回し、表示だけをプロジェクトに絞る。
+        # The cycle runs over everything; only what is shown is narrowed.
+        wanted = {args.project.lower()}
+        briefing = scope_briefing(
+            briefing, core.task_engine.ranked(project=args.project), wanted,
+            redact_org=False)
     if args.json:
         print(json.dumps(briefing, ensure_ascii=False, indent=2))
         return 0
 
     print(f"全体: {briefing['overall_level']}   未完了 {briefing['active_count']} 件")
+    if len(briefing.get("projects", [])) > 1:
+        print("プロジェクト / projects: " + ", ".join(
+            f"{p['project']}({p['level']}, {p['active_count']}件)"
+            for p in briefing["projects"]))
     print("\n優先順位 / top priorities")
     for i, item in enumerate(briefing["top_priorities"], 1):
         print(f"  {i}. [{item['score']:>3}] {item['title']}"
@@ -471,7 +493,8 @@ def cmd_assign(args: argparse.Namespace) -> int:
     core.cycle()
 
     if not args.ref:
-        proposals = [t for t in core.task_engine.ranked() if t.suggested_assignee]
+        proposals = [t for t in core.task_engine.ranked(project=args.project)
+                     if t.suggested_assignee]
         if not proposals:
             print("提案はありません / no proposals")
         for t in proposals:
@@ -513,13 +536,16 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
 def cmd_tasks(args: argparse.Namespace) -> int:
     """横断の優先順位を表示する / show the cross-template ranking."""
-    from .task_engine import TaskEngine
-
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
-    task_engine = TaskEngine(ledger_path(config, base))
+    try:
+        task_engine = open_ledger(config, base)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
     task_engine.refresh()
-    ranked = task_engine.ranked(assignee=args.assignee, limit=args.limit)
+    ranked = task_engine.ranked(assignee=args.assignee, limit=args.limit,
+                                project=args.project)
     if not ranked:
         print("タスクはありません / no tasks. "
               "(`aipmo schedule` が走ると集まります / gathered while the scheduler runs)")
@@ -529,8 +555,9 @@ def cmd_tasks(args: argparse.Namespace) -> int:
         due = task.due_date or "-"
         if not task.assignee and task.suggested_assignee:
             who = f"担当未定→提案 {task.suggested_assignee}"
+        where = f"{task.project}, " if task.project and not args.project else ""
         print(f"{position:>3}. [{task.score:>3}] {task.key or '':<10} {task.title}"
-              f"  ({who}, 期限 {due}, {', '.join(task.templates)})")
+              f"  ({where}{who}, 期限 {due}, {', '.join(task.templates)})")
         if args.why:
             for reason in task.reasons:
                 print(f"        - {reason}")
@@ -604,12 +631,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     base = Path(args.config).resolve().parent
     engine = build_engine(config)
-    attach_task_engine(engine, config, base, default=False)
+    try:
+        attach_task_engine(engine, config, base, default=False)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
     template_root = Path(web.get("templates_dir", "templates")).resolve()
     app = create_app(engine, template_root, token, viewer_token=viewer_token,
                      tenant=config.get("tenant", ""), lang=config.get("lang"),
                      cors_origins=cors_origins or None,
-                     pmo_ledger=ledger_path(config, base))
+                     pmo_ledger=ledger_path(config, base),
+                     viewer_projects=web.get("viewer_projects"))
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()
@@ -851,6 +883,7 @@ def main(argv: list[str] | None = None) -> int:
     p_tasks = sub.add_parser(
         "tasks", help="テンプレート横断のタスク優先順位 / cross-template task ranking")
     p_tasks.add_argument("--assignee", help="担当者で絞る / filter by assignee")
+    p_tasks.add_argument("--project", help="プロジェクトで絞る / filter by project")
     p_tasks.add_argument("--limit", type=int, default=20,
                          help="表示件数 / how many to show")
     p_tasks.add_argument("--why", action="store_true",
@@ -860,11 +893,13 @@ def main(argv: list[str] | None = None) -> int:
     p_pmo = sub.add_parser(
         "pmo", help="PMO Core のブリーフィング / PMO Core briefing")
     p_pmo.add_argument("--json", action="store_true", help="JSON で出力 / print as JSON")
+    p_pmo.add_argument("--project", help="プロジェクトに絞って表示 / show one project only")
     p_pmo.set_defaults(func=cmd_pmo)
 
     p_assign = sub.add_parser(
         "assign", help="担当の提案を見る・確定する / list or confirm assignment proposals")
     p_assign.add_argument("ref", nargs="?", help="確定するタスクの Jira キー／id")
+    p_assign.add_argument("--project", help="一覧をプロジェクトで絞る / filter the list by project")
     p_assign.add_argument("--apply", action="store_true",
                           help="提案を確定する（ref が必要）/ confirm the proposal for ref")
     p_assign.add_argument("--jira", action="store_true",

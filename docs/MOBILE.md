@@ -269,6 +269,24 @@ because that is what you came to look at.
 出ます（閲覧用では出ず、サーバーも 403 で断ります）。Jira アダプタがあれば Jira の担当者も
 更新します。画面は台帳を読むだけで、周を回したり、通知や自動起動を起こしたりはしません。
 常駐側の更新が 15 分以上止まっていると、その旨を警告します。
+プロジェクトが 2 つ以上あるときは先頭に絞り込みが出ます。
+
+閲覧用トークンを特定のプロジェクトに限定するには、`config.yaml` に書きます
+（未設定・空なら制限なし）。
+
+```yaml
+web:
+  viewer_projects: [ALPHA, BETA]   # 閲覧用トークンが見てよいプロジェクト
+```
+
+限定された閲覧者には、そのプロジェクトのタスク・警告・担当の提案・判断だけが返ります。
+メンバーの負荷・学習した補正・高リスク時の応答・ほかのプロジェクトの一覧は返りません。
+範囲外のプロジェクトを指定すると 403 です。実行用トークンは制限されません。
+
+With `web.viewer_projects` set, the viewer token sees only those projects'
+tasks, alerts, proposals and decisions — no member load, learned adjustments,
+responses or other projects — and naming a project outside the scope is a 403.
+The operator token is never confined.
 
 **PMO Core** — at the top, only where a ledger written by `aipmo schedule`
 exists. Overall level, alerts, assignment proposals, priorities (tap for the

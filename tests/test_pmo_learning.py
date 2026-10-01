@@ -85,7 +85,7 @@ def test_undated_outcomes_are_ignored_and_result_is_deterministic():
 
 def test_ledger_records_outcome_when_completion_is_observed(tmp_path):
     clock = Clock()
-    te = TaskEngine(tmp_path / "l.json", now=clock)
+    te = TaskEngine(tmp_path / "task-ledger.json", now=clock)
     te.ingest("t", "r1", [cand(key="P-1", title="a", assignee="ann",
                                due_date="2026-09-28", labels=["DB"])])
     clock.now = NOW + timedelta(days=1)
@@ -95,11 +95,11 @@ def test_ledger_records_outcome_when_completion_is_observed(tmp_path):
     # 最初から完了で現れたものは、観測していないので残さない
     te.ingest("t", "r3", [cand(key="P-2", title="b", done=True)])
     assert len(te.outcomes) == 1
-    assert TaskEngine(tmp_path / "l.json").outcomes == te.outcomes
+    assert TaskEngine(tmp_path / "task-ledger.json").outcomes == te.outcomes
 
 
 def test_learned_label_bonus_raises_rank_and_explains_itself(tmp_path):
-    te = TaskEngine(tmp_path / "l.json", now=Clock())
+    te = TaskEngine(tmp_path / "task-ledger.json", now=Clock())
     te.ingest("t", "r", [cand(key="P-1", title="a", labels=["x"]),
                          cand(key="P-2", title="b", labels=["db"])])
     assert te.ranked()[0].key == "P-1"        # 同点は id 順
@@ -112,7 +112,7 @@ def test_learned_label_bonus_raises_rank_and_explains_itself(tmp_path):
 
 
 def test_core_applies_learned_capacity_and_logs_model_change(tmp_path):
-    te = TaskEngine(tmp_path / "l.json", now=Clock())
+    te = TaskEngine(tmp_path / "task-ledger.json", now=Clock())
     te.add_outcomes([outcome("ann", 0)] * 10 + [outcome("bob", 4)] * 10)
     core = PmoCore(task_engine=te, members=[Member("ann", capacity=4),
                                             Member("bob", capacity=4)])
@@ -126,7 +126,7 @@ def test_core_applies_learned_capacity_and_logs_model_change(tmp_path):
 
 
 def test_learning_can_be_switched_off(tmp_path):
-    te = TaskEngine(tmp_path / "l.json", now=Clock())
+    te = TaskEngine(tmp_path / "task-ledger.json", now=Clock())
     te.add_outcomes([outcome("ann", 0)] * 10 + [outcome("bob", 4)] * 10)
     core = PmoCore(task_engine=te, members=[Member("ann", capacity=4)], learning=False)
     assert core.cycle()["member_loads"][0]["capacity"] == 4
@@ -136,7 +136,7 @@ def test_learning_can_be_switched_off(tmp_path):
 
 def risky(tmp_path, clock=None, **kw):
     clock = clock or Clock()
-    te = TaskEngine(tmp_path / "l.json", now=clock)
+    te = TaskEngine(tmp_path / "task-ledger.json", now=clock)
     te.ingest("t", "r", [cand(key="P-1", title="a", assignee="x", due_date="2026-09-01")])
     launched = []
     responses = load_responses([{"id": "replan", "template": "wbs_replan",
@@ -239,7 +239,7 @@ def test_cli_wiring_really_runs_the_configured_template(tmp_path):
     config = {"adapters": {"mode": "mock"}, "web": {"templates_dir": "templates"},
               "pmo_core": {"responses": [{"id": "r", "template": "replan"}]}}
     engine = cli.build_engine(config, tmp_path)
-    te = TaskEngine(tmp_path / "l.json", now=Clock())
+    te = TaskEngine(tmp_path / "task-ledger.json", now=Clock())
     te.attach(engine)
     te.ingest("t", "r0", [cand(key="P-1", title="a", assignee="x", due_date="2026-09-01")])
 
