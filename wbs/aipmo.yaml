@@ -310,11 +310,23 @@ wbs:
             - "docs/SELF-WBS.md"
         - id: "5.5"
           name: "WBS の変更提案を人が承認して WBS ファイルへ反映する（wbs_replan との接続）"
-          status: todo
+          status: done
           effort: 5
-          priority: Medium
           depends_on: ["5.1", "3.2"]
-          notes: "提案のみ。ファイルの書き換えは承認後に人が PR で行う前提"
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/wbs_edit.py"
+            - "aipmo/wbs_proposals.py"
+            - "aipmo/adapters/wbs_replan.py::def propose"
+            - "tests/test_wbs_proposals.py::test_approving_applies_the_change_and_records_it"
+            - "docs/SELF-WBS.md"
+          notes: "決まった形の変更（set / add_evidence / add）だけ。反映は人の確定した操作で、反映後の内容まで検証してから書く。実 PostgreSQL では未検証"
+        - id: "5.7"
+          name: "WBS の変更提案を PostgreSQL 無しで扱う（台帳に置く）／実 PostgreSQL で承認→反映を確かめる"
+          status: todo
+          effort: 3
+          priority: Low
+          depends_on: ["5.5"]
         - id: "5.6"
           name: "WBS の更新漏れ（maybe_done）を PR に知らせる"
           status: todo

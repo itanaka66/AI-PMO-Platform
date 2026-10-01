@@ -79,11 +79,59 @@ adapters:
 | 「次に着手できる」から、今週の作業を選ぶ |
 | 速度が落ちていれば、原因を見て作業を分けるか、期限を見直す |
 
+
+## WBS の変更提案を承認して、ファイルへ反映する / Approving a replan proposal
+
+WBS 再計画 AI（`wbs_replan`）の提案は、PostgreSQL に**承認待ち**で記録されます。提案の `diff` に、決まった形の
+変更の一覧（`changes`）が入っていれば、人が承認したときに **WBS ファイルへ反映**されます
+（`templates/examples/wbs_file_replan.yaml` が、WBS ファイルを読んでそれを提案する例）。
+
+```json
+{"changes": [
+  {"op": "set", "node": "3.5", "field": "due", "value": "2026-11-01"},
+  {"op": "add_evidence", "node": "3.5", "values": ["aipmo/foo.py::def bar"]},
+  {"op": "add", "parent": "3", "node": {"id": "3.13", "name": "分けた作業", "effort": 2}}
+]}
+```
+
+操作は `set`（`name` `status` `effort` `priority` `due` `owner` `notes` `done_on` `depends_on`）、`add_evidence`、
+`add`（すでに子を持つ親の下に作業を足す）だけです。**消す・id を変える・動かすことはできません。**
+詳しい仕様は [aipmo/wbs_edit.py](../aipmo/wbs_edit.py)。
+
+```yaml
+adapters:
+  postgres: { ... }
+  wbs_replan: { file: wbs/aipmo.yaml, root: . }   # 反映先。あると提案の時点でファイルに当てて確かめる
+```
+
+```bash
+aipmo wbs proposals                  # 承認待ちの一覧（反映できる形かも出る）
+aipmo wbs proposals show ID          # 提案の中身と、WBS ファイルがどう変わるか（何も書かない）
+aipmo wbs proposals approve ID       # 承認して、WBS ファイルへ反映する
+aipmo wbs proposals reject ID        # 却下する（ファイルは変えない）
+aipmo wbs proposals apply ID         # 承認済みの提案を反映し直す（反映に失敗したとき）
+```
+
+Web 画面の承認ボタンも同じです（`adapters.wbs_replan.file` があるとき、承認が反映までひと続きになる）。
+
+守ること:
+
+- **反映の前に、反映後の内容まで作って検証する。** 結果を WBS として読み直し、(1) 新しい誤りが増えない、
+  (2) 完了にするものには `done_on` と実在する証拠がある、(3) 頼んでいないノードが変わっていない、を満たさなければ、
+  **何も書かず、提案は承認待ちのまま**理由を返す。
+- **書式を壊さない。** YAML を作り直さず、対象の行だけを書き換える（コメント・並び・引用符・改行コードはそのまま）。
+  反映後は `git diff` で確かめてコミット（PR）する。
+- **対象の WBS が違えば反映しない。** 提案の `wbs_id` とファイルの `wbs.id` が同じときだけ。
+- **競合しない。** 読んだ後にファイルが書き換えられていたら書かない（承認は済み、`apply` で反映し直せる）。
+- **二重に反映しない。** 反映した提案は判断ログに記録され、もう一度反映すると、その後の人の修正を戻して
+  しまうので `apply` は止まる（`--force` で上書き）。
+- **決まった形でない提案**（自由な文章の再計画案）は、これまでどおり承認の記録だけで、ファイルは変わらない。
+- 反映を実行するのは**人の確定した操作だけ**（CLI・Web の承認）。常駐は WBS ファイルを書かない。
+
 ## できないこと / Not (yet) done
 
-- **WBS の変更提案を AI が出す仕組みは未接続**（WBS 項 5.5）。既存の `wbs_replan`
-  （提案 → 人が承認）は PostgreSQL 上の WBS を相手にしていて、このファイルには
-  つながっていない。今は人が PR で直す。
+- **WBS の変更提案の置き場は PostgreSQL**（`wbs_replan`）。PostgreSQL が無い環境では、提案を
+  貯めて承認する流れは使えない（台帳に置く版は未実装。WBS 項 5.7）。
 - **担当者（`owner`）の書き戻しは無い。** Task Engine で担当を確定しても、台帳に
   残るだけで WBS ファイルは変わらない（読み取り専用のため）。
 - 証拠は「ファイルと語句が在る」ことの確認で、**中身が正しく動くこと**までは

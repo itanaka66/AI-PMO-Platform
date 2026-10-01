@@ -36,9 +36,12 @@ behaviour unchanged.
 """
 from __future__ import annotations
 
+from datetime import date
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from ..wbs_edit import WbsEditError, plan_changes, validate_changes
 from .base import Adapter, AdapterError, action
 from .postgres import PostgresAdapter
 
@@ -46,9 +49,17 @@ from .postgres import PostgresAdapter
 class WbsReplanAdapter(Adapter):
     name = "wbs_replan"
 
-    def __init__(self, postgres: PostgresAdapter, **config: Any) -> None:
+    def __init__(self, postgres: PostgresAdapter, file: str | None = None,
+                 root: str | None = None, **config: Any) -> None:
         super().__init__(**config)
         self.postgres = postgres
+        # 反映先の WBS ファイル（任意）。あると、`diff.changes` を提案の時点で、実際の
+        # ファイルに当てて確かめる（反映できない提案は、人に回る前に AI へ差し戻す）。
+        # The WBS file proposals are applied to (optional). With it, `diff.changes` is
+        # dry-run against the real file at proposal time, so an unapplicable proposal
+        # goes back to the model instead of reaching a human.
+        self.file = Path(file) if file else None
+        self.root = Path(root) if root else (self.file.parent if self.file else None)
 
     def health_check(self) -> bool:
         return self.postgres.health_check()
@@ -72,7 +83,28 @@ class WbsReplanAdapter(Adapter):
         option_label を指定すると、同じ wbs_id・tier に対する複数の代替案
         (A/B) をそれぞれ独立した提案として残せる。省略時は単一案として、
         従来と同じ冪等キー（wbs_id:tier）を使う。
+
+        `diff` に `changes`（決まった形の変更の一覧。aipmo/wbs_edit.py）を入れると、人が
+        承認したときに WBS ファイルへ**自動で反映できる**。形が正しいか（反映先のファイルが
+        設定されていれば、そのファイルに当てて反映できるか）を、ここで確かめる。誤りは
+        エラーで返すので、直して呼び直すこと。`changes` の無い diff は、これまでどおり
+        自由な形で、承認しても記録だけ。
+
+        Put `changes` (the fixed-shape list, aipmo/wbs_edit.py) in `diff` and approval can
+        apply it to the WBS file. Its shape — and, when a target file is configured, that it
+        applies cleanly to it — is checked here and reported as an error to fix and retry.
         """
+        if isinstance(diff, dict) and "changes" in diff:
+            try:
+                clean = validate_changes(diff["changes"])
+                if self.file is not None:
+                    plan_changes(self.file, self.root or self.file.parent, clean,
+                                 as_of=date.today(), expect_wbs_id=wbs_id)
+            except WbsEditError as exc:
+                raise AdapterError(
+                    "wbs_replan: diff.changes を WBS に反映できません: "
+                    + "; ".join(exc.problems)) from exc
+            diff = {**diff, "changes": clean}
         snapshot = self.postgres.query("latest_forecast_snapshot", {"wbs_id": wbs_id})
         row = snapshot["rows"][0] if snapshot["rows"] else None
         if row is None or row.get("tier") is None:

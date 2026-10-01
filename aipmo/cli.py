@@ -248,8 +248,12 @@ def build_engine(
             )
         from .adapters.wbs_replan import WbsReplanAdapter
 
+        replan_spec = dict(adapter_config["wbs_replan"] or {})
         adapters.register(WbsReplanAdapter(
-            postgres=cast(PostgresAdapter, adapters.get("postgres"))))
+            postgres=cast(PostgresAdapter, adapters.get("postgres")),
+            file=str(resolve(str(replan_spec["file"]))) if replan_spec.get("file") else None,
+            root=str(resolve(str(replan_spec.get("root", ".")))) if replan_spec.get("file")
+            else None))
 
     # ベクトルストアは5種類のうちどれを設定してもよい。ちょうど1つだけ
     # 設定されているときは、論理名 vector_store でも同じインスタンスを
@@ -542,6 +546,21 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
                    agent_timeout_minutes=int(agents_config.get("timeout_minutes", 60)),
                    agent_max_per_day=int(agents_config.get("max_per_day", 20)),
                    responses=responses, launcher=launcher)
+
+
+def _wbs_target(config: dict[str, Any], base: Path):
+    """Web で承認した WBS 変更提案を反映する先。`adapters.wbs_replan.file` があるときだけ。"""
+    from .task_engine import side_path
+    from .wbs_proposals import Target
+
+    spec = (config.get("adapters") or {}).get("wbs_replan") or {}
+    if not spec.get("file"):
+        return None
+    file = Path(str(spec["file"]))
+    root = Path(str(spec.get("root", ".")))
+    return Target(file=(file if file.is_absolute() else base / file).resolve(),
+                  root=(root if root.is_absolute() else base / root).resolve(),
+                  decisions=side_path(ledger_path(config, base), "pmo-decisions.jsonl"))
 
 
 def _web_filing(config: dict[str, Any]):
@@ -1144,6 +1163,9 @@ def cmd_wbs(args: argparse.Namespace) -> int:
 
     from .wbs import WbsError, analyse, load_wbs
 
+    if args.wbs_command == "proposals":
+        return cmd_wbs_proposals(args)
+
     root = Path(args.root).resolve() if args.root else Path.cwd()
     target = (root / args.file).resolve()
     try:
@@ -1173,6 +1195,120 @@ def cmd_wbs(args: argparse.Namespace) -> int:
     failed = analysis["error_count"] > 0 or (
         args.wbs_command == "check" and args.strict and analysis["warning_count"] > 0)
     return 1 if failed else 0
+
+
+def cmd_wbs_proposals(args: argparse.Namespace) -> int:
+    """承認待ちの WBS 変更提案（wbs_replan）を見る／承認して WBS ファイルへ反映する。
+
+    `aipmo wbs proposals`                  … 承認待ちの一覧（反映できる形かも表示）
+    `aipmo wbs proposals show ID`          … 提案の中身と、WBS ファイルがどう変わるか（書かない）
+    `aipmo wbs proposals approve ID`       … 承認して WBS ファイルへ反映する（人の確定した操作）
+    `aipmo wbs proposals reject ID`        … 却下する（ファイルは変えない）
+    `aipmo wbs proposals apply ID`         … 承認済みの提案を反映し直す（反映に失敗したとき）
+    """
+    from .task_engine import side_path
+    from .wbs_edit import WbsEditError
+    from .wbs_proposals import (ProposalError, Target, apply_approved, approve, changes_of,
+                                decide, fetch, plan_for)
+
+    try:
+        config = load_config(Path(args.config))
+        base = Path(args.config).resolve().parent
+        engine = build_engine(config, base)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    if not engine.adapters.has("postgres"):
+        print("postgres アダプタが設定されていません（WBS 変更提案は PostgreSQL にあります） "
+              "/ the postgres adapter is not configured", file=sys.stderr)
+        return 1
+    pg: Any = engine.adapters.get("postgres")
+    tenant = str(config.get("tenant") or "")
+    spec = dict((config.get("adapters") or {}).get("wbs_replan") or {})
+    file = Path(args.file or spec.get("file") or "wbs/aipmo.yaml")
+    root = Path(args.root or spec.get("root") or ".")
+    file = file if file.is_absolute() else base / file
+    root = root if root.is_absolute() else base / root
+    decisions = side_path(ledger_path(config, base), "pmo-decisions.jsonl")
+    target = Target(file=file.resolve(), root=root.resolve(), decisions=decisions)
+    by = args.by or __import__("getpass").getuser()
+    command = args.proposals_command or "list"
+
+    try:
+        if command == "list":
+            rows = pg.query("pending_wbs_proposals", {"tenant": tenant})["rows"]
+            print(f"承認待ちの WBS 変更提案 / pending WBS proposals ({len(rows)})")
+            for row in rows:
+                raw = changes_of(row)
+                mark = (f"反映できる変更 {len(raw)} 件" if isinstance(raw, list)
+                        else "自由な形（承認しても記録だけ）")
+                label = f" [{row['option_label']}]" if row.get("option_label") else ""
+                print(f"  {row['id']}  tier{row['tier']}{label}  {row.get('wbs_version_from')}"
+                      f"  — {mark}\n      {(row.get('rationale') or '')[:100]}")
+            if rows:
+                print("\n中身を見る: aipmo wbs proposals show ID   /   承認して反映: "
+                      "aipmo wbs proposals approve ID")
+            return 0
+
+        if not args.ref:
+            print("提案の id を指定してください / give the proposal id", file=sys.stderr)
+            return 1
+
+        if command == "show":
+            row = fetch(pg, tenant, args.ref)
+            print(f"{row['id']}  状態 {row.get('status')}  tier{row['tier']}  "
+                  f"対象 WBS {row.get('wbs_version_from')}")
+            print(f"根拠: {row.get('rationale') or '-'}")
+            plan = plan_for(row, target)
+            if plan is None:
+                print("\n決まった形の変更（diff.changes）が無い、自由な形の提案です。"
+                      "承認しても WBS ファイルは変わりません。")
+                print(json.dumps(row.get("diff"), ensure_ascii=False, indent=2)[:2000])
+                return 0
+            print(f"\n反映すると（{target.file.name}）:")
+            for line in plan.report or ["（すでにその内容です。変わりません）"]:
+                print(f"  - {line}")
+            print("\n" + (plan.diff or "（差分なし）"))
+            return 0
+
+        if command == "reject":
+            row = fetch(pg, tenant, args.ref)
+            if row.get("status") != "pending":
+                print(f"承認待ちではありません（{row.get('status')}）", file=sys.stderr)
+                return 1
+            decide(pg, tenant, args.ref, "rejected", by, args.note)
+            print(f"却下しました / rejected: {args.ref}（WBS ファイルは変えていません）")
+            return 0
+
+        if command == "approve":
+            outcome = approve(pg, tenant, args.ref, by, args.note, target)
+            print(f"承認しました / approved: {args.ref}")
+            if outcome["applied"] is True:
+                print(f"WBS ファイルへ反映しました / applied to {target.file}:")
+                for line in outcome["report"] or ["（すでにその内容でした）"]:
+                    print(f"  - {line}")
+                print("内容を確かめて、コミット（PR）してください。")
+            elif outcome["applied"] is False:
+                print(f"! 反映できませんでした: {outcome['error']}", file=sys.stderr)
+                return 1
+            else:
+                print("（自由な形の提案なので、WBS ファイルは変えていません）")
+            return 0
+
+        done = apply_approved(pg, tenant, args.ref, by, target, force=args.force)
+        print(f"反映しました / applied: {args.ref}" + ("" if done.get("changed", True)
+                                                          else "（すでにその内容でした）"))
+        for line in done["report"]:
+            print(f"  - {line}")
+        return 0
+    except ProposalError as exc:
+        print(f"{exc}", file=sys.stderr)
+        for problem in exc.problems[1:]:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+    except WbsEditError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
 
 
 def cmd_ledger(args: argparse.Namespace) -> int:
@@ -1321,7 +1457,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      ledger_store_factory=store_factory,
                      members=load_members((config.get("pmo_core") or {}).get("members")),
                      filing=_web_filing(config),
-                     lookup_assignees=_lookup_assignees(config))
+                     lookup_assignees=_lookup_assignees(config),
+                     wbs_target=_wbs_target(config, base))
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()
@@ -1675,6 +1812,18 @@ def main(argv: list[str] | None = None) -> int:
                                   help="warning があっても失敗にする")
         else:
             p_action.add_argument("--json", action="store_true", help="JSON で出力")
+    p_props = wbs_actions.add_parser(
+        "proposals", help="承認待ちの WBS 変更提案（wbs_replan）を見る・承認して WBS ファイルへ反映する")
+    p_props.add_argument("proposals_command", nargs="?",
+                         choices=("list", "show", "approve", "reject", "apply"), default="list")
+    p_props.add_argument("ref", nargs="?", help="提案の id")
+    p_props.add_argument("--file", help="反映先の WBS ファイル（既定は adapters.wbs_replan.file、"
+                                         "なければ wbs/aipmo.yaml）")
+    p_props.add_argument("--root", help="証拠のパスの基準（既定は adapters.wbs_replan.root）")
+    p_props.add_argument("--by", help="決めた人の名前（既定はOSのユーザー名）")
+    p_props.add_argument("--note", help="承認・却下のメモ")
+    p_props.add_argument("--force", action="store_true",
+                         help="すでに反映した提案でも、もう一度反映する（apply）")
     p_wbs.set_defaults(func=cmd_wbs)
 
     p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")

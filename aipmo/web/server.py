@@ -75,6 +75,8 @@ from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
 from ..pmo_core import Member, PmoCore, scope_briefing
 from ..filing import FilingConfig, FilingError, eligible, filing_state, make_filer
+from ..wbs_proposals import ProposalError, approve_and_apply
+from ..wbs_proposals import Target as WbsTarget
 from ..writeback import WritebackError, make_writer, tracker_of, writable_trackers
 from ..ledger_store import LedgerConfigError, LedgerStore, LedgerTenantError
 from ..task_engine import TaskEngine, side_path
@@ -175,6 +177,7 @@ def create_app(
     members: list[Member] | None = None,
     filing: FilingConfig | None = None,
     lookup_assignees: bool = True,
+    wbs_target: WbsTarget | None = None,
 ):
     runs = store or RunStore()
     # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
@@ -864,6 +867,20 @@ def create_app(
         note: str | None,
     ) -> dict[str, Any]:
         pg = _postgres_or_503()
+        if status == "approved" and wbs_target is not None:
+            # WBS ファイルへの反映先が設定されているときは、承認と反映をひと続きで行う
+            # （aipmo/wbs_proposals.py）。反映できない提案は、承認待ちのまま理由を返す。
+            # With a target file, approving also applies; an unapplicable proposal stays
+            # pending and the reasons are returned.
+            try:
+                outcome = approve_and_apply(pg, tenant, proposal_id, role, note, wbs_target)
+            except ProposalError as exc:
+                code = {"not_found": 404, "not_pending": 409, "invalid": 422}.get(exc.kind, 409)
+                raise HTTPException(status_code=code, detail={
+                    "message": str(exc), "problems": exc.problems}) from exc
+            logger.info("wbs proposal approved: %s by %s from %s (applied=%s)", proposal_id,
+                        role, _client_ip(request), outcome["applied"])
+            return outcome
         result = pg.execute("decide_wbs_proposal", {
             "tenant": tenant, "id": proposal_id, "status": status,
             "decided_by": role, "decision_note": note,

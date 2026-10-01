@@ -23,7 +23,9 @@ async function api(path, options) {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || `HTTP ${response.status}`);
+    const detail = body.detail;
+    throw new Error((detail && typeof detail === "object" ? detail.message : detail)
+      || `HTTP ${response.status}`);
   }
   return response.json();
 }
@@ -183,13 +185,21 @@ async function decideProposal(id, decision, note, wrap) {
   buttons.forEach((b) => { b.disabled = true; });
 
   try {
-    await api(`/api/wbs-proposals/${id}/${decision}`, {
+    const result = await api(`/api/wbs-proposals/${id}/${decision}`, {
       method: "POST",
       body: JSON.stringify({ note: note || null }),
     });
-    toast(decision === "approve"
-      ? t("web_proposal_approved", "Approved.")
-      : t("web_proposal_rejected", "Rejected."));
+    // 反映先の WBS ファイルがあるとき、承認は反映までひと続き。結果を伝える。
+    // With a target WBS file, approving also applies; say what happened.
+    if (decision === "approve" && result && result.applied === true) {
+      toast(t("web_proposal_applied", "Approved and applied to the WBS file."));
+    } else if (decision === "approve" && result && result.applied === false) {
+      toast(result.error || "applied: false", "error");
+    } else {
+      toast(decision === "approve"
+        ? t("web_proposal_approved", "Approved.")
+        : t("web_proposal_rejected", "Rejected."));
+    }
     await refreshProposals();
   } catch (error) {
     toast(error.message, "error");
