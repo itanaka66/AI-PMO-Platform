@@ -43,14 +43,15 @@ from typing import Any, Callable
 
 from .agent_roles import (KEEP_DISPATCHES, SETTLED_BAD, excerpt_of, fit, latest_dispatch,
                           params_for)
-from .pmo_learning import DEFAULT_MIN_SAMPLES, LearnedModel, learn
-from .task_engine import Task, TaskEngine, _parse_date, side_path
+from .pmo_learning import (DEFAULT_MAX_ESTIMATE_ERROR, DEFAULT_MIN_SAMPLES, LearnedModel,
+                           learn)
+from .task_engine import IN_PROGRESS_STATUSES, Task, TaskEngine, _parse_date, side_path
 
 logger = logging.getLogger("aipmo.pmo_core")
 
 SEVERITY_ORDER = {"critical": 3, "high": 2, "medium": 1, "low": 0}
 
-_IN_PROGRESS = {"in progress", "doing", "in review", "進行中", "レビュー中"}
+_IN_PROGRESS = IN_PROGRESS_STATUSES
 _NOT_STARTED = {"to do", "todo", "open", "backlog", "new", "selected for development",
                 "未着手", "未対応", "オープン"}
 
@@ -516,6 +517,13 @@ class PmoCore:
     # Learning from track record.
     learning: bool = True
     min_samples: int = DEFAULT_MIN_SAMPLES
+    # 優先度の重みの補正と、見積り精度・ペースの学習は、それぞれ切れる。
+    # 見積り誤差の中央値がこれを超えるなら、ペースは順位に使わない。
+    # Each can be switched off. Pace is not used for ranking when the median
+    # estimate error exceeds this.
+    learn_priority: bool = True
+    learn_estimates: bool = True
+    max_estimate_error: float = DEFAULT_MAX_ESTIMATE_ERROR
     learned_path: Path | None = None
     # 高リスク時のテンプレート自動起動。launcher(response, trigger) が
     # 実際に走らせる。None なら起動せず「起動するはず」だけを報告する。
@@ -652,21 +660,41 @@ class PmoCore:
             for m in self.members
         ]
 
+    def apply_learning(self) -> None:
+        """最新の実績から学習し、台帳の採点に反映する。周を回さずに順位を出す
+        コマンド（`aipmo tasks`）が、学習なしの点数を台帳に書き込まないように。
+
+        Learn from the latest outcomes and hand the result to the ledger's
+        scoring, so a command that ranks without running a cycle (`aipmo tasks`)
+        never writes scores computed without what was learned.
+        """
+        self.task_engine.sync()
+        self._learn(self.task_engine.now())
+
     def _learn(self, now: datetime) -> None:
         if not self.learning:
             self.task_engine.label_bonus = {}
+            self.task_engine.priority_delta = {}
+            self.task_engine.pace = {}
             return
-        model = learn(self.task_engine.outcomes, self.min_samples)
-        if (model.member_factor != self._model.member_factor
-                or model.label_bonus != self._model.label_bonus):
+        model = learn(self.task_engine.outcomes, self.min_samples,
+                      priority=self.learn_priority, estimates=self.learn_estimates,
+                      max_error=self.max_estimate_error)
+        if model.signature() != self._model.signature():
             self._log("model_updated", now, samples=model.samples,
                       member_factor=model.member_factor,
                       label_bonus=model.label_bonus,
+                      priority_delta=model.priority_delta,
+                      pace_team=model.pace.get("team"),
+                      pace_reliable=model.pace.get("reliable"),
+                      estimate_error=model.pace.get("median_error"),
                       baseline_late_rate=model.baseline_late_rate)
             self._write_json(self.learned_path, {"generated_at": now.isoformat(),
                                                  **model.as_dict()})
         self._model = model
         self.task_engine.label_bonus = model.label_bonus
+        self.task_engine.priority_delta = model.priority_delta
+        self.task_engine.pace = model.pace
 
     # -- 高リスク時のテンプレート自動起動 / auto-launching templates -----------
 

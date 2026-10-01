@@ -77,6 +77,12 @@ _DEFAULT_PRIORITY_POINTS = 15  # 不明は「中」扱い / unknown counts as me
 
 _DONE_STATUSES = {"done", "closed", "resolved", "complete", "completed",
                   "完了", "クローズ", "解決済み"}
+# 「着手した」とみなす状態。着手の時刻は、見積りの実日数（ペース）の起点になる。
+# States that count as started; the moment is the origin of the actual duration
+# the pace is learned from.
+IN_PROGRESS_STATUSES = {"in progress", "doing", "in review", "進行中", "レビュー中"}
+
+_EFFORT_FIELDS = ("effort", "story_points", "points", "estimate")
 _BLOCKED_MARKERS = {"blocked", "block", "ブロック", "ブロック中"}
 
 # 複数のテンプレートが同じタスクを挙げたときの加点（1つ増えるごと）と上限。
@@ -142,6 +148,12 @@ class Task:
     # run_id / finished_at / error / excerpt。
     # What was handed to a role AI for this task (newest last; only recent ones kept).
     dispatches: list[dict[str, Any]] = field(default_factory=list)
+    # 見積り（点）と、最初に着手を観測した時刻。完了のとき「見積りと実日数」を
+    # 実績に残し、1 点あたりの日数（ペース）を学習する材料にする。
+    # The estimate (points) and when work was first seen to start; at completion
+    # they become "estimate vs actual days", the material the pace is learned from.
+    effort: float | None = None
+    started_at: str | None = None
     # 現在の状態／ブロックになってからの時刻。進捗ルール（停滞・長期ブロック）
     # が「どれだけ続いているか」を数えるのに使う。
     # When the current status / blocked state began; progress rules use these
@@ -191,16 +203,30 @@ MAX_OUTCOMES = 500
 
 
 def score_task(task: Task, today: date,
-               label_bonus: dict[str, int] | None = None) -> tuple[int, list[str]]:
+               label_bonus: dict[str, int] | None = None,
+               priority_delta: dict[str, int] | None = None,
+               pace: dict[str, Any] | None = None) -> tuple[int, list[str]]:
     """1件を採点する。戻り値は (点数, 内訳) / score one task with its breakdown.
 
     `label_bonus` は過去の実績から学習した「遅れやすいラベル」への加点
     （aipmo/pmo_learning.py）。複数該当しても最大の1つだけ。
     `label_bonus` is the learned extra weight for labels that tend to finish
     late; only the largest match applies.
+
+    `priority_delta` は優先度ごとの重みの補正（実績から）。`pace` は学習した
+    1 点あたりの日数で、見積りが当たっていると確かめられたとき
+    （`reliable`）だけ、「見積りとペースでは期限に間に合わない」タスクに加点する。
+    `priority_delta` corrects each priority's weight from track record; `pace`
+    (days per point) raises tasks the estimate cannot fit before their due date,
+    only when the estimates have proved reliable.
     """
-    points = _priority_points(task.priority)
-    reasons = [f"優先度 {task.priority or '未設定'} +{points}"]
+    base = _priority_points(task.priority)
+    shift = (priority_delta or {}).get((task.priority or "").strip().lower(), 0)
+    points = max(0, base + shift)
+    if shift:
+        reasons = [f"優先度 {task.priority} +{points}（実績による補正 {shift:+d}）"]
+    else:
+        reasons = [f"優先度 {task.priority or '未設定'} +{points}"]
 
     due = _parse_date(task.due_date)
     if due is not None:
@@ -217,6 +243,22 @@ def score_task(task: Task, today: date,
         else:
             extra = 0
         points += extra
+
+    if pace and pace.get("reliable") and due is not None and task.effort:
+        days_left = (due - today).days
+        who = (task.assignee or "").strip().lower()
+        per_point = (pace.get("members") or {}).get(who) or pace.get("team")
+        if per_point and days_left >= 0:
+            expected = task.effort * per_point
+            began = _parse_date(task.started_at)
+            elapsed = (today - began).days if began else 0
+            still = max(0.0, expected - elapsed)
+            if still > days_left:
+                extra = 10 if still - days_left <= 3 else 20
+                points += extra
+                reasons.append(
+                    f"見積り {task.effort:g} 点 × 実績ペース {per_point:.1f} 日/点 "
+                    f"→ あと約 {still:.0f} 日、期限まで {days_left} 日 +{extra}")
 
     if task.blocked:
         points += 15
@@ -241,6 +283,17 @@ def score_task(task: Task, today: date,
             reasons.append(f"過去実績で遅れやすいラベル「{label}」 +{extra}")
 
     return points, reasons
+
+
+def _number(value: Any) -> float | None:
+    """見積りとして使える正の数(文字列の数字も)。それ以外は None。"""
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
 
 
 def _text(value: Any) -> str | None:
@@ -311,6 +364,8 @@ def extract_candidates(output: Any, adapter: str | None = None) -> list[dict[str
             "status": status,
             "labels": [str(label) for label in labels],
             "project": _text(item.get("project")) or project_of_key(key),
+            "effort": next((n for f in _EFFORT_FIELDS
+                            if (n := _number(item.get(f))) is not None), None),
             "blocked": (
                 any(str(label).lower() in _BLOCKED_MARKERS for label in labels)
                 or bool(status and status.lower() in _BLOCKED_MARKERS)
@@ -391,6 +446,8 @@ class TaskEngine:
         # 学習で得た、ラベルごとの加点。PMO Core が設定する。
         # Learned per-label bonus; set by the PMO Core.
         self.label_bonus: dict[str, int] = {}
+        self.priority_delta: dict[str, int] = {}
+        self.pace: dict[str, Any] = {}
         self._prepare_store()
         self.sync()
 
@@ -646,6 +703,10 @@ class TaskEngine:
         if candidate["status"] and candidate["status"] != task.status:
             task.status_since = stamp
         task.status = candidate["status"] or task.status
+        if candidate.get("effort") is not None:
+            task.effort = candidate["effort"]
+        if task.started_at is None and (task.status or "").strip().lower() in IN_PROGRESS_STATUSES:
+            task.started_at = stamp
         task.labels = sorted(set(task.labels) | set(candidate.get("labels") or []))
 
         new_due, old_due = _parse_date(candidate["due_date"]), _parse_date(task.due_date)
@@ -685,6 +746,7 @@ class TaskEngine:
         """
         done_on = datetime.fromisoformat(stamp).date()
         due = _parse_date(task.due_date)
+        started = _parse_date(task.started_at)
         self.outcomes.append({
             "task": task.id,
             "assignee": task.assignee,
@@ -694,6 +756,11 @@ class TaskEngine:
             "first_seen": task.first_seen,
             "done_at": stamp,
             "late_days": (done_on - due).days if due else None,
+            # 見積りと、着手の観測から完了の観測までの日数。どちらかが無ければ None。
+            # Estimate, and days from the start being observed to the finish being
+            # observed; None if either is unknown.
+            "effort": task.effort,
+            "duration_days": (done_on - started).days if started else None,
         })
 
     # -- 順位付け / ranking ---------------------------------------------
@@ -721,7 +788,7 @@ class TaskEngine:
                 # 完了したものは台帳に残すが順位には入れない（履歴として）。
                 task.score, task.reasons = 0, ["完了"]
                 continue
-            task.score, task.reasons = score_task(task, today, self.label_bonus)
+            task.score, task.reasons = score_task(task, today, self.label_bonus, self.priority_delta, self.pace)
 
     def projects(self) -> list[str]:
         """未完了タスクがあるプロジェクト名（重複なし・並び順固定）。"""

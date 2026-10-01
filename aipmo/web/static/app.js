@@ -605,14 +605,27 @@ function renderPmo(data, decisions) {
   }
 
   const learned = briefing && briefing.learning;
+  const pace = (learned && learned.pace) || {};
   if (learned && (Object.keys(learned.member_factor).length
-                  || Object.keys(learned.label_bonus).length)) {
+                  || Object.keys(learned.label_bonus).length
+                  || Object.keys(learned.priority_delta || {}).length
+                  || pace.team)) {
     const block = pmoSection(t("web_pmo_learning", "Learned adjustments"), null);
     for (const [who, factor] of Object.entries(learned.member_factor)) {
       block.append(el("div", "pmo-meta", `${who}: ×${factor}`));
     }
     for (const [label, bonus] of Object.entries(learned.label_bonus)) {
       block.append(el("div", "pmo-meta", `${label}: +${bonus}`));
+    }
+    for (const [level, delta] of Object.entries(learned.priority_delta || {})) {
+      block.append(el("div", "pmo-meta", `${level}: ${delta > 0 ? "+" : ""}${delta}`));
+    }
+    if (pace.team) {
+      // 見積りが当たっていないときは、ペースを順位に使っていないことを明記する。
+      // When the estimates have not proved accurate, say the pace is not used.
+      const used = pace.reliable ? "" : ` · ${t("web_pmo_pace_unused", "not used")}`;
+      block.append(el("div", "pmo-meta",
+        `${t("web_pmo_pace", "Pace")}: ${pace.team} d/pt · ±${Math.round(pace.median_error * 100)}%${used}`));
     }
     host.append(block);
   }

@@ -347,10 +347,15 @@ wbs:
           depends_on: ["4.3"]
         - id: "6.8"
           name: "学習の拡張（優先度の重み・見積り精度）"
-          status: todo
+          status: done
           effort: 8
-          priority: Low
           depends_on: ["3.6"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/pmo_learning.py::priority_delta"
+            - "aipmo/pmo_learning.py::def _learn_pace"
+            - "tests/test_learning_estimates.py::test_a_real_history_teaches_the_pace_end_to_end"
+          notes: "見積りが当たっていると確かめられたときだけペースを順位に使う。実日数は観測の粒度ぶん粗い"
         - id: "6.9"
           name: "Plane・OpenProject のユーザー ID を名前から引き当てる"
           status: todo

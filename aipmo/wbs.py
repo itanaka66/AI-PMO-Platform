@@ -475,6 +475,7 @@ def task_items(wbs: Wbs) -> list[dict[str, Any]]:
             "labels": [leaf.path_names()[0]] if leaf.parent is not None else [],
             "blocked": leaf.status == "blocked",
             "done": leaf.done,
+            "effort": leaf.effort,
         })
     return items
 

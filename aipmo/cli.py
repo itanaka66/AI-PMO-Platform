@@ -470,6 +470,9 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
                    renotify_hours=int(notify_config.get("renotify_hours", 24)),
                    learning=bool(learning.get("enabled", True)),
                    min_samples=int(learning.get("min_samples", 5)),
+                   learn_priority=bool(learning.get("priority", True)),
+                   learn_estimates=bool(learning.get("estimates", True)),
+                   max_estimate_error=float(learning.get("max_estimate_error", 0.75)),
                    agent_timeout_minutes=int(agents_config.get("timeout_minutes", 60)),
                    agent_max_per_day=int(agents_config.get("max_per_day", 20)),
                    responses=responses, launcher=launcher)
@@ -538,12 +541,24 @@ def cmd_pmo(args: argparse.Namespace) -> int:
         for r in briefing["responses"]:
             print(f"  {r['id']:<20} {r['template']:<24} {r['status']}")
     learned = briefing.get("learning")
-    if learned and (learned["member_factor"] or learned["label_bonus"]):
+    pace = (learned or {}).get("pace") or {}
+    if learned and (learned["member_factor"] or learned["label_bonus"]
+                    or learned.get("priority_delta") or pace.get("team")):
         print(f"\n学習した補正 / learned adjustments (実績 {learned['samples']} 件)")
         for who, factor in learned["member_factor"].items():
             print(f"  {who}: キャパシティ x{factor}")
         for label, bonus in learned["label_bonus"].items():
             print(f"  ラベル {label}: 加点 +{bonus}")
+        for level, delta in (learned.get("priority_delta") or {}).items():
+            print(f"  優先度 {level}: 重み {delta:+d}")
+        if pace.get("team"):
+            verdict = ("見積りが当たっているので順位に使う" if pace.get("reliable")
+                       else "見積りの誤差が大きいので順位には使わない")
+            print(f"  ペース: チーム {pace['team']:g} 日/点"
+                  f"（見積り誤差の中央値 {pace['median_error']:.0%}、実績 {pace['samples']} 件）"
+                  f" — {verdict}")
+            for who, value in (pace.get("members") or {}).items():
+                print(f"    {who}: {value:g} 日/点")
     return 0
 
 
@@ -600,9 +615,13 @@ def cmd_tasks(args: argparse.Namespace) -> int:
     base = Path(args.config).resolve().parent
     try:
         task_engine = open_ledger(config, base)
+        core = build_pmo_core(config, task_engine)
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
+    # 再採点は台帳に保存される。学習した補正を読み込んでから行う。
+    # Re-scoring is saved to the ledger, so what was learned is loaded first.
+    core.apply_learning()
     task_engine.refresh()
     ranked = task_engine.ranked(assignee=args.assignee, limit=args.limit,
                                 project=args.project)
