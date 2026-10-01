@@ -140,6 +140,7 @@ aipmo tasks       # 複数のテンプレートを横断した、やることの
 aipmo pmo         # 全体の状況・警告・担当の提案をまとめて見る
 aipmo assign      # 担当の提案を見る（確定は assign キー --apply。--writeback で Jira・GitHub などにも書く）
 aipmo ledger info # やることの台帳が、どこに何件あるか
+aipmo wbs status  # このプロジェクト自身の開発の進み具合（wbs/aipmo.yaml）
 ```
 
 ---

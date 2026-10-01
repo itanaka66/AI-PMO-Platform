@@ -127,14 +127,24 @@ flowchart TB
 | PMO AI Core | `aipmo/pmo_core.py`。台帳の上で1周ごとに、①担当者のいないタスクへ**担当者を提案**（空き容量・スキル＝ラベル一致で選定。上限に達した人には積まず、空きが無ければ「割当先なし」と報告）、②**進捗ルール**を全タスクに適用（期限超過・停滞・長期ブロック・担当未定・期限間近で未着手。`pmo_core.rules` で閾値・重大度を上書き）、③新しく出た警告だけを Slack 通知（`pmo_core.notify.slack_channel`、再通知間隔つき）、④全体のブリーフィングを `pmo-briefing.json` に出力。判断は決定論的（LLM 不使用）で、すべて追記専用の `pmo-decisions.jsonl` に残る。担当の**確定は人**が `aipmo assign KEY --apply [--writeback]` で行い、その時初めて、そのタスクが載っているトラッカー（Jira・GitHub Projects・Plane・OpenProject・Azure DevOps）の担当者を更新する（`--jira` は旧名）。宛先は台帳のタスクが持つ（トラッカーの出力を拾った時点で、どのアダプタの出力かと識別子を記録する）。**名前は推測しない**：Jira 以外は、メンバーごとに `pmo_core.members[].accounts`（GitHub はログイン名、Azure DevOps は表示名かメール、Plane は ユーザー UUID、OpenProject は数値のユーザー ID）に書いたアカウントだけを使い、無ければ**何も書かずに止まる**。書いたあとに反映を確かめ、トラッカーが受け付けなかった場合（GitHub は存在しないログインを黙って捨てる）は成功にせず、台帳も変えない。表示は `aipmo pmo`、または Web 画面（`aipmo serve`）の「PMO Core」欄（警告・優先順位と点数の内訳・担当の提案・メンバー負荷・学習した補正・直近の判断。閲覧は viewer にも可、画面からできる書き込みは「担当の確定」だけで operator のみ。常駐側が書くファイルを読むだけで、画面から周や通知・テンプレート起動は行わない。常駐側の更新が止まると経過時間を警告）。⑤**学習**（`aipmo/pmo_learning.py`）：完了を観測するたびに期限に対する遅れを実績として台帳に残し、メンバーごとの実効キャパシティ（期限内完了率がチーム平均より高ければ増、低ければ減。0.5〜1.5倍）と、平均より遅れやすいラベルの順位加点（0〜15点）だけを調整する。統計の補正で LLM は使わず、最低サンプル数（既定5件）・小標本の平均への縮小・上下限の歯止めつき。根拠は `pmo-learned.json` と `model_updated` の判断ログ、`pmo_core.learning.enabled: false` で無効化。⑥**高リスク時のテンプレート自動起動**：`pmo_core.responses` に運用者が書いたテンプレートだけを、全体レベル（`min_level`）・ルール（`rules`）・警告件数（`min_alerts`）の条件、`cooldown_hours`、`max_per_day`、同一応答の重複起動禁止の範囲で、`aipmo schedule` の常駐中に別スレッドで起動する（トリガーに警告・優先順位を渡す。存在しないテンプレート名は起動時に設定エラー）。`aipmo pmo` は起動せず「起動するはずのもの」だけを表示 |
 | 開発AI・テストAI・調査AI・文書AI・営業AI | `templates/roles/` の `role_developer` / `role_tester` / `role_researcher` / `role_writer` / `role_sales`。`agent` ステップに役割ごとの道具（最小限を列挙）と憲章・プロンプトを与えた構成。開発AI・テストAIが書けるのは Jira コメントだけ（1回ごとに人の承認）、調査・文書・営業AIは読み取り専用で、文書・営業AIの成果は社内レビュー用チャンネルへの**下書き**まで（顧客や公開先へ出す手段は持たせない）。詳細は [docs/ROLES.md](docs/ROLES.md)。コードを書く・テストを実行する等の実作業は行わない |
 
-図が示す「PMO AI 自身の開発を WBS で管理する」という自己参照的な運用は構想段階。まずはこの図の
-右半分（Progress AI → Risk/Forecast → WBS再計画AI → 承認）と、Project Digital Twin（毎日の同期 →
-健全性診断）が実際に動く状態にした、というのが現在地。
+図が示す「PMO AI 自身の開発を WBS で管理する」という自己参照的な運用は、**動いている**。
+このプロジェクト自身の開発を [wbs/aipmo.yaml](wbs/aipmo.yaml) に WBS として持ち（人が PR で書き換える）、
+`aipmo wbs status` で進捗・速度（直近の完了実績から）・完了見込み・クリティカルパス・次に着手できる作業を
+数える。**「完了」は証拠（ファイルと、その中の語句）が実在するときだけ**通り、CI（`aipmo wbs check`）が
+確かめる — WBS が現実から静かに離れていくのを防ぐため。週次の `self_development` テンプレートが Slack に
+報告し、同じ出力は Task Engine にも入って、未完了の作業が他のタスクと同じ台帳で順位付け・担当提案される。
+AI は WBS を読むだけで書き換えない。運用の手順と限界は [docs/SELF-WBS.md](docs/SELF-WBS.md)。
+まだ無いのは、WBS の変更を AI が提案して人が承認する経路（既存の `wbs_replan` とこのファイルの接続）。
 
 The self-referential idea in the diagram — the PMO AI managing its own development via a WBS — is
-still a concept. What exists today is the right half of the loop (Progress AI → Risk/Forecast →
-WBS-replanning AI → approval), plus the Project Digital Twin (daily sync → health diagnosis),
-actually running.
+**running**. This project's own development lives in [wbs/aipmo.yaml](wbs/aipmo.yaml) (changed by people,
+in PRs); `aipmo wbs status` counts progress, speed (from recent completions), a completion estimate, the
+critical path and what can start next. **"Done" passes only when the evidence — files, and phrases inside
+them — exists**, checked by CI (`aipmo wbs check`) so the WBS cannot quietly drift from reality. A weekly
+`self_development` template reports to Slack and feeds the Task Engine, so open work is ranked and given
+assignee proposals like any other task. The AI reads the WBS and never writes it. See
+[docs/SELF-WBS.md](docs/SELF-WBS.md). Still missing: a path where the AI proposes WBS changes and a human
+approves them (connecting the existing `wbs_replan` to this file).
 
 ---
 
@@ -241,6 +251,8 @@ aipmo schedule                       # 定時実行 / the scheduler
 aipmo tasks --why                    # 横断の優先順位 / cross-template task ranking
 aipmo pmo                            # PMO Core のブリーフィング / PMO Core briefing
 aipmo assign KEY --apply --writeback # 担当の提案を確定し、トラッカーにも書く / confirm and write back to the tracker
+aipmo wbs status                     # PMO AI 自身の開発 WBS の状況 / this project's own WBS
+aipmo wbs check                      # 同じ WBS の検証（証拠の欠け・循環）/ validate it
 aipmo doctor                         # 接続確認 / connection check
 pytest                               # 1015 件
 ```

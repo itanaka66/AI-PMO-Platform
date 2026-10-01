@@ -1,0 +1,35 @@
+name: self_development
+version: "1"
+industry: software
+description: |
+  PMO AI 自身の開発を、リポジトリの WBS（wbs/aipmo.yaml）で管理する週次の運用。
+  WBS ファイルを読み、進捗・速度・完了見込み・クリティカルパス・要確認を数えて
+  報告する。「完了」は証拠（ファイルと、その中の語句）が実在するときだけ。
+  WBS を書き換えることはしない — 変更は人が PR で行う（docs/SELF-WBS.md）。
+
+  同じ出力は Task Engine にも入るので、未完了の作業は他のテンプレートの
+  タスクと同じ台帳で順位付けされ、担当の提案も出る（aipmo tasks / aipmo pmo）。
+
+trigger: "schedule:0 9 * * MON"
+
+params:
+  wbs_file: wbs/aipmo.yaml
+  report_channel: "#aipmo-dev"
+
+steps:
+  # 数えるのは決定論的な処理。言語モデルには数えさせない。
+  # Counting is deterministic; the model is not asked to count.
+  - id: status
+    adapter: wbs_file
+    action: status
+    inputs:
+      path: "{{ params.wbs_file }}"
+      as_of: "{{ run.date }}"
+
+  - id: report
+    adapter: slack
+    action: post_message
+    continue_on_error: true
+    inputs:
+      channel: "{{ params.report_channel }}"
+      text: "{{ steps.status.output.summary_text }}"

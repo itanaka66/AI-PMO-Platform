@@ -33,4 +33,6 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: ruff check aipmo/ tests/
       - run: mypy aipmo/
+      # PMO AI 自身の開発の WBS: error（証拠の欠け・循環など）があれば失敗
+      - run: python -m aipmo.cli wbs check wbs/aipmo.yaml
       - run: pytest -q

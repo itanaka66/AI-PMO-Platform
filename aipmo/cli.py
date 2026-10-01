@@ -219,6 +219,17 @@ def build_engine(
 
         adapters.register(CrawlerAdapter(**dict(adapter_config["crawler"])))
 
+    # wbs_file も opt-in。読む範囲は root の下の YAML だけ（既定は config.yaml
+    # のあるディレクトリ）。
+    # wbs_file is opt-in too; it reads YAML under `root` only (default: the
+    # directory holding config.yaml).
+    if "wbs_file" in adapter_config:
+        from .adapters.wbs_file import WbsFileAdapter
+
+        wbs_spec = dict(adapter_config["wbs_file"] or {})
+        wbs_spec["root"] = str(resolve(str(wbs_spec.get("root", "."))))
+        adapters.register(WbsFileAdapter(**wbs_spec))
+
     # wbs_replan は postgres の上に合成される（JiraAgileAdapter が jira の
     # 上に合成されるのと同じ形）。postgres が無ければ wbs_replan_proposals
     # にもそもそも書けないので、postgres が設定されているときだけ登録する。
@@ -595,6 +606,47 @@ def cmd_tasks(args: argparse.Namespace) -> int:
             for reason in task.reasons:
                 print(f"        - {reason}")
     return 0
+
+
+def cmd_wbs(args: argparse.Namespace) -> int:
+    """WBS ファイルを検証する／状況を見る / validate the WBS file or show its status.
+
+    PMO AI 自身の開発を管理する `wbs/aipmo.yaml` が対象（docs/SELF-WBS.md）。
+    CI でも使う: error があれば終了コード 1。
+    """
+    from datetime import date
+
+    from .wbs import WbsError, analyse, load_wbs
+
+    root = Path(args.root).resolve() if args.root else Path.cwd()
+    target = (root / args.file).resolve()
+    try:
+        wbs, problems = load_wbs(target)
+    except WbsError as exc:
+        print(f"WBS を読めません / cannot load the WBS: {exc}", file=sys.stderr)
+        return 1
+    try:
+        as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+    except ValueError:
+        print(f"--as-of は YYYY-MM-DD で / bad date: {args.as_of}", file=sys.stderr)
+        return 1
+    analysis = analyse(wbs, root, as_of, problems)
+
+    if args.wbs_command == "status" and args.json:
+        print(json.dumps({k: v for k, v in analysis.items() if k not in ("tasks", "items")},
+                         ensure_ascii=False, indent=2))
+    elif args.wbs_command == "status":
+        print(analysis["summary_text"].replace("*", ""))
+    else:
+        for p in analysis["problems"]:
+            print(f"{p['level']:<7} {p['node'] or '-':<8} {p['code']}: {p['message']}")
+        s = analysis["summary"]
+        print(f"{s['done']}/{s['leaves']} 件完了、error {analysis['error_count']}、"
+              f"warning {analysis['warning_count']}  ({target.name})")
+
+    failed = analysis["error_count"] > 0 or (
+        args.wbs_command == "check" and args.strict and analysis["warning_count"] > 0)
+    return 1 if failed else 0
 
 
 def cmd_ledger(args: argparse.Namespace) -> int:
@@ -1020,6 +1072,23 @@ def main(argv: list[str] | None = None) -> int:
     p_migrate.add_argument("--force", action="store_true",
                            help="移行先に行があっても、同じ id を上書きする")
     p_ledger.set_defaults(func=cmd_ledger)
+
+    p_wbs = sub.add_parser(
+        "wbs", help="PMO AI 自身の開発 WBS の検証・状況 / validate or show the project's own WBS")
+    wbs_actions = p_wbs.add_subparsers(dest="wbs_command", required=True)
+    for action_name, text in (("check", "誤りと、証拠の欠けを調べる（error があれば終了コード 1）"),
+                              ("status", "進捗・速度・完了見込み・クリティカルパスを表示")):
+        p_action = wbs_actions.add_parser(action_name, help=text)
+        p_action.add_argument("file", nargs="?", default="wbs/aipmo.yaml",
+                              help="WBS ファイル（既定 wbs/aipmo.yaml）")
+        p_action.add_argument("--root", help="証拠のパスの基準（既定はカレントディレクトリ）")
+        p_action.add_argument("--as-of", help="基準日 YYYY-MM-DD（既定は今日）")
+        if action_name == "check":
+            p_action.add_argument("--strict", action="store_true",
+                                  help="warning があっても失敗にする")
+        else:
+            p_action.add_argument("--json", action="store_true", help="JSON で出力")
+    p_wbs.set_defaults(func=cmd_wbs)
 
     p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")
     p_setup.add_argument("--dir", default=".", help="設定の出力先 / where to write config")

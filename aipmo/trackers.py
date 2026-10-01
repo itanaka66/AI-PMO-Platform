@@ -38,6 +38,11 @@ TRACKERS: dict[str, Tracker] = {
                            ("id",), ("subject", "title"), ("due_date",)),
     "azure_devops": Tracker("azure_devops", "ADO", "work_item_id", int,
                             ("id",), ("title",), ("due_date",)),
+    # WBS ファイル（wbs/aipmo.yaml）。読み取り専用なので書き戻しはできない
+    # （アダプタに update_issue が無い）。
+    # The WBS file: read-only, so it cannot be written back to.
+    "wbs_file": Tracker("wbs_file", "WBS", "node_id", str,
+                        ("id",), ("name", "title"), ("due", "due_date")),
 }
 
 

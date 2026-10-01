@@ -1,0 +1,347 @@
+# AI-PMO Platform 自身の開発の WBS。運用は docs/SELF-WBS.md。
+#
+# - 変更は PR で行う（git の履歴が変更の記録になる）。
+# - status: done は、evidence のファイル（と `::` の後の語句）が実在するときだけ
+#   通る。CI（aipmo wbs check）が確かめる。証拠の無い完了は書けない。
+# - effort は相対的な大きさの目安（1 = 半日程度）。done の値は事後の見積りで、
+#   実績を測ったものではない。速度（完了見込み）はこの値と done_on から出す
+#   ので、あくまで目安。
+# - done_on は、最後の証拠が揃った日（git log から機械的に取った。コミット前は作成日）。
+#
+# aipmo wbs check    … 誤りと証拠の欠けを調べる
+# aipmo wbs status   … 進捗・速度・完了見込み・クリティカルパス
+wbs:
+  id: aipmo
+  name: AI-PMO Platform の開発
+  deadline: null              # 全体の期限。決まっていないので未設定（遅延は予測しない）
+  velocity_window_days: 28    # 速度は直近これだけの日数の完了実績から出す
+  nodes:
+    - id: "1"
+      name: "実行基盤"
+      children:
+        - id: "1.1"
+          name: "テンプレート DSL とステップ実行（adapter / llm / transform / for_each）"
+          status: done
+          effort: 5
+          done_on: 2026-08-29
+          evidence:
+            - "aipmo/dsl/loader.py"
+            - "aipmo/engine/runner.py"
+            - "tests/test_engine.py"
+        - id: "1.2"
+          name: "エージェント（道具の許可・承認・往復と費用の上限）"
+          status: done
+          effort: 5
+          done_on: 2026-08-29
+          evidence:
+            - "aipmo/engine/agent.py"
+            - "tests/test_agent.py"
+            - "docs/AGENTS.md"
+        - id: "1.3"
+          name: "定時実行と常駐（cron・重複防止・停止中の扱い）"
+          status: done
+          effort: 3
+          done_on: 2026-08-29
+          evidence:
+            - "aipmo/engine/scheduler.py"
+            - "aipmo/engine/cron.py"
+            - "tests/test_scheduler.py"
+        - id: "1.4"
+          name: "並列ステップ"
+          status: done
+          effort: 3
+          done_on: 2026-09-03
+          evidence:
+            - "aipmo/engine/parallel.py"
+            - "tests/test_parallel_runner.py"
+        - id: "1.5"
+          name: "人の承認（Slack 承認）"
+          status: done
+          effort: 3
+          done_on: 2026-08-30
+          evidence:
+            - "aipmo/approval.py"
+            - "tests/test_approval.py"
+    - id: "2"
+      name: "外部ツール連携"
+      children:
+        - id: "2.1"
+          name: "Jira・Jira Agile・Slack・Teams"
+          status: done
+          effort: 5
+          done_on: 2026-08-29
+          evidence:
+            - "aipmo/adapters/jira.py"
+            - "aipmo/adapters/jira_agile.py"
+            - "aipmo/adapters/slack.py"
+            - "aipmo/adapters/teams.py"
+        - id: "2.2"
+          name: "GitHub Projects・Plane・OpenProject・Azure DevOps"
+          status: done
+          effort: 5
+          done_on: 2026-09-03
+          evidence:
+            - "aipmo/adapters/github_projects.py"
+            - "aipmo/adapters/plane.py"
+            - "aipmo/adapters/openproject.py"
+            - "aipmo/adapters/azure_devops.py"
+        - id: "2.3"
+          name: "ベクトルストア 5 種（pgvector・Qdrant・Chroma・Milvus・Weaviate）"
+          status: done
+          effort: 5
+          done_on: 2026-08-30
+          evidence:
+            - "aipmo/adapters/vector_store.py"
+            - "aipmo/adapters/qdrant.py"
+            - "tests/test_vector_stores.py"
+        - id: "2.4"
+          name: "PostgreSQL とクローラ"
+          status: done
+          effort: 3
+          done_on: 2026-09-16
+          evidence:
+            - "aipmo/adapters/postgres.py"
+            - "aipmo/adapters/crawler.py"
+            - "tests/test_crawler_adapter.py"
+    - id: "3"
+      name: "PMO 知能層"
+      children:
+        - id: "3.1"
+          name: "リスク予測とドリフト検出"
+          status: done
+          effort: 3
+          done_on: 2026-09-02
+          evidence:
+            - "aipmo/adapters/risk_forecast.py"
+            - "tests/test_risk_forecast.py"
+        - id: "3.2"
+          name: "WBS 再計画の提案と承認"
+          status: done
+          effort: 5
+          depends_on: ["3.1"]
+          done_on: 2026-09-02
+          evidence:
+            - "aipmo/adapters/wbs_replan.py"
+            - "tests/test_wbs_replan.py"
+            - "tests/test_wbs_approval.py"
+        - id: "3.3"
+          name: "Project Digital Twin と健全性診断"
+          status: done
+          effort: 5
+          done_on: 2026-09-03
+          evidence:
+            - "aipmo/health.py"
+            - "tests/test_digital_twin.py"
+            - "docs/PROJECT-DIGITAL-TWIN.md"
+        - id: "3.4"
+          name: "Task Engine（複数テンプレートを横断した統合と順位付け）"
+          status: done
+          effort: 5
+          done_on: 2026-09-30
+          evidence:
+            - "aipmo/task_engine.py"
+            - "tests/test_task_engine.py"
+        - id: "3.5"
+          name: "PMO AI Core（担当割当・進捗ルール・統括）"
+          status: done
+          effort: 8
+          depends_on: ["3.4"]
+          done_on: 2026-09-30
+          evidence:
+            - "aipmo/pmo_core.py"
+            - "tests/test_pmo_core.py"
+        - id: "3.6"
+          name: "学習（実績からの重み調整）"
+          status: done
+          effort: 3
+          depends_on: ["3.5"]
+          done_on: 2026-09-30
+          evidence:
+            - "aipmo/pmo_learning.py"
+            - "tests/test_pmo_learning.py"
+        - id: "3.7"
+          name: "高リスク時のテンプレート自動起動"
+          status: done
+          effort: 3
+          depends_on: ["3.5"]
+          done_on: 2026-09-30
+          evidence:
+            - "aipmo/pmo_core.py::class Response"
+            - "tests/test_pmo_learning.py::test_high_risk_launches"
+        - id: "3.8"
+          name: "役割特化エージェント（開発・テスト・調査・文書・営業）"
+          status: done
+          effort: 5
+          depends_on: ["1.2"]
+          done_on: 2026-09-30
+          evidence:
+            - "templates/roles/role_developer.yaml"
+            - "tests/test_roles.py"
+            - "docs/ROLES.md"
+        - id: "3.9"
+          name: "非 Jira トラッカーへの担当の書き戻し"
+          status: done
+          effort: 5
+          depends_on: ["2.2", "3.5"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/writeback.py"
+            - "aipmo/trackers.py"
+            - "tests/test_writeback.py"
+    - id: "4"
+      name: "基盤・運用"
+      children:
+        - id: "4.1"
+          name: "台帳の DB 化（SQLite・PostgreSQL の切り替え）"
+          status: done
+          effort: 8
+          depends_on: ["3.4"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/ledger_store.py"
+            - "tests/test_ledger_store.py"
+            - "tests/test_ledger_backend.py"
+        - id: "4.2"
+          name: "テナント・プロジェクトの分離"
+          status: done
+          effort: 5
+          depends_on: ["4.1"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/ledger_store.py::class LedgerTenantError"
+            - "tests/test_isolation.py"
+        - id: "4.3"
+          name: "Web 画面（PMO Core 表示・担当の確定）"
+          status: done
+          effort: 8
+          depends_on: ["3.5"]
+          done_on: 2026-09-30
+          evidence:
+            - "aipmo/web/server.py::/api/pmo"
+            - "aipmo/web/static/app.js::renderPmo"
+            - "tests/test_web_pmo.py"
+        - id: "4.4"
+          name: "CI（テスト・lint・型検査・PostgreSQL）"
+          status: done
+          effort: 2
+          done_on: 2026-10-01
+          evidence:
+            - ".github/workflows/tests.yml::ruff check"
+            - ".github/workflows/tests.yml::postgres"
+        - id: "4.5"
+          name: "多言語（画面文言 8 言語・入門ガイド）"
+          status: done
+          effort: 3
+          done_on: 2026-08-29
+          evidence:
+            - "aipmo/i18n.py"
+            - "docs/guide/en.md"
+            - "tests/test_i18n.py"
+    - id: "5"
+      name: "自己管理（PMO AI 自身の開発を WBS で管理する運用）"
+      children:
+        - id: "5.1"
+          name: "WBS ファイルの読み込み・検証・証拠による進捗"
+          status: done
+          effort: 5
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/wbs.py"
+            - "tests/test_wbs.py::test_a_done_node_needs_its_evidence"
+        - id: "5.2"
+          name: "wbs_file アダプタと週次テンプレート self_development"
+          status: done
+          effort: 3
+          depends_on: ["5.1"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/adapters/wbs_file.py"
+            - "templates/examples/self_development.yaml"
+        - id: "5.3"
+          name: "CI で WBS を検証する（error があれば失敗）"
+          status: done
+          effort: 1
+          depends_on: ["5.1"]
+          done_on: 2026-10-01
+          evidence:
+            - ".github/workflows/tests.yml::wbs check"
+            - "tests/test_wbs.py::test_this_projects_own_wbs_is_valid"
+        - id: "5.4"
+          name: "運用手順の文書化"
+          status: done
+          effort: 2
+          depends_on: ["5.1"]
+          done_on: 2026-10-01
+          evidence:
+            - "docs/SELF-WBS.md"
+        - id: "5.5"
+          name: "WBS の変更提案を人が承認して WBS ファイルへ反映する（wbs_replan との接続）"
+          status: todo
+          effort: 5
+          priority: Medium
+          depends_on: ["5.1", "3.2"]
+          notes: "提案のみ。ファイルの書き換えは承認後に人が PR で行う前提"
+        - id: "5.6"
+          name: "WBS の更新漏れ（maybe_done）を PR に知らせる"
+          status: todo
+          effort: 3
+          priority: Low
+          depends_on: ["5.3"]
+    - id: "6"
+      name: "残作業（既知の未実装・未検証）"
+      children:
+        - id: "6.1"
+          name: "台帳の隣のファイル（ブリーフィング・判断ログ・状態）を DB へ"
+          status: todo
+          effort: 5
+          priority: High
+          depends_on: ["4.1"]
+          notes: "schedule と serve を別ホストに分けるために必要"
+        - id: "6.2"
+          name: "役割AIを Task Engine の割当に結び付ける"
+          status: todo
+          effort: 8
+          priority: Medium
+          depends_on: ["3.8", "3.5"]
+        - id: "6.3"
+          name: "非 Jira の実サービスでの書き戻し検証（GitHub・Azure DevOps・Plane・OpenProject）"
+          status: todo
+          effort: 5
+          priority: High
+          depends_on: ["3.9"]
+          notes: "実アカウントが要る。仕様に沿って書いただけで、実機では未確認"
+        - id: "6.4"
+          name: "他 7 言語のガイドへ新しいコマンドを追記"
+          status: todo
+          effort: 3
+          priority: Low
+        - id: "6.5"
+          name: "PostgreSQL から SQLite への逆方向の移行"
+          status: todo
+          effort: 2
+          priority: Low
+          depends_on: ["4.1"]
+        - id: "6.6"
+          name: "Web の接続プール（多数の同時アクセス）"
+          status: todo
+          effort: 3
+          priority: Low
+          depends_on: ["4.1", "4.3"]
+        - id: "6.7"
+          name: "Web 画面の実機確認（スマホ幅・配色）"
+          status: todo
+          effort: 2
+          priority: Medium
+          depends_on: ["4.3"]
+        - id: "6.8"
+          name: "学習の拡張（優先度の重み・見積り精度）"
+          status: todo
+          effort: 8
+          priority: Low
+          depends_on: ["3.6"]
+        - id: "6.9"
+          name: "Plane・OpenProject のユーザー ID を名前から引き当てる"
+          status: todo
+          effort: 5
+          priority: Low
+          depends_on: ["3.9"]
