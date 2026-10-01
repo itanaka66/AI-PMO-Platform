@@ -416,10 +416,16 @@ wbs:
           depends_on: ["6.11"]
         - id: "6.12"
           name: "WBS の更新漏れ・証拠の欠けを、対応タスクの提案にする"
-          status: todo
+          status: done
           effort: 3
-          priority: Low
           depends_on: ["3.11", "5.3"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/pmo_core.py::def _generate_wbs"
+            - "aipmo/generation.py::class WbsWatch"
+            - "tests/test_wbs_drift.py::test_a_fixed_wbs_withdraws_pending_proposals_but_keeps_decided_ones"
+            - "docs/TASK-GENERATION.md"
+          notes: "WBS は読むだけ。提案は承認待ちで、直れば未決のものは取り下げる"
         - id: "6.13"
           name: "自律的な判断を実サービス（Jira・GitHub など）に対して確かめる"
           status: todo

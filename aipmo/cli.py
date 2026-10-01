@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import os
@@ -396,11 +397,12 @@ def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
         return None
     task_engine = open_ledger(config, base, stale_days=int(section.get("stale_days", 30)))
     task_engine.attach(engine)
-    return build_pmo_core(config, task_engine, engine, base if launch else None)
+    return build_pmo_core(config, task_engine, engine, base if launch else None, base=base)
 
 
 def build_pmo_core(config: dict[str, Any], task_engine: Any,
-                   engine: Engine | None = None, launch_base: Path | None = None):
+                   engine: Engine | None = None, launch_base: Path | None = None,
+                   base: Path | None = None):
     """Task Engine の上に PMO Core（担当割当・進捗ルール・統括）を載せる。
 
     `engine` を渡したときだけ、`pmo_core.notify.slack_channel` への通知を
@@ -480,6 +482,13 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
         generation = load_generation(section.get("generate"))
     except GenerationError as exc:
         raise ConfigError(f"pmo_core.generate: {exc}") from exc
+    if generation.wbs is not None:
+        # WBS ファイルと証拠の基準は、config.yaml のあるディレクトリから見た場所。
+        # The WBS file and its evidence root are relative to the config directory.
+        home = base or launch_base or Path.cwd()
+        generation = dataclasses.replace(generation, wbs=dataclasses.replace(
+            generation.wbs, file=str((home / generation.wbs.file).resolve()),
+            root=str((home / generation.wbs.root).resolve())))
 
     # 進捗の自動収集は、`pmo_core.collect` を書いたときだけ(課題管理ツールを読むので
     # オプトイン)。実際に動かすのは常駐のときだけで、表示専用のコマンドは読みに行かない。
@@ -559,7 +568,7 @@ def _template_index(root: Path) -> dict[str, Any]:
 def _open_ledger(args: argparse.Namespace):
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
-    return config, build_pmo_core(config, open_ledger(config, base))
+    return config, build_pmo_core(config, open_ledger(config, base), base=base)
 
 
 def cmd_pmo(args: argparse.Namespace) -> int:
@@ -613,6 +622,11 @@ def cmd_pmo(args: argparse.Namespace) -> int:
         print(f"\n承認待ちの提案 / pending proposals ({len(pending)})  — aipmo generated")
         for item in pending[:5]:
             print(f"  {item['title']}")
+    drift = briefing.get("wbs_drift")
+    if drift and (drift["created"] or drift["withdrawn"] or drift["error"] or drift["found"]):
+        print(f"\nWBS の更新漏れ・証拠の欠け / WBS drift  (見つかった {drift['found']} 件"
+              f"・新たに提案 {len(drift['created'])} 件・取り下げ {len(drift['withdrawn'])} 件)"
+              + (f"  ! {drift['error']}" if drift["error"] else "") + "  — aipmo generated")
     filing = briefing.get("filing")
     if filing and (filing["pending"] or filing["filed_now"] or filing["failed_now"]):
         print(f"\n{filing['tracker']} への起票待ち / waiting to be filed ({len(filing['pending'])})"
@@ -700,7 +714,7 @@ def cmd_tasks(args: argparse.Namespace) -> int:
     base = Path(args.config).resolve().parent
     try:
         task_engine = open_ledger(config, base)
-        core = build_pmo_core(config, task_engine)
+        core = build_pmo_core(config, task_engine, base=base)
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1

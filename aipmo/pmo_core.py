@@ -45,7 +45,7 @@ from .agent_roles import (KEEP_DISPATCHES, SETTLED_BAD, excerpt_of, fit, latest_
                           params_for)
 from .filing import FilingConfig, FilingError, eligible, filing_state
 from .generation import (GenerationConfig, due_date, followup_id, period_key,
-                         recurring_id)
+                         recurring_id, wbs_drift_id)
 from .judgment import (LABEL, MAX_RETRIES_PER_TASK, REMEDIES, Diagnosis, JudgmentConfig,
                        candidates, diagnose, judgment_id, rationale, read_control)
 from .pmo_learning import (DEFAULT_MAX_ESTIMATE_ERROR, DEFAULT_MIN_SAMPLES, LearnedModel,
@@ -507,7 +507,7 @@ def scope_briefing(briefing: dict[str, Any], active: list[Task],
     if redact_org:
         scoped.update(member_loads=[], overloaded_members=[], responses=[],
                       learning=None, agents=[], agent_dispatch=[], collection=None,
-                      judgment=None)
+                      judgment=None, wbs_drift=None)
     return scoped
 
 
@@ -676,10 +676,12 @@ class PmoCore:
         violations = evaluate_rules(self.rules, fresh, now)
         self._track_alerts(violations, fresh, now)
         created = self._generate_followups(violations, fresh, now)
+        wbs_drift = self._generate_wbs(now)
         filing = self._filing_step(now)
 
         briefing = self.briefing(fresh, violations, now)
         briefing["filing"] = filing
+        briefing["wbs_drift"] = wbs_drift
         briefing["collection"] = collection
         briefing["generated"] = {
             "pending": [{"id": t.id, "title": t.title, "project": t.project,
@@ -1436,6 +1438,82 @@ class PmoCore:
                 except Exception:                          # noqa: BLE001
                     logger.warning("提案の通知に失敗 / proposal notice failed", exc_info=True)
         return created
+
+    def _generate_wbs(self, now: datetime) -> dict[str, Any] | None:
+        """WBS の更新漏れ・証拠の欠けを、対応を決めるタスクの**提案**にする(承認待ち)。
+
+        WBS ファイルは**読むだけ**(書き換えるのは人の PR だけ)。見つけた問題 1 件ごとに、
+        「どの問題の、どの回の」提案を 1 つ作る(id で冪等)。直って問題が消えたら、まだ
+        承認待ちの提案は取り下げる(古い指摘を人に見せ続けない)。承認・却下が済んだものは
+        残す。直ってからまた起きたら、新しい回として出る。ファイルを読むので、
+        `interval_minutes` ごとに間引く。
+
+        Turns drift between the WBS and reality into *proposals*. The file is only read.
+        One proposal per problem episode (idempotent on the id); when the problem goes
+        away a still-pending proposal is withdrawn, a decided one is kept; a problem that
+        returns after a fix is a new episode. Throttled, since it reads evidence files.
+        """
+        watch = self.generation.wbs
+        if watch is None:
+            return None
+        state: dict[str, Any] = self._state.setdefault(
+            "wbs_drift", {"checked_at": None, "open": {}, "last": None})
+        if state["last"] is not None and self._within(
+                state.get("checked_at"), now, watch.interval_minutes / 60):
+            return state["last"]
+
+        from .wbs import WbsError, load_wbs, validate_evidence
+
+        report: dict[str, Any] = {"file": watch.file, "checked_at": now.isoformat(),
+                                  "found": 0, "created": [], "withdrawn": [], "error": None}
+        try:
+            wbs, _ = load_wbs(Path(watch.file))
+            problems = validate_evidence(wbs, Path(watch.root), now.date())
+        except (WbsError, OSError) as exc:
+            # 読めないときは、提案を足しも取り下げもしない(誤った「解消」を作らない)。
+            # Unreadable: neither add nor withdraw (a read failure is not a "fixed").
+            report["error"] = f"{type(exc).__name__}: {exc}"[:200]
+            state["checked_at"], state["last"] = now.isoformat(), report
+            self._save_state()
+            return report
+
+        leaves = {leaf.id: leaf for leaf in wbs.leaves()}
+        wanted = {f"{p.code}:{p.node}": p for p in problems
+                  if p.code in watch.codes and p.node in leaves}
+        report["found"] = len(wanted)
+        open_: dict[str, dict[str, str]] = state["open"]
+
+        for key in [k for k in open_ if k not in wanted]:
+            entry = open_.pop(key)
+            if self.task_engine.withdraw_proposal(entry["id"]):
+                report["withdrawn"].append(entry["id"])
+                self._log("proposal_withdrawn", now, task=entry["id"], reason="wbs_fixed")
+
+        for key, problem in wanted.items():
+            if key in open_:
+                continue
+            leaf = leaves[str(problem.node)]
+            task_id = wbs_drift_id(problem.code, leaf.id, now.isoformat())
+            open_[key] = {"id": task_id, "raised_at": now.isoformat()}
+            proposal = self.task_engine.create_task(
+                task_id, f"WBS を確かめる: {leaf.id} {leaf.name} — {problem.message}",
+                origin="followup", proposed=True, project=watch.project or wbs.id,
+                priority=watch.priority, due_date=due_date(now, watch.due_in_days),
+                labels=(*watch.labels, problem.code), generated_from=f"wbs:{key}")
+            if proposal is None:
+                continue
+            report["created"].append(proposal.id)
+            self._log("task_generated", now, task=proposal.id, title=proposal.title,
+                      origin="followup", wbs=key, pending=True)
+            if self.notify is not None:
+                try:
+                    self.notify(f"[提案] {proposal.title}（承認待ち: aipmo generated）")
+                except Exception:                          # noqa: BLE001
+                    logger.warning("提案の通知に失敗 / proposal notice failed", exc_info=True)
+
+        state["checked_at"], state["last"] = now.isoformat(), report
+        self._save_state()
+        return report
 
     def decide_proposal(self, ref: str, approve: bool) -> Task:
         """提案を承認する／却下する。決定は判断ログに残る。"""

@@ -870,6 +870,21 @@ class TaskEngine:
             self._rescore_locked()
         return task
 
+    def withdraw_proposal(self, ref: str) -> bool:
+        """まだ承認待ちの提案を、台帳から取り下げる(元の問題が解消したとき)。
+
+        承認・却下が済んだものは触らない(人の決定は記録として残す)。取り下げたかを返す。
+        Drops a proposal still awaiting a decision, once its cause is gone. A decided one
+        (approved or rejected) is left: a human's decision stays on the record.
+        """
+        with self.transaction():
+            task = self.tasks.get(ref)
+            if task is None or not task.proposed:
+                return False
+            del self.tasks[ref]
+            self._rescore_locked()
+        return True
+
     def complete(self, ref: str) -> Task:
         """台帳だけのタスクを完了にする。課題管理ツールのタスクは、そちらで閉じる。
 

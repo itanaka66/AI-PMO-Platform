@@ -65,10 +65,33 @@ class Followup:
     labels: tuple[str, ...] = ("followup",)
 
 
+# WBS の更新漏れ・証拠の欠けとして提案してよい問題(aipmo/wbs.py の Problem.code)。
+# 既定は「終わっていそうなのに未完了」「完了なのに証拠が無い／消えた」。
+# The WBS problems that may be proposed. Default: looks finished but isn't marked, and
+# marked finished but the evidence is missing or gone.
+WBS_CODES = ("maybe_done", "done_without_evidence", "evidence_missing",
+             "done_before_dependency", "overdue")
+DEFAULT_WBS_CODES = ("maybe_done", "done_without_evidence", "evidence_missing")
+
+
+@dataclass(frozen=True)
+class WbsWatch:
+    """WBS ファイルを見張り、更新漏れ・証拠の欠けを対応タスクの提案にする設定。"""
+    file: str = "wbs/aipmo.yaml"
+    root: str = "."                        # 証拠(evidence)のパスの基準
+    codes: tuple[str, ...] = DEFAULT_WBS_CODES
+    priority: str = "Medium"
+    due_in_days: int = 7
+    interval_minutes: int = 60             # 証拠の確認はファイルを読むので、間引く
+    project: str = ""                      # 空なら WBS 自身の id
+    labels: tuple[str, ...] = ("wbs",)
+
+
 @dataclass(frozen=True)
 class GenerationConfig:
     recurring: list[Recurring] = field(default_factory=list)
     followups: list[Followup] = field(default_factory=list)
+    wbs: WbsWatch | None = None
 
 
 def load_generation(raw: dict[str, Any] | None) -> GenerationConfig:
@@ -126,7 +149,29 @@ def load_generation(raw: dict[str, Any] | None) -> GenerationConfig:
                 labels=tuple(str(label) for label in item.get("labels") or ["followup"])))
     elif spec not in (None, False):
         raise GenerationError("followups は true か一覧 / followups must be true or a list")
-    return GenerationConfig(recurring=recurring, followups=followups)
+    watch = None
+    spec_wbs = raw.get("wbs")
+    if spec_wbs is True:
+        spec_wbs = {}
+    if spec_wbs not in (None, False):
+        if not isinstance(spec_wbs, dict):
+            raise GenerationError("wbs は true かマッピング / wbs must be true or a mapping")
+        codes = spec_wbs.get("codes")
+        chosen = DEFAULT_WBS_CODES if codes is None else tuple(str(c) for c in codes)
+        bad = [c for c in chosen if c not in WBS_CODES]
+        if bad or not chosen:
+            raise GenerationError(
+                f"wbs.codes は {', '.join(WBS_CODES)} のどれか: {bad or '空'} "
+                f"/ wbs.codes must be some of {', '.join(WBS_CODES)}")
+        watch = WbsWatch(
+            file=str(spec_wbs.get("file") or "wbs/aipmo.yaml"),
+            root=str(spec_wbs.get("root") or "."), codes=chosen,
+            priority=str(spec_wbs.get("priority") or "Medium"),
+            due_in_days=max(0, int(spec_wbs.get("due_in_days", 7))),
+            interval_minutes=max(1, int(spec_wbs.get("interval_minutes", 60))),
+            project=str(spec_wbs.get("project") or ""),
+            labels=tuple(str(label) for label in spec_wbs.get("labels") or ["wbs"]))
+    return GenerationConfig(recurring=recurring, followups=followups, wbs=watch)
 
 
 def period_key(rec: Recurring, now: datetime) -> str | None:
@@ -158,6 +203,11 @@ def recurring_id(rec: Recurring, period: str) -> str:
 def due_date(now: datetime, days: int, timezone: str = "UTC") -> str:
     local: date = now.astimezone(ZoneInfo(timezone)).date()
     return (local + timedelta(days=days)).isoformat()
+
+
+def wbs_drift_id(code: str, node: str, raised_at: str) -> str:
+    """WBS の問題の「回」を表す id。直って再び起きれば raised_at が変わり、別の提案になる。"""
+    return f"PMO:wb:{code}:{node}:{raised_at[:16].replace(':', '')}"
 
 
 def followup_id(rule: str, task_id: str, raised_at: str) -> str:
