@@ -45,6 +45,8 @@ from .agent_roles import (KEEP_DISPATCHES, SETTLED_BAD, excerpt_of, fit, latest_
                           params_for)
 from .generation import (GenerationConfig, due_date, followup_id, period_key,
                          recurring_id)
+from .judgment import (LABEL, MAX_RETRIES_PER_TASK, REMEDIES, Diagnosis, JudgmentConfig,
+                       candidates, diagnose, judgment_id, rationale, read_control)
 from .pmo_learning import (DEFAULT_MAX_ESTIMATE_ERROR, DEFAULT_MIN_SAMPLES, LearnedModel,
                            learn)
 from .task_engine import IN_PROGRESS_STATUSES, Task, TaskEngine, _parse_date, side_path
@@ -500,7 +502,8 @@ def scope_briefing(briefing: dict[str, Any], active: list[Task],
     }
     if redact_org:
         scoped.update(member_loads=[], overloaded_members=[], responses=[],
-                      learning=None, agents=[], agent_dispatch=[], collection=None)
+                      learning=None, agents=[], agent_dispatch=[], collection=None,
+                      judgment=None)
     return scoped
 
 
@@ -552,6 +555,12 @@ class PmoCore:
     # タスクの生成（aipmo/generation.py）。既定は何も作らない。
     # Task generation; by default nothing is generated.
     generation: GenerationConfig = field(default_factory=GenerationConfig)
+    # 自律的な判断（aipmo/judgment.py）。None なら判断しない。`acting` は、実際に行動する
+    # のが常駐のときだけ（表示専用のコマンドは、診断を見せるだけ）。
+    # Autonomous judgment; None means none. `acting` is true only in the resident process
+    # (display-only commands show the diagnosis and nothing more).
+    judgment: JudgmentConfig | None = None
+    acting: bool = False
 
     def __post_init__(self) -> None:
         ledger = self.task_engine.path
@@ -563,7 +572,9 @@ class PmoCore:
         self._running: set[str] = set()
         self._workers: list[threading.Thread] = []
         self._model = LearnedModel()
-        self._lock = threading.Lock()
+        # 再入できる錠。状態を触る区間の中から、状態を触る別の処理を呼んでも固まらない。
+        # Re-entrant: a section touching the state may call another that touches it.
+        self._lock = threading.RLock()
         self._dispatching: set[str] = set()
 
     # -- 状態と判断ログ / state and decision log --------------------------
@@ -666,6 +677,7 @@ class PmoCore:
                         for t in engine.proposals()],
             "created": created}
         briefing["agent_dispatch"] = dispatch_report
+        briefing["judgment"] = self._judge(briefing, fresh, now)
         briefing["responses"] = self._respond(briefing, now)
         briefing["learning"] = self._model.as_dict() if self.learning else None
         self._write_json(self.briefing_path, briefing)
@@ -839,6 +851,489 @@ class PmoCore:
             task.suggested_assignee, task.suggestion_reason = member.name, reason
             self._log("assignment_proposed", now, task=task.id, title=task.title,
                       assignee=member.name, reason=reason, score=task.score)
+
+    # -- 自律的な判断 / autonomous judgment -----------------------------------------
+
+    def _control_path(self) -> Path:
+        return side_path(self.task_engine.path, "pmo-judgment-control.json")
+
+    def _jstate(self) -> dict[str, Any]:
+        j = self._state.setdefault("judgment", {})
+        j.setdefault("episodes", {})
+        j.setdefault("stats", {})
+        j.setdefault("auto_log", [])
+        j.setdefault("failures", [])
+        j.setdefault("launch_log", {})
+        j.setdefault("tripped_at", None)
+        return j
+
+    @staticmethod
+    def _within(stamp: str | None, now: datetime, hours: float) -> bool:
+        return bool(stamp) and (now - datetime.fromisoformat(str(stamp))).total_seconds() \
+            < hours * 3600
+
+    def _recent(self, stamps: list[str], now: datetime, hours: float = 24.0) -> list[str]:
+        return [s for s in stamps if self._within(s, now, hours)]
+
+    def _judge(self, briefing: dict[str, Any], active: list[Task],
+               now: datetime) -> dict[str, Any] | None:
+        """診断し、対処を選び、許された範囲で実行する。結果の要約を返す。
+
+        `acting` でない（表示専用の）Core は、診断して見せるだけで、記録も実行もしない。
+        A display-only core diagnoses and shows; it records and executes nothing.
+        """
+        cfg = self.judgment
+        if cfg is None or not cfg.enabled:
+            return None
+        control = read_control(self._control_path())
+        paused = bool(control.get("paused"))
+        diagnoses = [d for d in diagnose(
+            briefing, active, now=now, has_members=bool(self.members),
+            collect_interval_minutes=self.collector.interval_minutes if self.collector else None)
+            if d.severity >= cfg.min_severity]
+        diagnoses.sort(key=lambda d: -d.severity)
+
+        summary: dict[str, Any] = {
+            "enabled": True, "acting": self.acting, "paused": paused, "tripped": False,
+            "diagnoses": [d.as_dict() for d in diagnoses], "actions": [],
+            "autonomy": dict(cfg.autonomy), "pending": 0, "recent": []}
+        if not self.acting:
+            summary["tripped"] = bool(self._state.get("judgment", {}).get("tripped_at"))
+            self._fill_records(summary)
+            return summary
+
+        with self._lock:
+            j = self._jstate()
+            if paused:
+                # 一時停止中は診断だけ。何も作らず、何も実行しない。
+                # Paused: diagnose only; create nothing, execute nothing.
+                summary["tripped"] = bool(j.get("tripped_at"))
+            else:
+                self._sync_proposals(now)
+                self._update_episodes(diagnoses, now)
+        if not paused:
+            self._execute_approved(now)
+            with self._lock:
+                tripped = self._breaker(now, control)
+                summary["tripped"] = tripped
+                acted = 0
+                for diagnosis in diagnoses:
+                    if acted >= cfg.max_actions_per_cycle:
+                        break
+                    acted += self._act_on(diagnosis, active, now, tripped, summary)
+                self._save_state()
+            # 実行は錠を手放してから。ネットワークを使う対処で、状態の錠を握ったまま
+            # 待たない（結果の書き込みが、同じ錠を必要とするため固まる）。
+            # Execute after the lock is released: a remedy may use the network, and its
+            # result is written under that same lock.
+            for judgment_id_ in summary.pop("_run", []):
+                # 1 件ごとに遮断器を見直す。直前の失敗で作動していたら、決めてあった
+                # 自動実行を提案に降格する（失敗が続いたのに、その周の残りを走らせない）。
+                # Re-check the breaker before each one: if the previous failure tripped it,
+                # the remaining automatic decisions are demoted to proposals.
+                with self._lock:
+                    now_tripped = self._breaker(now, control)
+                if now_tripped:
+                    summary["tripped"] = True
+                    self._demote_to_proposal(judgment_id_, now)
+                    continue
+                self._execute_judgment(judgment_id_, now)
+            with self._lock:
+                self._save_state()
+
+        summary["autonomy"] = {r: self._level(r, now, summary["tripped"]) for r in REMEDIES}
+        self._fill_records(summary)
+        return summary
+
+    def _fill_records(self, summary: dict[str, Any]) -> None:
+        """承認待ちの件数と直近の判断を載せる（表示だけの Core でも）。"""
+        assert self.task_engine is not None
+        records = self.task_engine.judgments(8)
+        summary["pending"] = sum(1 for t in self.task_engine.judgments() if t.proposed)
+        summary["recent"] = [{
+            "id": t.id, "title": t.title, "state": t.payload.get("state"),
+            "remedy": t.payload.get("remedy"), "auto": bool(t.payload.get("auto")),
+            "at": t.first_seen, "result": t.payload.get("result")} for t in records]
+
+    def _level(self, remedy: str, now: datetime, tripped: bool) -> str:
+        """この対処の、いまの自律度。遮断器が働いている間は auto を propose に落とす。"""
+        assert self.judgment is not None
+        level = self.judgment.autonomy.get(remedy, "propose")
+        if level == "auto" and remedy != "notify" and tripped:
+            return "propose"
+        return level
+
+    def _breaker(self, now: datetime, control: dict[str, Any]) -> bool:
+        """自動実行の失敗が続いたら、auto を propose に落とす（遮断器）。"""
+        assert self.judgment is not None
+        cfg, j = self.judgment, self._jstate()
+        j["failures"] = self._recent(j["failures"], now, cfg.breaker_hours)
+        tripped_at = j.get("tripped_at")
+        if tripped_at:
+            reset_at = control.get("reset_at")
+            if (reset_at and reset_at > tripped_at) or not self._within(
+                    tripped_at, now, cfg.breaker_hours):
+                j["tripped_at"], j["failures"] = None, []
+                # 戻した後は、過去の失敗を数えずにやり直せる（原因を人が直したかもしれない）。
+                # After a reset past failures no longer count against a remedy.
+                for ep in j["episodes"].values():
+                    for ex in ep["executions"]:
+                        if ex.get("state") == "failed":
+                            ex["forgiven"] = True
+                self._log("judgment_breaker_reset", now)
+            else:
+                return True
+        if len(j["failures"]) >= cfg.breaker_failures:
+            j["tripped_at"] = now.isoformat()
+            self._log("judgment_breaker_tripped", now, failures=len(j["failures"]))
+            self._say(f"[判断] 自動実行の失敗が {len(j['failures'])} 回続いたため、自動実行を"
+                      f"止めて提案に切り替えました（戻す: aipmo judgment reset）")
+            return True
+        return False
+
+    def _say(self, text: str) -> bool:
+        if self.notify is None:
+            return False
+        try:
+            self.notify(text)
+            return True
+        except Exception:                                  # noqa: BLE001
+            logger.warning("通知に失敗 / notification failed: %s", text, exc_info=True)
+            return False
+
+    # -- 診断の「回」(episode) の管理 / episodes ---------------------------------------
+
+    def _sync_proposals(self, now: datetime) -> None:
+        """承認・却下された提案の結果を、診断の回に反映する。"""
+        j = self._jstate()
+        records = {t.id: t for t in self.task_engine.judgments()}
+        for ep in j["episodes"].values():
+            for ex in ep["executions"]:
+                if ex.get("state") != "proposed":
+                    continue
+                record = records.get(ex.get("ref"))
+                if record is None:
+                    ex["state"], ex["credited"], ex["ineffective"] = "expired", True, True
+                elif record.payload.get("state") == "rejected":
+                    # 人が却下した対処は、この回では出し直さない（実績の数にはしない）。
+                    ex["state"], ex["credited"], ex["ineffective"] = "rejected", True, True
+                    self._log("judgment_rejected", now, judgment=record.id)
+                elif record.payload.get("state") == "approved":
+                    ex["state"] = "approved"
+
+    def _update_episodes(self, diagnoses: list[Diagnosis], now: datetime) -> None:
+        assert self.judgment is not None
+        cfg, j = self.judgment, self._jstate()
+        present = {d.fingerprint for d in diagnoses}
+        for fp, ep in list(j["episodes"].items()):
+            if fp not in present:
+                if not ep.get("resolved_at"):
+                    ep["resolved_at"] = now.isoformat()
+                    for ex in ep["executions"]:
+                        if (ex["remedy"] != "notify" and ex.get("state") == "executed"
+                                and not ex.get("credited") and self._within(ex["at"], now, 24 * 7)):
+                            self._credit(ep["kind"], ex["remedy"], ok=True)
+                            ex["credited"] = True
+                    self._log("judgment_resolved", now, diagnosis=fp)
+                if not self._within(ep.get("last_seen"), now, 24 * 14):
+                    del j["episodes"][fp]
+                continue
+            for ex in ep["executions"]:
+                if (ex["remedy"] != "notify" and ex.get("state") == "executed"
+                        and not ex.get("credited")
+                        and not self._within(ex["at"], now, cfg.recheck_hours)):
+                    self._credit(ep["kind"], ex["remedy"], ok=False)
+                    ex["credited"], ex["ineffective"] = True, True
+                    self._log("judgment_ineffective", now, diagnosis=fp, remedy=ex["remedy"])
+
+    def _credit(self, kind: str, remedy: str, *, ok: bool) -> None:
+        record = self._jstate()["stats"].setdefault(f"{kind}|{remedy}", {"ok": 0, "bad": 0})
+        record["ok" if ok else "bad"] += 1
+
+    def _episode(self, d: Diagnosis, now: datetime) -> dict[str, Any]:
+        episodes = self._jstate()["episodes"]
+        ep = episodes.get(d.fingerprint)
+        if ep is None or ep.get("resolved_at"):
+            ep = {"kind": d.kind, "subject": d.subject, "first_seen": now.isoformat(),
+                  "executions": [], "notified_at": None, "resolved_at": None}
+            episodes[d.fingerprint] = ep
+            self._log("judgment_diagnosed", now, diagnosis=d.fingerprint, severity=d.severity,
+                      title=d.title, evidence=list(d.evidence))
+        ep["last_seen"], ep["severity"] = now.isoformat(), d.severity
+        return ep
+
+    # -- 対処を選んで、許された範囲で実行する / act within what is allowed ---------------
+
+    def _available(self, d: Diagnosis, active: list[Task]) -> set[str]:
+        assert self.judgment is not None
+        out = {"followup"}
+        if self.collector is not None:
+            out.add("recollect")
+        if self.launcher is not None:
+            if self._launch_entry(d) is not None:
+                out.add("launch")
+            if self._retryable(d, active):
+                out.add("retry_agent")
+        return out
+
+    def _launch_entry(self, d: Diagnosis) -> Any:
+        assert self.judgment is not None
+        now = self.task_engine.now()
+        log = self._jstate()["launch_log"]
+        for entry in self.judgment.launches:
+            if d.kind in entry.addresses and len(
+                    self._recent(log.get(entry.id, []), now)) < entry.max_per_day:
+                return entry
+        return None
+
+    def _retryable(self, d: Diagnosis, active: list[Task]) -> list[str]:
+        if d.kind != "agent_failure":
+            return []
+        by_id = {t.id: t for t in active}
+        out = []
+        for task_id in d.data.get("tasks", []):
+            task = by_id.get(task_id)
+            failures = sum(1 for e in (task.dispatches if task else [])
+                           if e.get("status") in ("failed", "abandoned"))
+            if task is not None and failures < MAX_RETRIES_PER_TASK:
+                out.append(task_id)
+        return out
+
+    def _act_on(self, d: Diagnosis, active: list[Task], now: datetime, tripped: bool,
+                summary: dict[str, Any]) -> int:
+        assert self.judgment is not None
+        cfg, j = self.judgment, self._jstate()
+        ep = self._episode(d, now)
+
+        # 1. 人への通知: 診断が出たとき、続くときは間隔をあけて再通知する。
+        if cfg.autonomy.get("notify", "auto") != "off":
+            last = ep.get("notified_at")
+            if last is None or not self._within(last, now, cfg.renotify_hours):
+                if self._say(f"[判断] {d.title}\n根拠: {'; '.join(d.evidence) or '-'}"
+                             f"\n詳細: aipmo judgment"):
+                    ep["notified_at"] = now.isoformat()
+                    self._log("judgment_notified", now, diagnosis=d.fingerprint)
+                    summary["actions"].append({"diagnosis": d.fingerprint, "remedy": "notify",
+                                               "level": "auto"})
+
+        # 2. 通知以外の対処: 直近に何かしていれば待つ（効いたかを見るため）。
+        if any(ex["remedy"] != "notify" and self._within(ex["at"], now, cfg.cooldown_hours)
+               for ex in ep["executions"]):
+            return 0
+        options = candidates(d, self._available(d, active), ep, j["stats"], cfg.max_attempts)
+        for remedy in options:
+            level = self._level(remedy, now, tripped)
+            if level == "auto" and remedy != "notify" and len(
+                    self._recent(j["auto_log"], now)) >= cfg.max_auto_per_day:
+                level = "propose"                  # 1 日の自動実行の上限
+            if level == "off":
+                continue
+            return self._decide(d, ep, remedy, level, active, now, summary)
+        return 0
+
+    def _decide(self, d: Diagnosis, ep: dict[str, Any], remedy: str, level: str,
+                active: list[Task], now: datetime, summary: dict[str, Any]) -> int:
+        j = self._jstate()
+        args = self._remedy_args(d, remedy, active)
+        if remedy == "launch" and level == "auto":
+            # 起動の枠は、実行ではなく**決めた時点**で確保する。実行は錠を放してから
+            # なので、同じ周の次の診断が「まだ使っていない」と見誤らないように。
+            # The launch quota is taken when the decision is made, not when it runs: the
+            # run happens after the lock is released, and the next diagnosis in this very
+            # cycle must see the slot as used.
+            args["reserved"] = True
+        why = rationale(d, remedy, j["stats"], level)
+        attempt = 1 + sum(1 for ex in ep["executions"] if ex["remedy"] == remedy)
+        record = self.task_engine.create_task(
+            judgment_id(d.fingerprint, remedy, ep["first_seen"], attempt),
+            f"[判断] {d.title} → {LABEL[remedy]}" + (f"（{attempt} 回目）" if attempt > 1 else ""),
+            origin="judgment",
+            proposed=(level == "propose"), project=d.project, priority="High",
+            generated_from=f"judgment:{d.fingerprint}",
+            payload={"state": "proposed" if level == "propose" else "approved",
+                     "auto": level == "auto", "remedy": remedy, "args": args,
+                     "diagnosis": d.as_dict(), "fingerprint": d.fingerprint,
+                     "rationale": why})
+        if record is None:
+            return 0
+        ep["executions"].append({"remedy": remedy, "at": now.isoformat(), "ref": record.id,
+                                 "state": "proposed" if level == "propose" else "approved",
+                                 "credited": False})
+        if args.get("reserved"):
+            log = j["launch_log"].setdefault(str(args.get("entry")), [])
+            log[:] = self._recent(log, now) + [now.isoformat()]
+        self._log("judgment_decided", now, diagnosis=d.fingerprint, remedy=remedy, level=level,
+                  judgment=record.id, rationale=why)
+        summary["actions"].append({"diagnosis": d.fingerprint, "remedy": remedy,
+                                   "level": level, "ref": record.id})
+        if level == "propose":
+            self._say(f"[判断・承認待ち] {d.title}\n提案: {LABEL[remedy]}"
+                      f"\n承認: aipmo generated approve {record.id}")
+        else:
+            j["auto_log"] = self._recent(j["auto_log"], now) + [now.isoformat()]
+            summary.setdefault("_run", []).append(record.id)      # 錠を放してから実行
+        return 1
+
+    def _demote_to_proposal(self, task_id: str, now: datetime) -> None:
+        """決めてあった自動実行を、人の承認を待つ提案に落とす（遮断器が作動したとき）。"""
+        fingerprint, args, title = None, {}, ""
+        with self.task_engine.transaction():
+            task = self.task_engine.tasks.get(task_id)
+            if task is None or task.payload.get("state") != "approved":
+                return
+            task.proposed, task.status = True, "Proposed"
+            task.payload.update(state="proposed", auto=False,
+                                demoted="自動実行の失敗が続いたため、提案に切り替えました")
+            fingerprint, args, title = task.payload.get("fingerprint"), \
+                dict(task.payload.get("args") or {}), task.title
+        with self._lock:
+            j = self._jstate()
+            ep = j["episodes"].get(fingerprint or "")
+            for ex in (ep["executions"] if ep else []):
+                if ex.get("ref") == task_id:
+                    ex["state"] = "proposed"
+            if args.get("reserved"):                        # 確保した起動の枠を返す
+                log = j["launch_log"].get(str(args.get("entry")), [])
+                if log:
+                    log.pop()
+            if j["auto_log"]:
+                j["auto_log"].pop()
+        self._log("judgment_demoted", now, judgment=task_id)
+        self._say(f"[判断・承認待ち] {title}\n（自動実行を止めたため提案に切り替え）"
+                  f"\n承認: aipmo generated approve {task_id}")
+
+    def _remedy_args(self, d: Diagnosis, remedy: str, active: list[Task]) -> dict[str, Any]:
+        if remedy == "retry_agent":
+            return {"tasks": self._retryable(d, active)[:3]}
+        if remedy == "launch":
+            entry = self._launch_entry(d)
+            return {"entry": entry.id} if entry is not None else {}
+        if remedy == "followup":
+            return {"title": f"対応を決める: {d.title}", "project": d.project,
+                    "labels": ["followup", d.kind], "due_in_days": 3}
+        return {}
+
+    # -- 実行 / execution ----------------------------------------------------------------
+
+    def _execute_approved(self, now: datetime) -> None:
+        """人が承認した提案を実行する。止まったままの実行は失敗として閉じる。"""
+        for record in self.task_engine.judgments():
+            state = record.payload.get("state")
+            if state == "approved" and not record.done and not record.proposed:
+                self._execute_judgment(record.id, now)
+            elif state == "executing" and not record.done and not self._within(
+                    record.payload.get("started_at"), now, self.agent_timeout_minutes / 60):
+                self._finish_judgment(record.id, "failed",
+                                      {"error": "実行が終わりませんでした（時間切れ）"})
+
+    def _execute_judgment(self, task_id: str, now: datetime) -> None:
+        record = self.task_engine.find(task_id)
+        if record is None or record.payload.get("state") != "approved":
+            return
+        with self.task_engine.transaction():
+            task = self.task_engine.tasks.get(task_id)
+            if task is None or task.payload.get("state") != "approved":
+                return
+            task.payload["state"], task.payload["started_at"] = "executing", now.isoformat()
+        remedy = str(record.payload.get("remedy"))
+        args = dict(record.payload.get("args") or {})
+        diagnosis = dict(record.payload.get("diagnosis") or {})
+
+        def work() -> None:
+            try:
+                state, result = self._execute_remedy(remedy, args, diagnosis, task_id)
+            except Exception as exc:                       # noqa: BLE001
+                state, result = "failed", {"error": f"{type(exc).__name__}: {exc}"}
+            self._finish_judgment(task_id, state, result)
+
+        # テンプレートや役割AIの実行は長いので、周を塞がないよう別スレッドで。
+        # Templates and role-AI runs are slow; run them off the cycle's thread.
+        if remedy in ("launch", "retry_agent") and self.background:
+            worker = threading.Thread(target=work, name=f"pmo-judgment-{remedy}",
+                                      daemon=False)
+            self._workers = [w for w in self._workers if w.is_alive()] + [worker]
+            worker.start()
+        else:
+            work()
+
+    def _execute_remedy(self, remedy: str, args: dict[str, Any], diagnosis: dict[str, Any],
+                        task_id: str) -> tuple[str, dict[str, Any]]:
+        assert self.judgment is not None
+        now = self.task_engine.now()
+        if remedy == "recollect":
+            if self.collector is None:
+                return "failed", {"error": "収集が設定されていません"}
+            report = self.collect_now()
+            problems = [s["error"] for s in report["sources"] if s["error"]]
+            if report.get("error") or (report["sources"] and len(problems) == len(report["sources"])):
+                return "failed", {"error": report.get("error") or "; ".join(problems)[:200]}
+            return "executed", {"refreshed": report["refreshed"], "completed": report["completed"]}
+
+        if remedy == "retry_agent":
+            results = []
+            for ref in args.get("tasks", []):
+                try:
+                    outcome = self.dispatch_now(ref)
+                    latest = outcome.get("latest") or {}
+                    results.append({"task": ref, "status": latest.get("status")
+                                    or outcome["status"]})
+                except Exception as exc:                   # noqa: BLE001
+                    results.append({"task": ref, "error": f"{type(exc).__name__}: {exc}"})
+            done = any(r.get("status") == "done" for r in results)
+            return ("executed" if done else "failed"), {"runs": results}
+
+        if remedy == "launch":
+            entry = next((e for e in self.judgment.launches if e.id == args.get("entry")), None)
+            if entry is None or self.launcher is None:
+                return "failed", {"error": "起動する設定がありません"}
+            params = {k: v.replace("{project}", str(diagnosis.get("project") or ""))
+                      for k, v in entry.params.items()}
+            if not args.get("reserved"):               # 提案が承認された場合は、ここで確保
+                with self._lock:
+                    log = self._jstate()["launch_log"].setdefault(entry.id, [])
+                    log[:] = self._recent(log, now) + [now.isoformat()]
+            result = self.launcher(
+                Response(id=f"judgment:{entry.id}", template=entry.template, params=params),
+                {"type": "pmo_core_judgment", "judgment": task_id, "diagnosis": diagnosis})
+            return "executed", {"template": entry.template,
+                                "run_id": getattr(result, "run_id", None),
+                                "excerpt": excerpt_of(result)}
+
+        if remedy == "followup":
+            created = self.task_engine.create_task(
+                f"{task_id}:task", str(args["title"]), origin="followup", proposed=False,
+                project=str(args.get("project") or ""), priority="High",
+                due_date=due_date(now, int(args.get("due_in_days", 3))),
+                labels=tuple(args.get("labels") or ("followup",)),
+                generated_from=f"judgment:{task_id}")
+            return "executed", {"task": created.id if created else f"{task_id}:task"}
+        return "failed", {"error": f"知らない対処: {remedy}"}
+
+    def _finish_judgment(self, task_id: str, state: str, result: dict[str, Any]) -> None:
+        finished = self.task_engine.now()
+        fingerprint, auto = None, False
+        try:
+            with self.task_engine.transaction():
+                task = self.task_engine.tasks.get(task_id)
+                if task is None:
+                    return
+                fingerprint, auto = task.payload.get("fingerprint"), bool(task.payload.get("auto"))
+                task.payload.update(state=state, result=result, finished_at=finished.isoformat())
+                task.done, task.status = True, "Executed" if state == "executed" else "Failed"
+                task.last_seen = finished.isoformat()
+        except Exception:                                  # noqa: BLE001
+            logger.warning("判断の結果を台帳に書けません / cannot record %s", task_id, exc_info=True)
+        with self._lock:
+            j = self._jstate()
+            ep = j["episodes"].get(fingerprint or "")
+            for ex in (ep["executions"] if ep else []):
+                if ex.get("ref") == task_id:
+                    ex["state"], ex["at"] = state, finished.isoformat()
+            if state == "failed" and auto:
+                j["failures"] = self._recent(j["failures"], finished, 24 * 7) + [finished.isoformat()]
+            self._save_state()
+        self._log("judgment_executed" if state == "executed" else "judgment_failed", finished,
+                  judgment=task_id, result=result)
 
     # -- 進捗の自動収集 / automatic progress collection ------------------------------
 

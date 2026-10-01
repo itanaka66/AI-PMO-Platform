@@ -438,13 +438,23 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
     except RuleError as exc:
         raise ConfigError(f"pmo_core.members: {exc}") from exc
 
+    # 自律的な判断。`pmo_core.judgment` を書いたときだけ(オプトイン)。
+    # Autonomous judgment, opt-in via `pmo_core.judgment`.
+    from .judgment import JudgmentError, load_judgment
+
+    try:
+        judgment = load_judgment(section.get("judgment"))
+    except JudgmentError as exc:
+        raise ConfigError(f"pmo_core.judgment: {exc}") from exc
+
     # 高リスク時の応答と、役割AI（`kind: agent` のメンバー）は、どちらも
     # テンプレートを起動する。起動できるのは、運用者が設定に書いたものだけ。
     # Responses to high risk and role AIs (`kind: agent` members) both launch
     # templates, and only the ones the operator wrote into the config.
     launcher = None
     wanted = ({r.template for r in responses}
-              | {str(m.template) for m in members if m.is_agent})
+              | {str(m.template) for m in members if m.is_agent}
+              | {e.template for e in (judgment.launches if judgment else ())})
     if wanted:
         root = Path((config.get("web") or {}).get("templates_dir", "templates"))
         root = root if root.is_absolute() else (launch_base or Path.cwd()) / root
@@ -493,7 +503,8 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
     learning = section.get("learning") or {}
     agents_config = section.get("agents") or {}
     return PmoCore(task_engine=task_engine, rules=rules,
-                   collector=collector, generation=generation,
+                   collector=collector, generation=generation, judgment=judgment,
+                   acting=engine is not None and launch_base is not None,
                    members=members, notify=notify,
                    renotify_hours=int(notify_config.get("renotify_hours", 24)),
                    learning=bool(learning.get("enabled", True)),
@@ -679,6 +690,73 @@ def cmd_tasks(args: argparse.Namespace) -> int:
         if args.why:
             for reason in task.reasons:
                 print(f"        - {reason}")
+    return 0
+
+
+def cmd_judgment(args: argparse.Namespace) -> int:
+    """PMO Core の自律的な判断を見る／止める・戻す。
+
+    `aipmo judgment`         … いまの診断、自律度、承認待ち、直近の判断
+    `aipmo judgment pause`   … 一時停止(診断だけ行い、何も実行しない)
+    `aipmo judgment resume`  … 再開
+    `aipmo judgment reset`   … 遮断器を戻す(自動実行を再び許す)
+    """
+    from datetime import datetime, timezone
+
+    from .judgment import LABEL, write_control
+
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    command = args.judgment_command or "status"
+    if command in ("pause", "resume", "reset"):
+        from .task_engine import side_path
+
+        path = side_path(ledger_path(config, base), "pmo-judgment-control.json")
+        stamp = datetime.now(timezone.utc).isoformat()
+        if command == "pause":
+            write_control(path, paused=True, paused_at=stamp)
+            print("一時停止しました。常駐は診断だけを行い、何も実行しません "
+                  "/ paused: it diagnoses and executes nothing")
+        elif command == "resume":
+            write_control(path, paused=False, resumed_at=stamp)
+            print("再開しました / resumed")
+        else:
+            write_control(path, reset_at=stamp)
+            print("遮断器を戻しました。次の周から自動実行が再び許されます "
+                  "/ circuit breaker reset")
+        print("(常駐が次の周で読みます / the resident process reads this on its next cycle)")
+        return 0
+
+    try:
+        _, core = _open_ledger(args)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    if core.judgment is None:
+        print("自律的な判断は設定されていません。config.yaml に pmo_core.judgment を書きます "
+              "/ judgment is not configured: add pmo_core.judgment")
+        return 0
+    judgment = core.cycle().get("judgment") or {}
+    flags = ("  [一時停止中]" if judgment.get("paused") else "") + \
+            ("  [遮断器が作動中: 自動は提案に落ちています]" if judgment.get("tripped") else "")
+    print(f"自律的な判断 / autonomous judgment{flags}")
+    print("自律度: " + "  ".join(f"{LABEL[r]}={level}" for r, level in judgment["autonomy"].items()))
+    diagnoses = judgment["diagnoses"]
+    print(f"\n診断 / diagnoses ({len(diagnoses)})")
+    for item in diagnoses:
+        print(f"  [{item['severity']:>3}] {item['title']}")
+        for line in item["evidence"][:3]:
+            print(f"        - {line}")
+    print(f"\n承認待ちの判断 / awaiting approval: {judgment['pending']} 件"
+          + ("  — aipmo generated" if judgment["pending"] else ""))
+    print("\n直近の判断 / recent judgments")
+    for item in judgment["recent"]:
+        print(f"  [{item['state'] or '-':<9}]{'[auto]' if item['auto'] else '      '} {item['title']}")
+        result = item.get("result")
+        if result and result.get("error"):
+            print(f"        ! {result['error']}")
+    if not core.acting:
+        print("\n(表示専用: 実行するのは常駐の aipmo schedule です)")
     return 0
 
 
@@ -1286,6 +1364,15 @@ def main(argv: list[str] | None = None) -> int:
     p_migrate.add_argument("--force", action="store_true",
                            help="移行先に行があっても、同じ id を上書きする")
     p_ledger.set_defaults(func=cmd_ledger)
+
+    p_judgment = sub.add_parser(
+        "judgment", help="PMO Core の自律的な判断を見る・止める・戻す "
+                         "/ autonomous judgment: show, pause, resume, reset")
+    judgment_actions = p_judgment.add_subparsers(dest="judgment_command")
+    for action_name, text in (("pause", "一時停止(診断だけ行う)"), ("resume", "再開"),
+                              ("reset", "遮断器を戻す")):
+        judgment_actions.add_parser(action_name, help=text)
+    p_judgment.set_defaults(func=cmd_judgment)
 
     p_collect = sub.add_parser(
         "collect", help="課題管理ツールの今の状態を台帳へ集める(読み取り専用) "

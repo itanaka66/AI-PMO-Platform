@@ -210,6 +210,18 @@ wbs:
             - "aipmo/pmo_core.py::def _generate_followups"
             - "tests/test_collect_generate.py::test_a_persistent_serious_alert_raises_a_proposal_that_is_not_work_yet"
           notes: "台帳だけのタスク。提案は人の承認待ちで、承認までは仕事にならない"
+        - id: "3.12"
+          name: "PMO Core の自律的な判断（診断・対処の選択・許された範囲での実行）"
+          status: done
+          effort: 8
+          depends_on: ["3.9", "3.10", "3.11"]
+          done_on: 2026-10-01
+          evidence:
+            - "aipmo/judgment.py"
+            - "aipmo/pmo_core.py::def _judge"
+            - "tests/test_judgment.py::test_a_collection_that_keeps_failing_is_retried_each_cycle_then_the_breaker_trips"
+            - "docs/JUDGMENT.md"
+          notes: "既定は通知と読み取りの再収集だけ auto。遮断器・一時停止・許可リスト付き。実サービスでは未検証"
     - id: "4"
       name: "基盤・運用"
       children:
@@ -397,3 +409,9 @@ wbs:
           effort: 3
           priority: Low
           depends_on: ["3.11", "5.3"]
+        - id: "6.13"
+          name: "自律的な判断を実サービス（Jira・GitHub など）に対して確かめる"
+          status: todo
+          effort: 3
+          priority: Medium
+          depends_on: ["3.12"]

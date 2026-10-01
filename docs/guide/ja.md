@@ -144,6 +144,7 @@ aipmo wbs status  # このプロジェクト自身の開発の進み具合（wbs
 aipmo agents      # 役割AI（開発・テスト・調査…）に任せた仕事と、その結果
 aipmo collect     # 課題管理ツールの進み具合を、いま台帳へ集める（読むだけ）
 aipmo generated   # PMO Core が作ったタスク（提案・定期）を見る・承認する
+aipmo judgment    # PMO Core の自律的な判断を見る（pause / resume / reset で止める・戻す）
 ```
 
 ---

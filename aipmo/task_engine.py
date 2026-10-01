@@ -154,6 +154,13 @@ class Task:
     origin: str = ""
     proposed: bool = False
     generated_from: str = ""
+    # `origin == "judgment"` の記録だけが使う。PMO Core の自律的な判断（何を診断し、
+    # どの対処を、なぜ選んだか、結果は何か）を、台帳のタスクとして残す。仕事ではなく
+    # 記録なので、順位・担当提案・役割AIへの依頼には入らない。
+    # Used by `origin == "judgment"` records only: what the PMO Core diagnosed, which
+    # remedy it chose and why, and what came of it. A record, not work — never ranked,
+    # assigned or handed to a role AI.
+    payload: dict[str, Any] = field(default_factory=dict)
     # 役割AIに仕事を任せた記録（新しいものが後ろ。直近のぶんだけ残す）。
     # id / agent / template / at / status(running|done|failed|skipped|abandoned) /
     # run_id / finished_at / error / excerpt。
@@ -779,7 +786,8 @@ class TaskEngine:
     def create_task(self, task_id: str, title: str, *, origin: str, proposed: bool,
                     project: str = "", priority: str | None = None,
                     due_date: str | None = None, assignee: str | None = None,
-                    labels: Iterable[str] = (), generated_from: str = "") -> Task | None:
+                    labels: Iterable[str] = (), generated_from: str = "",
+                    payload: dict[str, Any] | None = None) -> Task | None:
         """PMO Core が自分でタスクを作る。同じ id が既にあれば何もしない（冪等）。
 
         id は呼び出し側が決める（`PMO:rec:週次レビュー:2026-W40` のように、
@@ -799,6 +807,7 @@ class TaskEngine:
                 id=task_id, key=task_id, title=title, project=project, priority=priority,
                 due_date=due_date, assignee=assignee, labels=sorted(set(labels)),
                 origin=origin, proposed=proposed, generated_from=generated_from,
+                payload=dict(payload or {}),
                 status="Proposed" if proposed else "To Do", status_since=stamp,
                 first_seen=stamp, last_seen=stamp,
                 sources=[{"template": f"pmo_core:{origin}", "run_id": task_id,
@@ -824,6 +833,13 @@ class TaskEngine:
             task.proposed = False
             task.status_since = stamp
             task.last_seen = stamp
+            if task.origin == "judgment":
+                # 承認しても、ここでは実行しない。実行は常駐の PMO Core が次の周で行う
+                # （画面や CLI の側には、テンプレートを起動する道具が無いため）。
+                # Approving does not execute here; the resident PMO Core does, next cycle
+                # (the web screen and the CLI have no means to launch anything).
+                task.payload["state"] = "approved" if approve else "rejected"
+                task.payload["decided_at"] = stamp
             if approve:
                 task.status = "To Do"
             else:
@@ -847,6 +863,9 @@ class TaskEngine:
             task = self.tasks.get(found.id)
             if task is None:
                 raise KeyError(f"タスクが見つかりません / no such task: {ref}")
+            if task.origin == "judgment":
+                raise ValueError(f"{task.id} は PMO Core の判断の記録です。完了にはできません "
+                                 f"/ a judgment record cannot be completed")
             if not task.origin:
                 raise ValueError(f"{task.id} は課題管理ツール側のタスクです。そちらで閉じて"
                                  f"ください / close it in its tracker")
@@ -859,6 +878,14 @@ class TaskEngine:
             task.done, task.status, task.last_seen = True, "Done", stamp
             self._rescore_locked()
         return task
+
+    def judgments(self, limit: int | None = None) -> list[Task]:
+        """PMO Core の判断の記録（新しい順。実行済み・却下も含む）。"""
+        self.sync()
+        with self._lock:
+            records = [t for t in self.tasks.values() if t.origin == "judgment"]
+        records.sort(key=lambda t: t.first_seen, reverse=True)
+        return records[:limit] if limit else records
 
     def proposals(self) -> list[Task]:
         """承認待ちの提案（新しい順）/ pending proposals, newest first."""
@@ -919,7 +946,8 @@ class TaskEngine:
         with self._lock:
             # 承認待ちの提案は、まだ仕事ではない。順位にも担当提案にも入れない。
             # An unapproved proposal is not work yet: not ranked, not assigned.
-            active = [t for t in self.tasks.values() if not t.done and not t.proposed]
+            active = [t for t in self.tasks.values()
+                      if not t.done and not t.proposed and t.origin != "judgment"]
         if assignee is not None:
             active = [t for t in active if t.assignee == assignee]
         allowed = {p.lower() for p in projects} if projects is not None else None

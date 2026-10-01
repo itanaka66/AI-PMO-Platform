@@ -609,6 +609,33 @@ function renderPmo(data, decisions) {
 
   // PMO Core が警告から起こした対応タスクの提案。承認されるまで仕事ではない。
   // Follow-up tasks the PMO Core proposed from an alert; not work until approved.
+  // PMO Core の自律的な判断: いまの診断と、直近の判断。見るだけ(承認は上の提案から)。
+  // The Core's autonomous judgment: current diagnoses and recent decisions, read-only
+  // (approving is done from the proposals above).
+  const judgment = briefing && briefing.judgment;
+  if (judgment) {
+    const head = pmoSection(t("web_pmo_judgment", "Autonomous judgment"), judgment.diagnoses.length);
+    if (judgment.paused) head.append(el("div", "card-note error", t("web_pmo_paused", "Paused")));
+    if (judgment.tripped) head.append(el("div", "card-note error", t("web_pmo_tripped", "Breaker tripped")));
+    for (const item of judgment.diagnoses) {
+      const row = el("details", "pmo-task");
+      const summary = el("summary");
+      summary.append(el("span", "tag score", String(item.severity)));
+      summary.append(el("span", "pmo-title", item.title));
+      row.append(summary);
+      const list = el("ul", "pmo-reasons");
+      for (const line of item.evidence) list.append(el("li", null, line));
+      row.append(list);
+      head.append(row);
+    }
+    for (const item of (judgment.recent || []).slice(0, 5)) {
+      const note = el("div", "pmo-agent", `${item.state || "-"}${item.auto ? " · auto" : ""} — ${item.title}`);
+      note.dataset.status = item.state === "executed" ? "done" : (item.state === "failed" ? "failed" : "running");
+      head.append(note);
+    }
+    if (judgment.diagnoses.length || (judgment.recent || []).length || judgment.paused) host.append(head);
+  }
+
   const generated = data.proposals || [];
   if (generated.length) {
     const block = pmoSection(t("web_pmo_generated", "Proposed tasks"), generated.length);
