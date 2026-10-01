@@ -177,6 +177,42 @@ class OpenProjectAdapter(Adapter):
         data = self._require(status, data, f"{work_package_id} の取得 / fetching")
         return _flatten(data)
 
+    @action()
+    def list_assignees(self) -> dict[str, Any]:
+        """このプロジェクトで担当にできるユーザーの一覧 / users assignable in this project.
+
+        読み取り専用。名前から OpenProject のユーザー ID（数値）を引き当てるのに使う
+        （aipmo/identity.py）。グループやプレースホルダーは人ではないので除く。
+        ページをたどって全員を集める（上限あり）。email は、見える権限があるときだけ入る。
+
+        Read-only. Used to resolve a name to an OpenProject user id. Groups and placeholder
+        users are not people and are left out; pages are followed (bounded). The email is
+        present only when the API key may see it.
+        """
+        items: list[dict[str, Any]] = []
+        page, seen_total = 1, None
+        while page <= 20:
+            status, data = self._request(
+                "GET", f"/api/v3/projects/{self.project_id}/available_assignees"
+                       f"?pageSize=100&offset={page}")
+            data = self._require(status, data, "担当候補の取得 / listing assignees")
+            elements = (data.get("_embedded") or {}).get("elements") or []
+            seen_total = data.get("total", seen_total)
+            for user in elements:
+                if not isinstance(user, dict) or user.get("id") in (None, ""):
+                    continue
+                if user.get("_type") not in (None, "User"):
+                    continue
+                items.append({
+                    "id": str(user["id"]), "name": user.get("name") or "",
+                    "login": user.get("login") or "", "email": user.get("email") or "",
+                    "first_name": user.get("firstName") or "",
+                    "last_name": user.get("lastName") or ""})
+            if not elements or (seen_total is not None and page * 100 >= int(seen_total)):
+                break
+            page += 1
+        return {"items": items, "count": len(items)}
+
     @action(writes=True)
     def create_issues(self, issues: list[dict[str, Any]],
                       work_package_type_id: int | None = None,
@@ -242,8 +278,8 @@ class OpenProjectAdapter(Adapter):
         """Work Package を書き換える / change fields on an existing work package.
 
         渡された項目だけを送る。lockVersion は内部で取得して自動的に付ける。
-        `assignee` は OpenProject のユーザー ID（数値）または "me"。名前では
-        引き当てられない。
+        `assignee` は OpenProject のユーザー ID（数値）または "me"。名前からの引き当ては
+        `list_assignees` と aipmo/identity.py が行う（ここでは行わない）。
 
         Only the given fields are sent; lockVersion is fetched and attached
         internally. `assignee` is an OpenProject user id (numeric) or "me";

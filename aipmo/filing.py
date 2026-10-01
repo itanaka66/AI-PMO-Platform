@@ -31,6 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .adapters.base import AdapterRegistry
+from .identity import AssigneeResolver
 from .task_engine import Task
 from .trackers import TRACKERS
 
@@ -154,11 +155,16 @@ def tracker_key(tracker: str, ref: Any) -> tuple[str, str]:
 
 
 def make_filer(adapters: AdapterRegistry, members: list[Any],
-               config: FilingConfig) -> Callable[[Task], dict[str, Any]]:
+               config: FilingConfig, *, lookup: bool = True,
+               resolver: AssigneeResolver | None = None) -> Callable[[Task], dict[str, Any]]:
     """`PmoCore.file_task(..., file=...)` に渡す、起票関数を作る。
 
-    戻り値は {tracker, key, external_id, account, unassigned, reused}。
+    戻り値は {tracker, key, external_id, account, account_label, unassigned, reused}。
+    担当のアカウントが書かれていなければ、`lookup` のとき担当候補から名前で引き当てる
+    （完全一致で 1 人に定まったときだけ。aipmo/identity.py）。
     """
+    if resolver is None and lookup:
+        resolver = AssigneeResolver(adapters)
 
     def file(task: Task) -> dict[str, Any]:
         if task.origin not in FILEABLE_ORIGINS:
@@ -191,17 +197,30 @@ def make_filer(adapters: AdapterRegistry, members: list[Any],
         # The assignee: never guessed. Set only when the account is known (Jira's adapter
         # resolves names itself); otherwise the issue is filed unassigned.
         account = None
+        account_label = None
         unassigned = None
+        post_assign = None
         who = (task.assignee or "").strip()
         member = next((m for m in members if m.name.lower() == who.lower()), None) if who else None
+        spec = TRACKERS[name]
         if member is not None and member.is_agent:
             pass                                  # 役割AIはトラッカーに居ない
         elif who:
             account = member.account(name) if member is not None else None
             if not account and name == "jira":
                 account = who
-            if account:
+            if not account and resolver is not None and resolver.can_resolve(name):
+                try:
+                    found = resolver.resolve(name, member.name if member else who,
+                                             getattr(member, "email", None))
+                    if found.ok and found.person is not None:
+                        account, account_label = found.id, found.person.label()
+                except Exception:                 # noqa: BLE001 — 引き当てられなければ担当なし
+                    account = None
+            if account and spec.assign_on_create:
                 issue["assignee"] = account
+            elif account:
+                post_assign = account             # 作った後に付ける(作成は担当を受け取らない)
             else:
                 unassigned = who
 
@@ -215,8 +234,19 @@ def make_filer(adapters: AdapterRegistry, members: list[Any],
             raise FilingError(f"{name} に課題が作られませんでした{detail} "
                               f"/ {name} created no issue{detail}", "remote")
         key, external_id = tracker_key(name, created[0])
+        if post_assign is not None:
+            # 課題は作られた。担当は別の呼びで付け、付いたかを確かめる(付かなくても起票は成功)。
+            # The issue exists; the assignee is set by a second call and verified. If it does
+            # not take, the issue stays filed, unassigned.
+            try:
+                done = adapter.invoke("update_issue", {spec.id_param: spec.id_type(external_id),
+                                                       "assignee": post_assign})
+                if isinstance(done, dict) and done.get("unresolved_assignee"):
+                    raise FilingError("assignee not taken", "remote")
+            except Exception:                     # noqa: BLE001
+                unassigned, account, account_label = who, None, None
         return {"tracker": name, "key": key, "external_id": external_id,
-                "account": account, "unassigned": unassigned,
+                "account": account, "account_label": account_label, "unassigned": unassigned,
                 "reused": bool(isinstance(result, dict) and result.get("skipped"))}
 
     return file

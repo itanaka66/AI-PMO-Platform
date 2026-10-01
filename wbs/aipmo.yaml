@@ -403,10 +403,23 @@ wbs:
           notes: "見積りが当たっていると確かめられたときだけペースを順位に使う。実日数は観測の粒度ぶん粗い"
         - id: "6.9"
           name: "Plane・OpenProject のユーザー ID を名前から引き当てる"
-          status: todo
+          status: done
           effort: 5
-          priority: Low
           depends_on: ["3.9"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/identity.py"
+            - "aipmo/adapters/plane.py::def list_assignees"
+            - "aipmo/adapters/openproject.py::def list_assignees"
+            - "tests/test_identity.py::test_an_ambiguous_or_unknown_name_writes_nothing_and_leaves_the_ledger"
+            - "docs/TICKET-TRACKERS.md"
+          notes: "完全一致だけ。曖昧・該当なしは書かない。実サービスでの応答の形は未検証（6.16）"
+        - id: "6.16"
+          name: "Plane・OpenProject の担当候補 API の応答を実サービスで確かめる（版による形の違い）"
+          status: todo
+          effort: 2
+          priority: Low
+          depends_on: ["6.9"]
         - id: "6.11"
           name: "承認した提案・定期タスクを、課題管理ツールにも起票する（承認つき）"
           status: done

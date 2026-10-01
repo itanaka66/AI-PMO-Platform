@@ -218,6 +218,40 @@ next run.
 
 ---
 
+## 担当者の引き当て（Plane・OpenProject）/ Resolving assignees by name
+
+Plane は担当者を UUID、OpenProject は数値のユーザー ID で指定します。`pmo_core.members[].accounts` に手で書けますが、
+書かなければ、**トラッカーが返す「このプロジェクトで担当にできる人」の一覧**（アダプタの `list_assignees`、読み取り専用）から
+名前で引き当てます。
+
+```yaml
+pmo_core:
+  members:
+    - {name: "Ann Lee"}                                  # 名前が氏名・ログイン名に完全一致すれば引き当てる
+    - {name: ann, email: ann@example.com}                # 名前が違っても、email で当てられる
+    - {name: Bob, accounts: {plane: 22222222-bbbb}}      # 書いてあれば常にこちら(引き当てない)
+  lookup_assignees: true                                 # 既定。false で引き当てを使わない(従来どおり accounts が必須)
+```
+
+- **推測しない。** 一致するのは、正規化した文字列が**完全に等しい**ときだけ。大文字小文字・全角半角・空白（`田中 太郎` と
+  `田中太郎`）の違いは吸収しますが、前方一致・部分一致・綴りの近さは使いません（`Tanaka` は `Taro Tanaka` に当たらない）。
+- **強い手がかりから順に、最初に一致が出た段で決める。** ① email → ② ログイン名・表示名 → ③ 氏名（姓名・名姓どちらの並びも）。
+  その段で 1 人ならそのユーザー、**2 人以上なら曖昧として書かない**（弱い段へ落ちて当て推量をしない）。同姓同名は
+  メンバーに `email` を書くと決まります。
+- **定まらなければ書かない。** 該当なし・曖昧・一覧が取れないときは、トラッカーに何も送らず、台帳も変えず、理由を出します
+  （別人に割り当てるくらいなら、割り当てない）。書いた結果は従来どおり確かめます（反映されなければ成功にしない）。
+- 一覧は 5 分だけ使い回します（常駐の起票が、毎回取り直さないように）。GitHub・Azure DevOps・Jira は対象外
+  （GitHub はログイン名、Azure DevOps は表示名かメール、Jira はアダプタが自分で引き当てる）。
+
+```bash
+aipmo members                       # 人のメンバーごとに、どのユーザーに当たるかを確かめる(読むだけ・何も書かない)
+aipmo members --tracker plane
+aipmo assign PLANE:abc --apply --writeback   # 引き当てたときは「名前から引き当てました」と ID を表示
+```
+
+起票（`aipmo file`）でも同じ引き当てを使います。Plane・OpenProject は課題の作成が担当を受け取らないので、作った後に
+担当を付けて確かめます。付かなくても起票は成功で、担当なしになります（その旨を表示）。
+
 ## Azure DevOps
 
 ### 準備 / Setup

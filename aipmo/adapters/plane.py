@@ -179,6 +179,36 @@ class PlaneAdapter(Adapter):
         data = self._require(status, data, f"{issue_id} の取得 / fetching")
         return _flatten(data)
 
+    @action()
+    def list_assignees(self) -> dict[str, Any]:
+        """このプロジェクトのメンバー（担当にできる人）の一覧 / the project's members.
+
+        読み取り専用。名前から Plane のユーザー ID（UUID）を引き当てるのに使う
+        （aipmo/identity.py）。応答の形が版で違うため、`member` に入れ子になった形も
+        平らな形も読む。ID の無いものは使えないので返さない。
+
+        Read-only. Used to resolve a name to a Plane user id (UUID). The response shape
+        differs between versions, so both a nested `member` and a flat user are read; an
+        entry without an id is not usable and is left out.
+        """
+        status, data = self._request(
+            "GET", f"/api/v1/workspaces/{self.workspace_slug}/projects/"
+                   f"{self.project_id}/members/")
+        data = self._require(status, data, "メンバーの取得 / listing members")
+        raw = data.get("results") if isinstance(data, dict) else data
+        items = []
+        for entry in raw or []:
+            user = entry.get("member") if isinstance(entry, dict) else None
+            user = user if isinstance(user, dict) else entry
+            if not isinstance(user, dict) or not user.get("id"):
+                continue
+            first, last = str(user.get("first_name") or ""), str(user.get("last_name") or "")
+            items.append({
+                "id": str(user["id"]), "name": f"{first} {last}".strip(),
+                "first_name": first, "last_name": last,
+                "display_name": user.get("display_name") or "", "email": user.get("email") or ""})
+        return {"items": items, "count": len(items)}
+
     @action(writes=True)
     def create_issues(self, issues: list[dict[str, Any]],
                       idempotency_key: str | None = None) -> dict[str, Any]:
@@ -226,7 +256,8 @@ class PlaneAdapter(Adapter):
         """課題を書き換える / change fields on an existing issue.
 
         渡された項目だけを送る（Jira アダプタと同じ約束）。`assignee` は
-        Plane のユーザー ID（UUID）で、名前では引き当てられない。
+        Plane のユーザー ID（UUID）。名前からの引き当ては `list_assignees` と
+        aipmo/identity.py が行う（ここでは行わない）。
 
         Only the given fields are sent (same promise as the Jira adapter).
         `assignee` is a Plane user ID (UUID); a name cannot be resolved.

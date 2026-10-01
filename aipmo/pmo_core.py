@@ -233,6 +233,10 @@ class Member:
     # candidate only for tasks whose labels match its skills; humans win ties
     # unless `prefer`; `auto_confirm` skips the human confirmation (off by default).
     kind: str = "human"
+    # email は、トラッカーのユーザーを名前から引き当てるときの、最も強い手がかり
+    # （aipmo/identity.py）。省略できる。
+    # The strongest clue when resolving a tracker user from a name; optional.
+    email: str = ""
     template: str | None = None
     params: tuple[tuple[str, str], ...] = ()
     trackers: tuple[str, ...] = ()
@@ -260,7 +264,7 @@ def load_members(raw: list[Any] | None) -> list[Member]:
                 raise RuleError(f"役割AI '{item['name']}' には template（templates/roles/ の"
                                 f"テンプレート名）が必要です / a role AI needs a template")
             members.append(Member(
-                kind=kind,
+                kind=kind, email=str(item.get("email") or "").strip(),
                 template=str(item["template"]) if item.get("template") else None,
                 params=tuple((str(k), str(v)) for k, v in (item.get("params") or {}).items()),
                 trackers=tuple(str(t) for t in item.get("trackers") or []),

@@ -174,6 +174,7 @@ def create_app(
     ledger_store_factory: Callable[[], LedgerStore] | None = None,
     members: list[Member] | None = None,
     filing: FilingConfig | None = None,
+    lookup_assignees: bool = True,
 ):
     runs = store or RunStore()
     # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
@@ -771,7 +772,8 @@ def create_app(
             if decision == "skip":
                 task = core.decline_filing(ref)
             else:
-                task = core.file_task(ref, file=make_filer(engine.adapters, members or [], filing))
+                task = core.file_task(ref, file=make_filer(engine.adapters, members or [], filing,
+                                                       lookup=lookup_assignees))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -796,7 +798,7 @@ def create_app(
 
         # そのタスクのトラッカーにも書くか。`jira` は従来の名前（同じ意味）。
         # Also write to the task's own tracker; `jira` is the old name.
-        write = (make_writer(engine.adapters, members or [])
+        write = (make_writer(engine.adapters, members or [], lookup=lookup_assignees)
                  if payload.get("writeback") or payload.get("jira") else None)
 
         store = _open_store(ledger)

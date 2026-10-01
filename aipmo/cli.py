@@ -524,7 +524,8 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
         if not engine.adapters.has(filing.tracker):
             raise ConfigError(f"pmo_core.filing: {filing.tracker} アダプタが設定されていません "
                               f"/ the {filing.tracker} adapter is not configured")
-        filer = make_filer(engine.adapters, members, filing)
+        filer = make_filer(engine.adapters, members, filing,
+                           lookup=_lookup_assignees(config))
 
     learning = section.get("learning") or {}
     agents_config = section.get("agents") or {}
@@ -694,18 +695,84 @@ def cmd_assign(args: argparse.Namespace) -> int:
 
         config_path = Path(args.config)
         engine = build_engine(config, config_path.resolve().parent)
-        write = make_writer(engine.adapters, core.members)
+        write = make_writer(engine.adapters, core.members, lookup=_lookup_assignees(config))
 
     try:
         task = core.accept_assignment(args.ref, write=write)
     except (KeyError, ValueError, RuntimeError) as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
-    written = (core.last_writeback or {}).get("tracker")
+    last = core.last_writeback or {}
+    written = last.get("tracker")
     print(f"確定しました / assigned: {task.title} → {task.assignee}"
           + (f" ({written} 更新済み / {written} updated)" if written
              else " (台帳のみ / ledger only)"))
+    if written and last.get("account_source") == "lookup":
+        print(f"  名前から {written} のユーザーを引き当てました / resolved by name: "
+              f"{last.get('resolved_as')} (id {last.get('account')})")
     return 0
+
+
+def _lookup_assignees(config: dict[str, Any]) -> bool:
+    """`pmo_core.lookup_assignees`（既定は真）：アカウント未設定の担当を、名前で引き当てるか。"""
+    return bool((config.get("pmo_core") or {}).get("lookup_assignees", True))
+
+
+def cmd_members(args: argparse.Namespace) -> int:
+    """メンバーを、トラッカーのユーザーに引き当てた結果を見る(読み取りだけ・何も書かない)。
+
+    `aipmo members`                 … 人のメンバーごとに、Plane・OpenProject での引き当て結果
+    `aipmo members --tracker plane` … 1 つのトラッカーだけ
+
+    書き戻す前に「だれが、どのユーザーに当たるか」を確かめるためのもの。曖昧・該当なしは
+    ここに出る（そのまま書き戻すと、書かずに止まる）。
+    """
+    from .identity import AssigneeResolver
+
+    try:
+        config, core = _open_ledger(args)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+    humans = [m for m in core.members if not m.is_agent]
+    if not humans:
+        print("メンバーがいません / no members")
+        return 0
+    engine = build_engine(config, Path(args.config).resolve().parent)
+    resolver = AssigneeResolver(engine.adapters)
+    trackers = [t for t in ("plane", "openproject") if resolver.can_resolve(t)]
+    if args.tracker:
+        trackers = [t for t in trackers if t == args.tracker]
+    if not trackers:
+        print("引き当てできるトラッカー（plane / openproject）のアダプタが設定されていません "
+              "/ no plane/openproject adapter is configured")
+        return 0
+    failed = 0
+    for tracker in trackers:
+        print(f"{tracker}")
+        for member in humans:
+            configured = member.account(tracker)
+            if configured:
+                print(f"  {member.name:<14} 設定済み / configured: {configured}")
+                continue
+            try:
+                found = resolver.resolve(tracker, member.name, member.email)
+            except Exception as exc:                      # noqa: BLE001
+                failed += 1
+                print(f"  {member.name:<14} ! 候補を取得できません / cannot list: "
+                      f"{type(exc).__name__}: {exc}")
+                continue
+            if found.ok and found.person is not None:
+                print(f"  {member.name:<14} → {found.person.label()} (id {found.id}, {found.tier} 一致)")
+            elif found.status == "ambiguous":
+                failed += 1
+                print(f"  {member.name:<14} ! 複数に当たる / ambiguous: "
+                      + ", ".join(p.label() for p in found.candidates[:5])
+                      + "  — accounts か email で決める")
+            else:
+                failed += 1
+                print(f"  {member.name:<14} ! 該当なし / not found  — accounts に書く")
+    return 1 if failed else 0
 
 
 def cmd_tasks(args: argparse.Namespace) -> int:
@@ -898,7 +965,7 @@ def cmd_file(args: argparse.Namespace) -> int:
     targets = [t.id for t in candidates] if args.all else [args.ref]
     base = Path(args.config).resolve().parent
     engine = build_engine(config, base)
-    write = make_filer(engine.adapters, core.members, cfg)
+    write = make_filer(engine.adapters, core.members, cfg, lookup=_lookup_assignees(config))
     failed = 0
     for ref in targets:
         try:
@@ -1253,7 +1320,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      viewer_projects=web.get("viewer_projects"),
                      ledger_store_factory=store_factory,
                      members=load_members((config.get("pmo_core") or {}).get("members")),
-                     filing=_web_filing(config))
+                     filing=_web_filing(config),
+                     lookup_assignees=_lookup_assignees(config))
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()
@@ -1556,6 +1624,13 @@ def main(argv: list[str] | None = None) -> int:
         generated_actions.add_parser(action_name, help=text).add_argument(
             "ref", help="タスクの id")
     p_generated.set_defaults(func=cmd_generated)
+
+    p_members = sub.add_parser(
+        "members", help="メンバーがトラッカーのどのユーザーに当たるかを確かめる(読み取りだけ) "
+                        "/ check which tracker user each member resolves to (read-only)")
+    p_members.add_argument("--tracker", choices=("plane", "openproject"),
+                           help="1 つのトラッカーだけ / one tracker only")
+    p_members.set_defaults(func=cmd_members)
 
     p_file = sub.add_parser(
         "file", help="承認したタスクを課題管理ツールにも起票する(承認つき) "

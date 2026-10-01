@@ -732,8 +732,9 @@ class TaskEngine:
         task.external_id = task.external_id or candidate.get("external_id", "")
         if candidate["key"]:
             task.title = candidate["title"]  # キー付き（課題管理側）の題名を正とする
-        filed_account = (task.payload.get("filing") or {}).get("account")
-        if not (filed_account and candidate["assignee"] == filed_account and task.assignee):
+        filing_info = task.payload.get("filing") or {}
+        filed_accounts = {a for a in (filing_info.get("account"), filing_info.get("account_label")) if a}
+        if not (candidate["assignee"] in filed_accounts and task.assignee):
             # 起票のとき渡したアカウントが返ってきただけなら、台帳のメンバー名を残す。
             # The account we filed with coming back must not replace the member's name.
             task.assignee = candidate["assignee"] or task.assignee
@@ -945,7 +946,8 @@ class TaskEngine:
             task.tracker, task.external_id = info["tracker"], info["external_id"]
             task.payload["filing"] = {
                 "state": "filed", "tracker": info["tracker"], "key": info["key"],
-                "account": info.get("account"), "at": stamp, "error": None}
+                "account": info.get("account"), "account_label": info.get("account_label"),
+                "at": stamp, "error": None}
             task.last_seen = stamp
         return task
 

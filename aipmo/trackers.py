@@ -26,6 +26,10 @@ class Tracker:
     ref_fields: tuple[str, ...]           # 出力のどの項目が識別子か
     title_fields: tuple[str, ...]
     due_fields: tuple[str, ...]
+    # 課題を作るとき、同時に担当を指定できるか。できないもの（Plane・OpenProject の
+    # create_issues は担当を受け取らない）は、作った後に update_issue で付ける。
+    # Whether create_issues takes an assignee; if not, it is set by update_issue afterwards.
+    assign_on_create: bool = True
 
 
 TRACKERS: dict[str, Tracker] = {
@@ -34,9 +38,11 @@ TRACKERS: dict[str, Tracker] = {
     "github_projects": Tracker("github_projects", "GH", "issue_number", int,
                                ("number",), ("title",), ("due_date",)),
     "plane": Tracker("plane", "PLANE", "issue_id", str,
-                     ("id",), ("name", "title"), ("target_date", "due_date")),
+                     ("id",), ("name", "title"), ("target_date", "due_date"),
+                     assign_on_create=False),
     "openproject": Tracker("openproject", "OP", "work_package_id", int,
-                           ("id",), ("subject", "title"), ("due_date",)),
+                           ("id",), ("subject", "title"), ("due_date",),
+                           assign_on_create=False),
     "azure_devops": Tracker("azure_devops", "ADO", "work_item_id", int,
                             ("id",), ("title",), ("due_date",)),
     # WBS ファイル（wbs/aipmo.yaml）。読み取り専用なので書き戻しはできない
