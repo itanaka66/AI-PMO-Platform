@@ -52,6 +52,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .trackers import TRACKERS, key_id
 from .ledger_store import (  # noqa: F401  (LedgerTenantError は従来の場所からも使える)
     LedgerConfigError,
     LedgerStore,
@@ -129,6 +130,13 @@ class Task:
     # The project it belongs to: the issue-key prefix, an explicit `project`
     # in the output, else the run's jira_project / project parameter.
     project: str = ""
+    # どのトラッカー（アダプタ名）の課題か、そこでの識別子は何か。担当を
+    # 書き戻すときの宛先になる。以前の行は空で、`JIRA:` で始まる id は Jira。
+    # Which tracker (adapter name) owns it and its identifier there: the
+    # destination of an assignee write-back. Older rows are empty; an id
+    # starting `JIRA:` is Jira.
+    tracker: str = ""
+    external_id: str = ""
     # 現在の状態／ブロックになってからの時刻。進捗ルール（停滞・長期ブロック）
     # が「どれだけ続いているか」を数えるのに使う。
     # When the current status / blocked state began; progress rules use these
@@ -237,8 +245,18 @@ def _text(value: Any) -> str | None:
     return text or None
 
 
-def extract_candidates(output: Any) -> list[dict[str, Any]]:
-    """ステップ出力からタスク候補を拾う / pull task candidates from an output."""
+def extract_candidates(output: Any, adapter: str | None = None) -> list[dict[str, Any]]:
+    """ステップ出力からタスク候補を拾う / pull task candidates from an output.
+
+    `adapter` は、その出力を作ったアダプタの名前。トラッカー（GitHub・Plane・
+    OpenProject・Azure DevOps）の出力は、課題の番号を `key` ではなく
+    `number` / `id` で返すので、対応表（aipmo/trackers.py）で読み替え、
+    どのトラッカーの課題かを候補に残す。
+
+    `adapter` names what produced the output. Trackers other than Jira return
+    the number as `number` / `id` rather than `key`, so it is read through the
+    table in aipmo/trackers.py and the candidate remembers its tracker.
+    """
     if isinstance(output, dict):
         items = output.get("items")
     else:
@@ -246,21 +264,44 @@ def extract_candidates(output: Any) -> list[dict[str, Any]]:
     if not isinstance(items, list):
         return []
 
+    tracker = TRACKERS.get(adapter or "")
     candidates = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        title = _text(item.get("summary") or item.get("title"))
-        key = _text(item.get("key"))
+        tracker_name, external_id = "", ""
+        if tracker is not None:
+            ref = next((_text(item.get(f)) for f in tracker.ref_fields
+                        if _text(item.get(f))), None)
+            title = next((_text(item.get(f)) for f in tracker.title_fields
+                          if _text(item.get(f))), None)
+            if ref and tracker.adapter == "jira":
+                key = ref.upper()
+            elif ref:
+                key = f"{tracker.prefix}:{ref}"
+            else:
+                key = None
+            if key:
+                tracker_name = tracker.adapter
+                external_id = key if tracker.adapter == "jira" else (ref or "")
+            title = title or key
+        else:
+            title = _text(item.get("summary") or item.get("title"))
+            key = _text(item.get("key"))
+            key = key.upper() if key else None
         if not title and not key:
             continue
         labels = item.get("labels") or []
         status = _text(item.get("status"))
+        due_fields = tracker.due_fields if tracker is not None else ("due_date", "duedate")
         candidates.append({
-            "key": key.upper() if key else None,
+            "key": key,
+            "tracker": tracker_name,
+            "external_id": external_id,
             "title": title or key,
             "assignee": _text(item.get("assignee")),
-            "due_date": _text(item.get("due_date") or item.get("duedate")),
+            "due_date": next((_text(item.get(f)) for f in due_fields
+                              if _text(item.get(f))), None),
             "priority": _text(item.get("priority")),
             "status": status,
             "labels": [str(label) for label in labels],
@@ -270,7 +311,7 @@ def extract_candidates(output: Any) -> list[dict[str, Any]]:
                 or bool(status and status.lower() in _BLOCKED_MARKERS)
                 or bool(item.get("blocked"))
             ),
-            "done": bool(item.get("done")) or bool(
+            "done": bool(item.get("done")) or bool(item.get("completed")) or bool(
                 status and status.lower() in _DONE_STATUSES),
         })
     return candidates
@@ -500,7 +541,7 @@ class TaskEngine:
     def find(self, ref: str) -> Task | None:
         """タスク id か Jira キーで引く。最新の台帳を読み直してから。"""
         self.sync()
-        return self.tasks.get(ref) or self.tasks.get(f"JIRA:{ref.upper()}")
+        return self.tasks.get(ref) or self.tasks.get(key_id(ref.upper()))
 
     # -- 収集と統合 / ingest and merge -----------------------------------
 
@@ -511,9 +552,10 @@ class TaskEngine:
         """Engine の完了フック。ここで落ちても本来の実行は止めない。"""
         try:
             harvested: list[dict[str, Any]] = []
-            for result in ctx.results.values():
+            sources = getattr(ctx, "step_adapters", None) or {}
+            for step_id, result in ctx.results.items():
                 if result.status == "success":
-                    harvested.extend(extract_candidates(result.output))
+                    harvested.extend(extract_candidates(result.output, sources.get(step_id)))
             if harvested:
                 params = getattr(ctx, "params", None) or {}
                 default = _text(params.get("jira_project") or params.get("project"))
@@ -549,8 +591,8 @@ class TaskEngine:
 
     def _find(self, candidate: dict[str, Any]) -> Task | None:
         key = candidate["key"]
-        if key and f"JIRA:{key}" in self.tasks:
-            return self.tasks[f"JIRA:{key}"]
+        if key and key_id(key) in self.tasks:
+            return self.tasks[key_id(key)]
         # キー無しで拾われていた同名タスクに、キーを結び付ける。プロジェクトが
         # 分かる前に拾われた（project が空の）古いものは、同名なら引き継ぐ。
         # Attach a key to a same-titled task first seen without one. An older
@@ -577,18 +619,20 @@ class TaskEngine:
         if task is None:
             key = candidate["key"]
             task = Task(
-                id=(f"JIRA:{key}" if key
+                id=(key_id(key) if key
                     else self._title_id(candidate["project"], candidate["title"])),
                 title=candidate["title"], first_seen=stamp, status_since=stamp,
             )
             self.tasks[task.id] = task
         elif candidate["key"] and task.key is None:
             del self.tasks[task.id]
-            task.id = f"JIRA:{candidate['key']}"
+            task.id = key_id(candidate["key"])
             self.tasks[task.id] = task
 
         task.key = task.key or candidate["key"]
         task.project = task.project or candidate["project"]
+        task.tracker = task.tracker or candidate.get("tracker", "")
+        task.external_id = task.external_id or candidate.get("external_id", "")
         if candidate["key"]:
             task.title = candidate["title"]  # キー付き（課題管理側）の題名を正とする
         task.assignee = candidate["assignee"] or task.assignee

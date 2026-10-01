@@ -545,29 +545,25 @@ def cmd_assign(args: argparse.Namespace) -> int:
         return 1
 
     write = None
-    if args.jira:
+    if args.writeback:
+        # そのタスクが載っているトラッカー（Jira・GitHub・Plane・OpenProject・
+        # Azure DevOps）へ書く。宛先はタスク自身が持っている。
+        # Writes to the tracker that owns the task; the task itself knows which.
+        from .writeback import make_writer
+
         config_path = Path(args.config)
         engine = build_engine(config, config_path.resolve().parent)
-        if not engine.adapters.has("jira"):
-            print("jira アダプタが設定されていません / jira adapter is not configured",
-                  file=sys.stderr)
-            return 1
-        jira = engine.adapters.get("jira")
-
-        def write(key: str, assignee: str) -> Any:
-            result = jira.invoke("update_issue", {"issue_key": key, "assignee": assignee})
-            if result.get("unresolved_assignee"):
-                raise RuntimeError(
-                    f"Jira で担当者を特定できません / cannot resolve {assignee!r}")
-            return result
+        write = make_writer(engine.adapters, core.members)
 
     try:
         task = core.accept_assignment(args.ref, write=write)
     except (KeyError, ValueError, RuntimeError) as exc:
         print(f"{exc}", file=sys.stderr)
         return 1
+    written = (core.last_writeback or {}).get("tracker")
     print(f"確定しました / assigned: {task.title} → {task.assignee}"
-          + (" (Jira 更新済み / Jira updated)" if write is not None else " (台帳のみ / ledger only)"))
+          + (f" ({written} 更新済み / {written} updated)" if written
+             else " (台帳のみ / ledger only)"))
     return 0
 
 
@@ -710,6 +706,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         return 1
 
     from .i18n import translator
+    from .pmo_core import load_members
 
     config = load_config(Path(args.config))
     web = dict(config.get("web") or {})
@@ -743,7 +740,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      cors_origins=cors_origins or None,
                      pmo_ledger=ledger_path(config, base),
                      viewer_projects=web.get("viewer_projects"),
-                     ledger_store_factory=store_factory)
+                     ledger_store_factory=store_factory,
+                     members=load_members((config.get("pmo_core") or {}).get("members")))
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()
@@ -1004,8 +1002,11 @@ def main(argv: list[str] | None = None) -> int:
     p_assign.add_argument("--project", help="一覧をプロジェクトで絞る / filter the list by project")
     p_assign.add_argument("--apply", action="store_true",
                           help="提案を確定する（ref が必要）/ confirm the proposal for ref")
-    p_assign.add_argument("--jira", action="store_true",
-                          help="確定時に Jira の担当者も更新 / also update the Jira assignee")
+    p_assign.add_argument("--writeback", "--jira", dest="writeback", action="store_true",
+                          help="確定時に、そのタスクのトラッカー（Jira・GitHub Projects・Plane・"
+                               "OpenProject・Azure DevOps）の担当者も更新 "
+                               "/ also update the assignee in the task's own tracker "
+                               "(--jira is the old name)")
     p_assign.set_defaults(func=cmd_assign)
 
     p_ledger = sub.add_parser(

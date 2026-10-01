@@ -214,12 +214,15 @@ class PlaneAdapter(Adapter):
     @action(writes=True)
     def update_issue(self, issue_id: str, name: str | None = None,
                      description: str | None = None, state: str | None = None,
-                     due_date: str | None = None,
+                     due_date: str | None = None, assignee: str | None = None,
                      comment: str | None = None) -> dict[str, Any]:
         """課題を書き換える / change fields on an existing issue.
 
-        渡された項目だけを送る（Jira アダプタと同じ約束）。
+        渡された項目だけを送る（Jira アダプタと同じ約束）。`assignee` は
+        Plane のユーザー ID（UUID）で、名前では引き当てられない。
+
         Only the given fields are sent (same promise as the Jira adapter).
+        `assignee` is a Plane user ID (UUID); a name cannot be resolved.
         """
         fields: dict[str, Any] = {}
         if name is not None:
@@ -230,11 +233,14 @@ class PlaneAdapter(Adapter):
             fields["state"] = state
         if due_date is not None:
             fields["target_date"] = due_date
+        if assignee is not None:
+            fields["assignees"] = [assignee]
 
+        updated: Any = None
         if fields:
             status, data = self._request(
                 "PATCH", self._issues_path(f"{issue_id}/"), fields)
-            self._require(status, data, f"{issue_id} の更新 / updating")
+            updated = self._require(status, data, f"{issue_id} の更新 / updating")
 
         if comment:
             self.add_comment(issue_id, comment)
@@ -243,6 +249,13 @@ class PlaneAdapter(Adapter):
             return {"issue_id": issue_id, "changed": [], "skipped": "nothing to change"}
 
         result: dict[str, Any] = {"issue_id": issue_id, "changed": sorted(fields)}
+        if assignee is not None and isinstance(updated, dict) and "assignees" in updated:
+            # 応答の assignees に居なければ、反映されていない。
+            # If the response does not list it, it did not take effect.
+            listed = {str(a.get("id") if isinstance(a, dict) else a)
+                      for a in updated.get("assignees") or []}
+            if str(assignee) not in listed:
+                result["unresolved_assignee"] = assignee
         if comment:
             result["commented"] = True
         return result

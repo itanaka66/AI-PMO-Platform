@@ -190,6 +190,14 @@ class Member:
     # 担当してよいプロジェクト（小文字）。空なら全プロジェクト。
     # Projects they may be assigned to (lower-case); empty means all.
     projects: tuple[str, ...] = ()
+    # トラッカーごとのアカウント（アダプタ名 → ログイン名／ID／表示名）。
+    # 担当を書き戻すときだけ使う。Jira は名前を引き当てられるので省略できる。
+    # The member's account in each tracker (adapter name → login / id / display
+    # name), used only for write-back. Jira resolves names itself, so it may be omitted.
+    accounts: tuple[tuple[str, str], ...] = ()
+
+    def account(self, tracker: str) -> str | None:
+        return dict(self.accounts).get(tracker)
 
 
 def load_members(raw: list[Any] | None) -> list[Member]:
@@ -203,6 +211,8 @@ def load_members(raw: list[Any] | None) -> list[Member]:
                 capacity=max(1, int(item.get("capacity", 5))),
                 skills=tuple(str(s).lower() for s in item.get("skills") or []),
                 projects=tuple(str(p).lower() for p in item.get("projects") or []),
+                accounts=tuple((str(k), str(v)) for k, v in
+                               (item.get("accounts") or {}).items() if v),
             ))
     return members
 
@@ -756,15 +766,17 @@ class PmoCore:
     # -- 担当の確定 / confirming an assignment ---------------------------------
 
     def accept_assignment(self, ref: str,
-                          write: Callable[[str, str], Any] | None = None) -> Task:
-        """提案された担当を確定する。`ref` はタスク id か Jira キー。
+                          write: Callable[[Task, str], Any] | None = None) -> Task:
+        """提案された担当を確定する。`ref` はタスク id、または課題のキー。
 
-        `write(key, assignee)` を渡すと Jira などへ書き込む。書き込みが失敗
-        したら台帳は変えない — 台帳だけ先に進むと、実際とずれる。
+        `write(task, assignee)` を渡すと、そのタスクのトラッカーへ書き込む
+        （aipmo/writeback.py の `make_writer`）。書き込みが失敗したら台帳は
+        変えない — 台帳だけ先に進むと、実際とずれる。
 
-        Confirms a proposal. `ref` is a task id or Jira key. With `write`, the
-        external system is updated first; if that fails the ledger is left
-        untouched, since a ledger that ran ahead of reality would be wrong.
+        Confirms a proposal. `ref` is a task id or an issue key. With
+        `write(task, assignee)` the task's own tracker is updated first; if that
+        fails the ledger is left untouched, since a ledger that ran ahead of
+        reality would be wrong.
         """
         engine = self.task_engine
         found = engine.find(ref)
@@ -773,11 +785,13 @@ class PmoCore:
         if not found.suggested_assignee:
             raise ValueError(f"提案がありません / no proposal for {ref}")
 
-        assignee, key, task_id = found.suggested_assignee, found.key, found.id
+        assignee, task_id = found.suggested_assignee, found.id
         # 外部への書き込み（ネットワーク）は台帳の取引の外で行う。
         # The external write (network) happens outside the ledger transaction.
-        if write is not None and key:
-            write(key, assignee)
+        self.last_writeback: dict[str, Any] | None = None
+        if write is not None:
+            outcome = write(found, assignee)
+            self.last_writeback = outcome if isinstance(outcome, dict) else None
 
         with engine.transaction():
             task = engine.tasks.get(task_id)

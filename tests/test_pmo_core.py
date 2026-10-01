@@ -98,7 +98,7 @@ def test_accept_writes_first_and_leaves_ledger_alone_on_failure(tmp_path):
     assert te.tasks["JIRA:P-1"].assignee is None
 
     calls = []
-    core.accept_assignment("P-1", write=lambda k, w: calls.append((k, w)))
+    core.accept_assignment("P-1", write=lambda task, who: calls.append((task.key, who)))
     assert calls == [("P-1", "ann")] and te.tasks["JIRA:P-1"].assignee == "ann"
     with pytest.raises(ValueError):
         core.accept_assignment("P-1")

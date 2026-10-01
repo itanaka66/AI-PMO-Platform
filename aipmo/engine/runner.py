@@ -249,6 +249,8 @@ class Engine:
             for step in template.steps:
                 result = self._run_step(step, ctx)
                 ctx.results[step.id] = result
+                if step.adapter:
+                    ctx.step_adapters[step.id] = step.adapter
 
                 if result.status == "failed" and not step.continue_on_error:
                     logger.error("run %s aborted at step %s", ctx.run_id, step.id)

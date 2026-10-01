@@ -244,11 +244,12 @@ class GitHubProjectsAdapter(Adapter):
             fields["assignees"] = [assignee]
 
         changed = sorted(fields)
+        updated: Any = None
         if fields:
             status, data = self._request(
                 "PATCH", f"/repos/{self.owner}/{self.repo}/issues/{issue_number}",
                 fields)
-            self._require(status, data, f"#{issue_number} の更新 / updating")
+            updated = self._require(status, data, f"#{issue_number} の更新 / updating")
 
         if add_labels:
             status, data = self._request(
@@ -265,6 +266,17 @@ class GitHubProjectsAdapter(Adapter):
                     "skipped": "nothing to change"}
 
         result: dict[str, Any] = {"issue_number": issue_number, "changed": changed}
+        if assignee is not None and isinstance(updated, dict):
+            # GitHub は存在しない・割り当てできないログインを、エラーにせず
+            # 黙って捨てる。応答の assignees に居なければ「引き当てられなかった」
+            # として返す（Jira アダプタの unresolved_assignee と同じ約束）。
+            # GitHub silently drops a login it cannot assign instead of
+            # failing. If the response does not list it, report it unresolved
+            # (the same promise as the Jira adapter's unresolved_assignee).
+            logins = {str(a.get("login", "")).lower()
+                      for a in updated.get("assignees") or [] if isinstance(a, dict)}
+            if assignee.lower() not in logins:
+                result["unresolved_assignee"] = assignee
         if add_labels:
             result["labels_added"] = add_labels
         if comment:

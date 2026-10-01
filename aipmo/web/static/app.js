@@ -420,7 +420,7 @@ function empty(message) {
  * through textContent because issue titles come from outside.
  */
 
-let jiraWritable = false;
+let writableTrackers = new Set();   // 担当を書き戻せるトラッカー / trackers we can write to
 let pmoProject = "";          // 選択中のプロジェクト。空は「すべて」 / "" means all
 const STALE_SECONDS = 15 * 60;
 
@@ -462,6 +462,14 @@ function taskRow(task) {
   return row;
 }
 
+// そのタスクのトラッカーに書き戻せるか。宛先（トラッカーと識別子）が分かり、
+// そのアダプタが更新できるときだけ。
+// Whether the task's own tracker can be written to: its destination is known
+// and that adapter can update issues.
+function canWriteBack(task) {
+  return Boolean(task.tracker && task.external_id && writableTrackers.has(task.tracker));
+}
+
 function proposalRow(task) {
   const row = el("div", "pmo-proposal");
   row.append(el("div", "pmo-title", task.title));
@@ -475,7 +483,7 @@ function proposalRow(task) {
       try {
         await api("/api/pmo/assignments/accept", {
           method: "POST",
-          body: JSON.stringify({ ref: task.id, jira: jiraWritable && Boolean(task.key) }),
+          body: JSON.stringify({ ref: task.id, writeback: canWriteBack(task) }),
         });
         toast(t("web_pmo_accepted", "Confirmed."));
         await refreshPmo();
@@ -670,7 +678,7 @@ async function boot() {
     canRun = Boolean(session.can_run);
     document.documentElement.lang = session.lang || "en";
     $("tenant").textContent = session.tenant;
-    jiraWritable = (session.adapters.jira || []).includes("update_issue");
+    writableTrackers = new Set(session.writeback || []);
     $("h-pmo").textContent = t("web_pmo", "PMO Core");
     $("h-proposals").textContent = t("web_proposals", "WBS Proposals");
     $("h-templates").textContent = t("web_templates", "Templates");

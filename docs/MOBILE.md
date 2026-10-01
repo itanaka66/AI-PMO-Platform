@@ -266,8 +266,8 @@ because that is what you came to look at.
 **PMO Core** — 画面の先頭に出ます（`aipmo schedule` が書く台帳がある構成のみ。無ければ欄ごと出ません）。
 全体レベル、警告、担当の提案、優先順位（押すと点数の内訳）、メンバーの負荷、学習した補正、
 直近の判断が並びます。担当の提案には「この担当で確定」ボタンがあり、**実行用トークンのときだけ**
-出ます（閲覧用では出ず、サーバーも 403 で断ります）。Jira アダプタがあれば Jira の担当者も
-更新します。画面は台帳を読むだけで、周を回したり、通知や自動起動を起こしたりはしません。
+出ます（閲覧用では出ず、サーバーも 403 で断ります）。そのタスクのトラッカー（Jira・GitHub Projects・Plane・OpenProject・Azure DevOps）の
+アダプタがあり、メンバーのアカウントが設定されていれば、トラッカー側の担当者も更新します。画面は台帳を読むだけで、周を回したり、通知や自動起動を起こしたりはしません。
 常駐側の更新が 15 分以上止まっていると、その旨を警告します。
 プロジェクトが 2 つ以上あるときは先頭に絞り込みが出ます。
 
@@ -292,8 +292,11 @@ The operator token is never confined.
 exists. Overall level, alerts, assignment proposals, priorities (tap for the
 score breakdown), member load, learned adjustments and recent decisions. Each
 proposal has a confirm button that appears **only with the operator token**
-(the server also answers 403 to a viewer); with a Jira adapter it updates the
-Jira assignee too. The screen only reads: it never runs a cycle, notifies or
+(the server also answers 403 to a viewer); when the task's own tracker (Jira,
+GitHub Projects, Plane, OpenProject, Azure DevOps) has an adapter and the
+member's account there is configured (`pmo_core.members[].accounts`), it updates
+the tracker's assignee too — and never by guessing a name. A tracker that does
+not take the assignee is an error, not a success. The screen only reads: it never runs a cycle, notifies or
 launches templates. If the resident side has not updated for 15 minutes or
 more, it says so.
 

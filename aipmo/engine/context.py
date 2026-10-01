@@ -32,6 +32,11 @@ class RunContext:
     run_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     results: dict[str, StepResult] = field(default_factory=dict)
+    # 各ステップの出力を作ったアダプタの名前（adapter ステップだけ）。
+    # 台帳が「どのトラッカーの課題か」を知るために使う。
+    # Which adapter produced each step's output (adapter steps only); the
+    # ledger uses it to know which tracker an issue belongs to.
+    step_adapters: dict[str, str] = field(default_factory=dict)
 
     def scope(self) -> dict[str, Any]:
         return {

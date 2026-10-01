@@ -303,11 +303,19 @@ class AzureDevOpsAdapter(Adapter):
             "PATCH",
             f"/_apis/wit/workitems/{work_item_id}?api-version={API_VERSION}",
             patch, content_type="application/json-patch+json")
-        self._require(status, data, f"{work_item_id} の更新 / updating")
+        updated = self._require(status, data, f"{work_item_id} の更新 / updating")
 
         changed = sorted(p["path"].rsplit("/", 1)[-1] for p in patch
                           if p["path"] != "/fields/System.History")
         result = {"work_item_id": work_item_id, "changed": changed}
+        if assignee is not None and isinstance(updated, dict):
+            # Azure DevOps が解決した担当者が、指定と食い違っていないか。
+            # 食い違い（別人に解決された）を黙って成功にしない。
+            # Does the identity Azure DevOps resolved match what was asked? A
+            # different person must not pass silently as success.
+            assigned = (updated.get("fields") or {}).get("System.AssignedTo")
+            if assigned is not None and not _same_identity(assignee, assigned):
+                result["unresolved_assignee"] = assignee
         if comment is not None:
             result["commented"] = True
         return result
@@ -321,6 +329,20 @@ class AzureDevOpsAdapter(Adapter):
             {"text": text})
         data = self._require(status, data, "コメントの追加 / adding a comment")
         return {"id": data.get("id"), "work_item_id": work_item_id}
+
+
+def _same_identity(requested: str, assigned: Any) -> bool:
+    """指定した担当者と、解決された担当者が同じ人か（表示名・メールのどちらでも）。"""
+    wanted = requested.strip().lower()
+    if isinstance(assigned, dict):
+        names = [assigned.get("displayName"), assigned.get("uniqueName")]
+    else:
+        names = [assigned]
+    for name in names:
+        have = str(name or "").strip().lower()
+        if have and (have in wanted or wanted in have):
+            return True
+    return False
 
 
 def _flatten(item: dict[str, Any], due_date_field: str) -> dict[str, Any]:

@@ -73,7 +73,8 @@ from ..dsl import loader
 from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
-from ..pmo_core import PmoCore, scope_briefing
+from ..pmo_core import Member, PmoCore, scope_briefing
+from ..writeback import WritebackError, make_writer, tracker_of, writable_trackers
 from ..ledger_store import LedgerConfigError, LedgerStore, LedgerTenantError
 from ..task_engine import TaskEngine, side_path
 
@@ -170,6 +171,7 @@ def create_app(
     pmo_ledger: Path | None = None,
     viewer_projects: list[str] | None = None,
     ledger_store_factory: Callable[[], LedgerStore] | None = None,
+    members: list[Member] | None = None,
 ):
     runs = store or RunStore()
     # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
@@ -347,6 +349,7 @@ def create_app(
                 name: sorted(engine.adapters.get(name).actions())
                 for name in engine.adapters.names()
             },
+            "writeback": sorted(writable_trackers(engine.adapters)),
         }
 
     @app.get("/api/templates", dependencies=[guard])
@@ -608,7 +611,8 @@ def create_app(
 
         tasks = [
             {"id": t.id, "key": t.key, "title": t.title, "score": t.score,
-             "project": t.project,
+             "project": t.project, "tracker": tracker_of(t),
+             "external_id": t.external_id or (t.key if tracker_of(t) == "jira" else None),
              "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
              "suggestion_reason": t.suggestion_reason, "due_date": t.due_date,
              "priority": t.priority, "status": t.status, "blocked": t.blocked,
@@ -669,18 +673,10 @@ def create_app(
         if not ref:
             raise HTTPException(status_code=422, detail="ref is required")
 
-        write = None
-        if payload.get("jira"):
-            if not engine.adapters.has("jira"):
-                raise HTTPException(status_code=503, detail="jira adapter is not configured")
-            jira = engine.adapters.get("jira")
-
-            def write(key: str, assignee: str) -> Any:
-                result = jira.invoke("update_issue",
-                                     {"issue_key": key, "assignee": assignee})
-                if result.get("unresolved_assignee"):
-                    raise RuntimeError(f"cannot resolve assignee {assignee!r} in Jira")
-                return result
+        # そのタスクのトラッカーにも書くか。`jira` は従来の名前（同じ意味）。
+        # Also write to the task's own tracker; `jira` is the old name.
+        write = (make_writer(engine.adapters, members or [])
+                 if payload.get("writeback") or payload.get("jira") else None)
 
         store = _open_store(ledger)
         core = PmoCore(task_engine=store)
@@ -690,13 +686,20 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except WritebackError as exc:
+            # 設定・宛先の問題は 4xx/503、トラッカーが受け付けなかったのは 502。
+            # Config and target problems are 4xx/503; the tracker refusing is 502.
+            status = {"adapter": 503, "target": 422, "account": 422}.get(exc.kind, 502)
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         finally:
             store.close()
-        logger.info("pmo assignment accepted: %s -> %s by %s from %s (jira=%s)",
-                    task.id, task.assignee, role, _client_ip(request), write is not None)
-        return {"id": task.id, "assignee": task.assignee, "jira_updated": write is not None}
+        written = (core.last_writeback or {}).get("tracker")
+        logger.info("pmo assignment accepted: %s -> %s by %s from %s (written to %s)",
+                    task.id, task.assignee, role, _client_ip(request), written or "ledger only")
+        return {"id": task.id, "assignee": task.assignee, "written_to": written,
+                "jira_updated": written == "jira"}
 
     # -- WBS 再計画の承認 / WBS replan approval ----------------------------
     #

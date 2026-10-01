@@ -230,13 +230,17 @@ class OpenProjectAdapter(Adapter):
     @action(writes=True)
     def update_issue(self, work_package_id: int, subject: str | None = None,
                      description: str | None = None, due_date: str | None = None,
+                     assignee: str | None = None,
                      comment: str | None = None) -> dict[str, Any]:
         """Work Package を書き換える / change fields on an existing work package.
 
         渡された項目だけを送る。lockVersion は内部で取得して自動的に付ける。
+        `assignee` は OpenProject のユーザー ID（数値）または "me"。名前では
+        引き当てられない。
 
         Only the given fields are sent; lockVersion is fetched and attached
-        internally.
+        internally. `assignee` is an OpenProject user id (numeric) or "me";
+        a name cannot be resolved.
         """
         fields: dict[str, Any] = {}
         if subject is not None:
@@ -245,7 +249,10 @@ class OpenProjectAdapter(Adapter):
             fields["description"] = {"format": "markdown", "raw": description}
         if due_date is not None:
             fields["dueDate"] = due_date
+        if assignee is not None:
+            fields["_links"] = {"assignee": {"href": f"/api/v3/users/{assignee}"}}
 
+        updated: Any = None
         if fields:
             status, current = self._request(
                 "GET", f"/api/v3/work_packages/{work_package_id}")
@@ -255,17 +262,24 @@ class OpenProjectAdapter(Adapter):
 
             status, data = self._request(
                 "PATCH", f"/api/v3/work_packages/{work_package_id}", fields)
-            self._require(status, data, f"{work_package_id} の更新 / updating")
+            updated = self._require(status, data, f"{work_package_id} の更新 / updating")
 
         if comment:
             self.add_comment(work_package_id, comment)
 
-        changed = sorted(k for k in fields if k != "lockVersion")
+        changed = sorted("assignee" if k == "_links" else k
+                         for k in fields if k != "lockVersion")
         if not changed and not comment:
             return {"work_package_id": work_package_id, "changed": [],
                     "skipped": "nothing to change"}
 
         result: dict[str, Any] = {"work_package_id": work_package_id, "changed": changed}
+        if assignee is not None and assignee != "me" and isinstance(updated, dict):
+            # 応答の assignee が指定した ID でなければ、反映されていない。
+            # If the response's assignee is not the requested id, it did not take.
+            href = str(((updated.get("_links") or {}).get("assignee") or {}).get("href") or "")
+            if not href.rstrip("/").endswith(f"/{assignee}"):
+                result["unresolved_assignee"] = assignee
         if comment:
             result["commented"] = True
         return result
