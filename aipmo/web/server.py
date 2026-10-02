@@ -46,6 +46,7 @@ the ability to file issues and send messages.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import secrets
@@ -75,7 +76,8 @@ from ..dsl import loader
 from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
-from ..judgment import read_control, write_control
+from ..judgment import AUTONOMY, RANK, REMEDIES, JudgmentConfig, read_control, write_control
+from ..wbs_edit import WbsEditError, plan_changes, write_plan
 from ..messages import (is_japanese, localize_briefing, suggestion_reason, task_title,
                         translate)
 from ..messages import localize_alert as localize_alert_text
@@ -198,6 +200,7 @@ def create_app(
     lookup_assignees: bool = True,
     wbs_target: WbsTarget | None = None,
     wbs_view: tuple[Path, Path] | None = None,
+    judgment: JudgmentConfig | None = None,
     side_storage: str = "auto",
     pool_size: int = 8,
     pool_timeout: float = 10.0,
@@ -835,7 +838,69 @@ def create_app(
         result = wbs_analysis(loaded, root, problems=problems, lang=ui_lang)
         for key in ("tasks", "items", "summary_text"):       # 画面に要らない（重い）もの
             result.pop(key, None)
+        result["can_edit"] = role != "viewer"
         return result
+
+    @app.post("/api/wbs/edit")
+    def wbs_edit(request: Request, payload: dict[str, Any], role: str = operator_guard) -> dict[str, Any]:
+        """WBS ファイルを画面から直す（operator のみ）。固定の形の変更だけを受け付ける。
+
+        `apply` が偽（既定）なら、反映後の差分を返すだけで何も書かない。真なら、同じ検証のうえで書く。
+        検証・書式の保持・読んだ後に書き換えられていたら書かない、は再計画案の承認と同じ仕組み
+        （aipmo/wbs_edit.py）。反映は判断ログに残る。
+        Edits the WBS file (operator only), accepting only the fixed change shapes. Without `apply`
+        it returns the diff and writes nothing; with it, the same validation then the write. It is the
+        replan-approval machinery, so formatting survives and a changed file is never overwritten.
+        """
+        if wbs_view is None:
+            raise HTTPException(status_code=404, detail="WBS is not configured")
+        file, root = wbs_view
+        try:
+            plan = plan_changes(file, root, payload.get("changes"))
+        except WbsEditError as exc:
+            raise HTTPException(status_code=422, detail={"message": str(exc), "problems": exc.problems}) from exc
+        out: dict[str, Any] = {"applied": False, "changed": plan.changed, "diff": plan.diff,
+                               "report": plan.report}
+        if not payload.get("apply"):
+            return out
+        try:
+            write_plan(plan)
+        except WbsEditError as exc:
+            raise HTTPException(status_code=409, detail={"message": str(exc), "problems": exc.problems}) from exc
+        out["applied"] = True
+        ledger = pmo_ledger
+        if ledger is not None and _ledger_present(ledger):
+            store = _open_store(ledger, sync=False)
+            try:
+                store.side.append(DECISIONS, json.dumps(
+                    {"at": datetime.now(timezone.utc).isoformat(), "kind": "wbs_edited",
+                     "file": str(file), "by": role, "changes": plan.report}, ensure_ascii=False))
+            finally:
+                _release(store)
+        logger.info("wbs edited by %s from %s (%d change(s))", role, _client_ip(request), len(plan.report))
+        return out
+
+    @app.get("/api/pulse", dependencies=[guard])
+    def pulse() -> dict[str, Any]:
+        """画面が「変わったか」を安く確かめるための値（読むだけ）。ブリーフィングの時刻と、判断ログの長さ。
+
+        A cheap change marker for the page's visible-tab refresh: the briefing time and the decision-log size.
+        """
+        ledger = pmo_ledger
+        if ledger is None or not _ledger_present(ledger):
+            return {"briefing_at": None, "log": ""}
+        store = _open_store(ledger, sync=False)
+        try:
+            text = store.side.read_doc(BRIEFING)
+            last = store.side.tail(DECISIONS, 1)
+            log = hashlib.sha1((last[-1] if last else "").encode("utf-8")).hexdigest()[:12]
+        finally:
+            _release(store)
+        try:
+            at = json.loads(text or "{}").get("generated_at")
+        except ValueError:
+            at = None
+        return {"briefing_at": at, "log": log}
 
     @app.get("/api/pmo/decisions", dependencies=[guard])
     def pmo_decisions(limit: int = 50, project: str | None = None,
@@ -1185,9 +1250,55 @@ def create_app(
             raise HTTPException(status_code=404, detail="no PMO data yet")
         store = _open_store(ledger, sync=False)
         try:
-            return {"control": read_control(store.side)}
+            control = read_control(store.side)
         finally:
             _release(store)
+        return {"control": control,
+                "autonomy": {"config": dict(judgment.autonomy) if judgment else {},
+                             "override": control.get("autonomy_override") or {},
+                             "can_raise": bool(judgment and judgment.ui_can_raise)}}
+
+    @app.post("/api/judgment/autonomy")
+    def judgment_autonomy(request: Request, payload: dict[str, Any],
+                          role: str = operator_guard) -> dict[str, Any]:
+        """対処ごとの自律度（off / propose / auto）を変える依頼（operator のみ）。
+
+        設定ファイルの値が基準で、画面からの変更は「上書き」として制御の文書に残る（基準に戻せば消える）。
+        常駐が次の周で読む。基準より上げられるのは、設定で `ui_can_raise: true` のときだけ
+        （既定は、下げる・止めるだけ）。変更は判断ログに残る。
+        Change one remedy's autonomy as an override over the config value (operator only). Raising above
+        the config needs `ui_can_raise: true`; lowering is always allowed. Audited in the decision log.
+        """
+        if judgment is None:
+            raise HTTPException(status_code=404, detail="judgment is not configured")
+        remedy, level = str(payload.get("remedy") or ""), str(payload.get("level") or "")
+        if remedy not in REMEDIES or level not in AUTONOMY:
+            raise HTTPException(status_code=422, detail=f"remedy in {REMEDIES}, level in {AUTONOMY}")
+        base = judgment.autonomy[remedy]
+        if RANK[level] > RANK[base] and not judgment.ui_can_raise:
+            raise HTTPException(status_code=403, detail=(
+                f"cannot raise {remedy} above the configured {base}: set judgment.ui_can_raise in the config"))
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        stamp = datetime.now(timezone.utc).isoformat()
+        store = _open_store(ledger, sync=False)
+        try:
+            overrides = dict(read_control(store.side).get("autonomy_override") or {})
+            before = overrides.get(remedy, base)
+            if level == base:
+                overrides.pop(remedy, None)
+            else:
+                overrides[remedy] = level
+            state = write_control(store.side, autonomy_override=overrides)
+            store.side.append(DECISIONS, json.dumps(
+                {"at": stamp, "kind": "judgment_autonomy", "remedy": remedy, "from": before,
+                 "to": level, "by": role}, ensure_ascii=False))
+        finally:
+            _release(store)
+        logger.info("judgment autonomy %s %s->%s by %s from %s", remedy, before, level, role,
+                    _client_ip(request))
+        return {"remedy": remedy, "level": level, "control": state}
 
     @app.post("/api/judgment/{action}")
     def judgment_control(action: str, request: Request, role: str = operator_guard) -> dict[str, Any]:

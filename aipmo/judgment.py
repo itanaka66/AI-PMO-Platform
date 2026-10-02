@@ -102,6 +102,30 @@ class JudgmentConfig:
     max_auto_per_day: int = 10
     breaker_failures: int = 3
     breaker_hours: float = 24.0
+    # 画面から自律度を「設定ファイルの値より上」に上げてよいか。既定は不可（下げる・止めるだけ）。
+    ui_can_raise: bool = False
+
+
+RANK = {"off": 0, "propose": 1, "auto": 2}
+
+
+def effective_autonomy(base: dict[str, str], control: dict[str, Any],
+                       can_raise: bool) -> dict[str, str]:
+    """設定の自律度に、画面から依頼された上書き（control の autonomy_override）を重ねる。
+
+    知らない対処・水準は無視する。設定より上への上書きは、`ui_can_raise` が無ければ無視する
+    （画面が書いても、常駐が守る）。
+    Config autonomy overlaid with the screen's overrides; unknown entries are ignored and an override
+    above the config is ignored unless `ui_can_raise` — the resident enforces it even if a page wrote it.
+    """
+    out = dict(base)
+    for remedy, level in (control.get("autonomy_override") or {}).items():
+        if remedy not in base or level not in RANK:
+            continue
+        if RANK[level] > RANK[base[remedy]] and not can_raise:
+            continue
+        out[remedy] = level
+    return out
 
 
 def load_judgment(raw: dict[str, Any] | None) -> JudgmentConfig | None:
@@ -141,6 +165,7 @@ def load_judgment(raw: dict[str, Any] | None) -> JudgmentConfig | None:
     try:
         return JudgmentConfig(
             enabled=bool(raw.get("enabled", True)), autonomy=autonomy,
+            ui_can_raise=bool(raw.get("ui_can_raise", False)),
             launches=tuple(launches),
             min_severity=int(raw.get("min_severity", 40)),
             cooldown_hours=float(limits.get("cooldown_hours", 24)),

@@ -112,7 +112,9 @@ def test_a_viewer_cannot_touch_the_control_and_unknown_actions_are_refused(base)
     before = control_of(base)
     assert call(client, "POST", "/api/judgment/pause", VIEWER).status_code in (401, 403)
     assert client.post("/api/judgment/pause").status_code == 401
-    assert call(client, "POST", "/api/judgment/autonomy").status_code == 404      # 自律度は画面から変えられない
+    assert call(client, "POST", "/api/judgment/autonomy", VIEWER,
+                json={"remedy": "notify", "level": "off"}).status_code in (401, 403)   # 閲覧用は変えられない
+    assert call(client, "POST", "/api/judgment/nothing").status_code == 404
     assert control_of(base) == before
 
 

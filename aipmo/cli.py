@@ -661,6 +661,16 @@ def _why_lines(task, task_engine, lang: str) -> list[str]:
     return lines
 
 
+def _judgment_config(config: dict[str, Any]):
+    """画面が自律度の上書きを検証するための、設定ファイルの値。設定が壊れていれば None。"""
+    from .judgment import JudgmentError, load_judgment
+
+    try:
+        return load_judgment(((config.get("pmo_core") or {}).get("judgment")))
+    except JudgmentError:
+        return None
+
+
 def _display_lang(config: dict[str, Any]) -> str:
     """通知とCLI の表示に使う言語。設定の `lang`。無ければ従来どおり日本語。"""
     from .i18n import normalize
@@ -1803,6 +1813,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      lookup_assignees=_lookup_assignees(config),
                      wbs_target=_wbs_target(config, base),
                      wbs_view=_wbs_view(config, base),
+                     judgment=_judgment_config(config),
                      side_storage=side_storage_mode(config),
                      **pool_settings)
 

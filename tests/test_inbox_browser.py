@@ -69,7 +69,7 @@ def served(tmp_path):
     app = create_app(Engine(built.adapters, llms), base / "templates", OPERATOR, viewer_token=VIEWER,
                      lang="ja", store=RunStore(), pmo_ledger=base / "task-ledger.db",
                      members=load_members(config["pmo_core"]["members"]), filing=cli._web_filing(config),
-                     wbs_view=cli._wbs_view(config, base))
+                     wbs_view=cli._wbs_view(config, base), judgment=cli._judgment_config(config))
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -230,6 +230,13 @@ async def drive(base: str) -> dict:
             await b.until("document.querySelector('.judgment-controls button[data-action=pause]') !== null"
                           " && !document.getElementById('judgment-requested')")
 
+            # 自律度を画面から下げる
+            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'judgment').click()")
+            await b.until("document.querySelector('.auto-select[data-remedy=recollect]') !== null")
+            await b.js("(() => { const s = document.querySelector('.auto-select[data-remedy=recollect]'); s.value = 'propose'; s.dispatchEvent(new Event('change')); })()")
+            await b.until("[...document.querySelectorAll('#judgment .tag')].some(t => t.textContent === '変更済み')")
+            out["raise_disabled"] = await b.js("document.querySelector('.auto-select[data-remedy=followup] option[value=auto]').disabled")
+
             # メンバー・連携：カードが出る
             await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'members').click()")
             await b.until("document.querySelectorAll('.member-card').length >= 5")
@@ -245,6 +252,18 @@ async def drive(base: str) -> dict:
             await b.until("document.querySelector('.wbs-ev[data-ok=false]') !== null")
             out["wbs_label"] = await b.js("document.querySelector('#tabs button[data-target=wbs]').textContent")
             out["wbs_bars"] = await b.js("document.querySelectorAll('.wbs-bar').length")
+
+            out["wbs_arrows"] = await b.js("Number(document.querySelector('svg.wbs-arrows').dataset.count)")
+            # WBS を画面から直す: 差分を見て、反映すると木に出る
+            await b.js("[...document.querySelectorAll('.wbs-row')].find(r => r.dataset.id === '2.2').click()")
+            await b.until("document.querySelector('.wbs-edit-btn') !== null")
+            await b.js("document.querySelector('.wbs-edit-btn').click()")
+            await b.js("(() => { const i = [...document.querySelectorAll('.wbs-form input')].find(x => x.type === 'date'); i.value = '2026-10-20'; i.dispatchEvent(new Event('input', {bubbles: true})); })()")
+            await b.js("[...document.querySelectorAll('.wbs-form button')].find(x => x.textContent.includes('差分')).click()")
+            await b.until("document.querySelector('.wbs-form .preview-diff') !== null")
+            out["wbs_diff"] = await b.js("document.querySelector('.wbs-form .preview-diff').textContent")
+            await b.js("[...document.querySelectorAll('.wbs-form button')].find(x => x.textContent.includes('反映')).click()")
+            await b.until("document.querySelector('.wbs-form') === null")
 
             # 閲覧用
             await b.call("Network.clearBrowserCookies")
@@ -280,5 +299,6 @@ def test_the_inbox_works_in_a_real_browser(served):
     assert "一時停止を依頼済み" in result["judgment_paused"]
     assert "×0.73" in result["member_factors"] and "×1.18" in result["member_factors"]
     assert result["integ_cards"] >= 1
+    assert result["wbs_arrows"] >= 3 and "2026-10-20" in result["wbs_diff"] and result["raise_disabled"] is True
     assert result["wbs_label"] == "WBS" and result["wbs_bars"] >= 4
     assert result["viewer_buttons"] == 0 and result["viewer_items"] > 0   # 閲覧用は見えるが、決められない

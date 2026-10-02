@@ -1245,10 +1245,13 @@ function renderReviews() {
  * the breaker; autonomy levels stay in the config file.
  */
 let judgmentCtl = {};
+let judgmentAuto = { config: {}, override: {}, can_raise: false };
 
 async function refreshJudgmentControl() {
   try {
-    judgmentCtl = (await api("/api/judgment/control")).control || {};
+    const res = await api("/api/judgment/control");
+    judgmentCtl = res.control || {};
+    judgmentAuto = res.autonomy || judgmentAuto;
   } catch (error) {
     judgmentCtl = {};
   }
@@ -1314,14 +1317,52 @@ function renderJudgment() {
   }
 
   const levels = todaySection(t("web_judgment_autonomy", "自律度"), null);
-  for (const [kind, mode] of Object.entries(j.autonomy || {})) {
+  const rank = { off: 0, propose: 1, auto: 2 };
+  for (const [kind, shown] of Object.entries(j.autonomy || {})) {
+    const base = (judgmentAuto.config && judgmentAuto.config[kind]) || (j.autonomy_config || {})[kind] || shown;
     const row = el("div", "today-project");
-    const tag = el("span", "tag", mode);
-    tag.dataset.mode = mode;
-    row.append(el("span", "pmo-title", kind), tag);
+    row.append(el("span", "pmo-title", kind));
+    const changed = judgmentAuto.override && judgmentAuto.override[kind];
+    if (changed) {
+      const mark = el("span", "tag", t("web_auto_changed", "変更済み"));
+      mark.title = t("web_auto_config", "設定ファイルの値: {x}").replace("{x}", base);
+      row.append(mark);
+    }
+    if (canRun) {
+      const select = document.createElement("select");
+      select.className = "auto-select";
+      select.dataset.remedy = kind;
+      select.setAttribute("aria-label", kind);
+      const requested = (judgmentAuto.override && judgmentAuto.override[kind]) || base;
+      for (const level of ["off", "propose", "auto"]) {
+        const option = el("option", null, level);
+        option.value = level;
+        option.disabled = rank[level] > rank[base] && !(judgmentAuto.can_raise || j.ui_can_raise);
+        select.append(option);
+      }
+      select.value = requested;
+      select.addEventListener("change", async () => {
+        select.disabled = true;
+        try {
+          await api("/api/judgment/autonomy", { method: "POST", body: JSON.stringify({ remedy: kind, level: select.value }) });
+          toast(t("web_judgment_next_cycle", "依頼しました。常駐が次の周で反映します"));
+          await refreshJudgmentControl();
+        } catch (error) {
+          toast(error.message, "error");
+          select.value = requested;
+        } finally {
+          select.disabled = false;
+        }
+      });
+      row.append(select);
+    } else {
+      const tag = el("span", "tag", shown);
+      tag.dataset.mode = shown;
+      row.append(tag);
+    }
     levels.append(row);
   }
-  levels.append(el("div", "pmo-meta", t("web_judgment_config_only", "自律度は設定ファイル（config.yaml）で変えます")));
+  levels.append(el("div", "pmo-meta", t("web_auto_hint", "自律度は画面から下げる・止めることができます。")));
   host.append(levels);
 
   const diagnoses = todaySection(t("web_judgment_diagnoses", "いまの診断"), (j.diagnoses || []).length);
@@ -1618,6 +1659,58 @@ function wbsBar(node, axis) {
   return cell;
 }
 
+/* 依存の矢印: 依存先の棒の右端から、依存する作業の棒の左端へ。表の上に SVG を重ねる（読むだけ）。
+ * 開いている行どうしだけを結ぶ。矢印は日付の無い作業には描かない（棒が無いので）。
+ * Dependency arrows from a dependency's bar end to the dependent's bar start, as an SVG overlay. */
+function drawWbsArrows(table) {
+  table.querySelector("svg.wbs-arrows")?.remove();
+  const base = table.getBoundingClientRect();
+  const bars = new Map();
+  for (const row of table.querySelectorAll(".wbs-row")) {
+    const bar = row.querySelector(".wbs-bar");
+    if (bar) bars.set(row.dataset.id, bar.getBoundingClientRect());
+  }
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("class", "wbs-arrows");
+  svg.setAttribute("width", String(table.scrollWidth));
+  svg.setAttribute("height", String(table.scrollHeight));
+  svg.setAttribute("aria-hidden", "true");
+  const defs = document.createElementNS(NS, "defs");
+  const marker = document.createElementNS(NS, "marker");
+  for (const [k, v] of Object.entries({ id: "wbs-arrowhead", viewBox: "0 0 8 8", refX: "7", refY: "4",
+                                        markerWidth: "6", markerHeight: "6", orient: "auto" })) {
+    marker.setAttribute(k, v);
+  }
+  const head = document.createElementNS(NS, "path");
+  head.setAttribute("d", "M0 0 L8 4 L0 8 z");
+  head.setAttribute("fill", "currentColor");
+  marker.append(head);
+  defs.append(marker);
+  svg.append(defs);
+  let drawn = 0;
+  for (const node of wbsState.nodes.values()) {
+    const to = bars.get(node.id);
+    if (!to) continue;
+    for (const dep of node.depends_on || []) {
+      const from = bars.get(dep);
+      if (!from) continue;
+      const x1 = from.right - base.left + table.scrollLeft, y1 = from.top + from.height / 2 - base.top;
+      const x2 = to.left - base.left + table.scrollLeft, y2 = to.top + to.height / 2 - base.top;
+      const mid = Math.max(x1 + 6, Math.min(x2 - 6, (x1 + x2) / 2));
+      const path = document.createElementNS(NS, "path");
+      path.setAttribute("d", `M${x1} ${y1} H${mid} V${y2} H${x2 - 1}`);
+      path.setAttribute("class", "wbs-arrow");
+      path.setAttribute("marker-end", "url(#wbs-arrowhead)");
+      if (node.critical && wbsState.nodes.get(dep)?.critical) path.dataset.critical = "";
+      svg.append(path);
+      drawn += 1;
+    }
+  }
+  svg.dataset.count = String(drawn);
+  table.append(svg);
+}
+
 function wbsRows(nodes, axis, host) {
   for (const node of nodes) {
     const row = el("div", "wbs-row");
@@ -1660,6 +1753,80 @@ function wbsRows(nodes, axis, host) {
   }
 }
 
+const EDIT_FIELDS = [
+  ["status", "select", ["todo", "in_progress", "blocked", "done"]],
+  ["effort", "number"], ["due", "date"], ["owner", "text"],
+  ["priority", "select", ["", "Highest", "High", "Medium", "Low", "Lowest"]],
+];
+
+function wbsEditForm(node) {
+  const form = el("form", "wbs-form");
+  const inputs = {};
+  for (const [name, kind, options] of EDIT_FIELDS) {
+    const label = el("label", "wbs-field", name);
+    const input = kind === "select" ? document.createElement("select") : document.createElement("input");
+    if (kind === "select") {
+      for (const o of options) { const opt = el("option", null, o || "—"); opt.value = o; input.append(opt); }
+    } else {
+      input.type = kind;
+      if (kind === "number") { input.min = "0"; input.step = "any"; }
+    }
+    const current = node[name] == null ? "" : String(node[name]);
+    input.value = current;
+    input.dataset.original = current;
+    inputs[name] = input;
+    label.append(input);
+    form.append(label);
+  }
+  const result = el("div", "wbs-edit-result");
+  const changes = () => {
+    const out = [];
+    for (const [name, kind] of EDIT_FIELDS) {
+      const input = inputs[name];
+      if (input.value === input.dataset.original || input.value === "") continue;   // 空にする操作はここでは扱わない
+      out.push({ op: "set", node: node.id, field: name, value: kind === "number" ? Number(input.value) : input.value });
+    }
+    return out;
+  };
+  const send = async (apply) => {
+    const list = changes();
+    result.replaceChildren();
+    if (!list.length) { result.append(el("div", "pmo-meta", t("web_wbs_nochange", "変更はありません"))); return; }
+    try {
+      const r = await api("/api/wbs/edit", { method: "POST", body: JSON.stringify({ changes: list, apply }) });
+      if (apply) {
+        toast(t("web_wbs_applied", "WBS ファイルに反映しました"));
+        await refreshWbs();
+        return;
+      }
+      for (const line of r.report) result.append(el("div", "pmo-meta", line));
+      const pre = document.createElement("pre");
+      pre.className = "preview-diff";
+      pre.textContent = r.diff || "";
+      result.append(pre);
+      apply_.hidden = !r.changed;
+    } catch (error) {
+      result.append(el("div", "card-note error", error.message));
+      apply_.hidden = true;
+    }
+  };
+  const preview = el("button", "btn", t("web_wbs_preview_btn", "差分を見る"));
+  preview.type = "button";
+  preview.addEventListener("click", () => send(false));
+  const apply_ = el("button", "btn btn-approve", t("web_wbs_apply", "WBS ファイルに反映する"));
+  apply_.type = "button";
+  apply_.hidden = true;
+  apply_.addEventListener("click", () => send(true));
+  const cancel = el("button", "btn", t("web_wbs_cancel", "やめる"));
+  cancel.type = "button";
+  cancel.addEventListener("click", () => { form.remove(); });
+  form.addEventListener("input", () => { apply_.hidden = true; result.replaceChildren(); });
+  form.append(el("div", "pmo-meta", t("web_wbs_edit_hint", "先に差分を確かめてから反映します。")),
+    el("div", "wbs-form-actions"), result);
+  form.querySelector(".wbs-form-actions").append(preview, apply_, cancel);
+  return form;
+}
+
 function wbsDetail(host) {
   host.replaceChildren();
   const node = wbsState.nodes.get(wbsState.selected);
@@ -1694,6 +1861,12 @@ function wbsDetail(host) {
     host.append(block);
   }
   if (node.notes) host.append(el("p", "pmo-meta", node.notes));
+  if (node.leaf && wbsState.data.can_edit) {
+    const edit = el("button", "btn wbs-edit-btn", t("web_wbs_edit", "編集"));
+    edit.type = "button";
+    edit.addEventListener("click", () => { edit.replaceWith(wbsEditForm(node)); });
+    host.append(edit);
+  }
 }
 
 function renderWbs() {
@@ -1736,6 +1909,15 @@ function renderWbs() {
   wbsDetail(side);
   grid.append(table, side);
   host.append(grid);
+  // 配置が落ち着いてから描く（フォント・スクロールバーで幅が変わる）。大きさが変わるたびに描き直す。
+  requestAnimationFrame(() => drawWbsArrows(table));
+  if (typeof ResizeObserver !== "undefined") {
+    let last = 0;
+    new ResizeObserver(() => {
+      const w = table.clientWidth;
+      if (w !== last) { last = w; drawWbsArrows(table); }
+    }).observe(table);
+  }
 
   const lower = el("div", "wbs-lower");
   if (data.ready && data.ready.length) {
@@ -2135,13 +2317,47 @@ window.addEventListener("popstate", followHash);
 
 // 画面に戻ったときだけ更新する。定期ポーリングは電池を消費するので避ける。
 // Refresh on return to the screen; polling on a timer would drain the battery.
+function refreshEverything() {
+  refreshRuns().catch(() => {});
+  refreshPmo().catch(() => {});
+  refreshProposals().catch(() => {});
+  refreshWbs();
+  if (tabsEnabled) {
+    refreshInbox(); refreshTasks(false); refreshReviews(); refreshMembers(); refreshIntegrations();
+    refreshJudgmentControl();
+  }
+  refreshHealth();
+}
+
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
-    refreshRuns().catch(() => {});
-    refreshPmo().catch(() => {});
-    refreshProposals().catch(() => {});
-    refreshWbs();
-    if (tabsEnabled) { refreshInbox(); refreshTasks(false); refreshReviews(); refreshMembers(); refreshIntegrations(); }
-    refreshHealth();
+    refreshEverything();
+    checkPulse();
   }
 });
+
+/* 自動更新: 見えている間だけ、安い目印（/api/pulse）を 30 秒ごとに見て、変わったときだけ全体を読み直す。
+ * 隠れているタブでは動かさない（電池）。入力中・編集中の画面は壊さない。
+ * Visible-tab only: poll a cheap marker every 30 s and reload everything only when it changed. */
+const PULSE_SECONDS = 30;
+let pulseMark = null;
+
+function editingNow() {
+  const a = document.activeElement;
+  return Boolean(a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT"))
+    || Boolean(document.querySelector(".wbs-form"));
+}
+
+async function checkPulse() {
+  if (document.hidden) return;
+  try {
+    const p = await api("/api/pulse");
+    const mark = `${p.briefing_at}|${p.log}`;
+    if (pulseMark !== null && mark !== pulseMark && !editingNow()) refreshEverything();
+    pulseMark = mark;
+  } catch (error) {
+    /* 一時的な失敗は黙って次回に */
+  }
+}
+
+setInterval(checkPulse, PULSE_SECONDS * 1000);

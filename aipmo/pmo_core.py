@@ -44,7 +44,7 @@ from .agent_roles import (KEEP_DISPATCHES, REVIEW_DECISIONS, SETTLED_BAD, excerp
 from .filing import FilingConfig, FilingError, eligible, filing_state
 from .generation import (GenerationConfig, due_date, followup_id, period_key,
                          recurring_id, wbs_drift_id)
-from .judgment import rationale_spec
+from .judgment import effective_autonomy, rationale_spec
 from .judgment import (MAX_RETRIES_PER_TASK, REMEDIES, Diagnosis, JudgmentConfig,
                        candidates, diagnose, judgment_id, rationale, read_control)
 from .messages import localized, render, spec, translate
@@ -563,6 +563,7 @@ class PmoCore:
     renotify_hours: int = 24
     # 通知（Slack など）に使う言語。台帳に残る文章は常に日本語（部品を添えて）で、これは送る文章だけ。
     lang: str = "ja"
+    _autonomy_now: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     # 学習（過去の実績からの重み調整）。aipmo/pmo_learning.py
     # Learning from track record.
     learning: bool = True
@@ -930,6 +931,7 @@ class PmoCore:
             return None
         control = read_control(self._control_path())
         paused = bool(control.get("paused"))
+        self._autonomy_now = effective_autonomy(cfg.autonomy, control, cfg.ui_can_raise)
         diagnoses = [d for d in diagnose(
             briefing, active, now=now, has_members=bool(self.members),
             collect_interval_minutes=self.collector.interval_minutes if self.collector else None)
@@ -939,7 +941,8 @@ class PmoCore:
         summary: dict[str, Any] = {
             "enabled": True, "acting": self.acting, "paused": paused, "tripped": False,
             "diagnoses": [d.as_dict() for d in diagnoses], "actions": [],
-            "autonomy": dict(cfg.autonomy), "pending": 0, "recent": []}
+            "autonomy": dict(self._autonomy_now), "autonomy_config": dict(cfg.autonomy),
+            "ui_can_raise": cfg.ui_can_raise, "pending": 0, "recent": []}
         if not self.acting:
             summary["tripped"] = bool(self._state.get("judgment", {}).get("tripped_at"))
             self._fill_records(summary)
@@ -1002,7 +1005,7 @@ class PmoCore:
     def _level(self, remedy: str, now: datetime, tripped: bool) -> str:
         """この対処の、いまの自律度。遮断器が働いている間は auto を propose に落とす。"""
         assert self.judgment is not None
-        level = self.judgment.autonomy.get(remedy, "propose")
+        level = (self._autonomy_now or self.judgment.autonomy).get(remedy, "propose")
         if level == "auto" and remedy != "notify" and tripped:
             return "propose"
         return level
@@ -1158,7 +1161,7 @@ class PmoCore:
         ep = self._episode(d, now)
 
         # 1. 人への通知: 診断が出たとき、続くときは間隔をあけて再通知する。
-        if cfg.autonomy.get("notify", "auto") != "off":
+        if (self._autonomy_now or cfg.autonomy).get("notify", "auto") != "off":
             last = ep.get("notified_at")
             if last is None or not self._within(last, now, cfg.renotify_hours):
                 if self._say(translate(self.lang, "n_judgment", title=self._diag_title(d),

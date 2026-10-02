@@ -639,4 +639,17 @@ wbs:
           priority: Medium
           depends_on: ["6.21"]
           notes: "Docker Desktop が起動できず未実施"
+        - id: "6.30"
+          name: "WBS の依存の矢印・WBS の画面編集・自律度の画面変更・自動更新"
+          status: done
+          effort: 5
+          depends_on: ["6.28"]
+          done_on: 2026-10-03
+          evidence:
+            - "aipmo/web/server.py::/api/wbs/edit"
+            - "aipmo/web/server.py::def judgment_autonomy"
+            - "aipmo/judgment.py::def effective_autonomy"
+            - "tests/test_autonomy_edit_pulse.py::test_the_resident_ignores_a_raise_the_config_does_not_allow"
+            - "tests/test_autonomy_edit_pulse.py::test_preview_writes_nothing_and_apply_writes_a_minimal_diff"
+          notes: "自律度を基準より上げるのは ui_can_raise が必要。WBS 編集は差分確認のあと反映"
 
