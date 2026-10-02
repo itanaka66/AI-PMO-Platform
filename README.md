@@ -2,6 +2,14 @@
 
 [![Tests](https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml/badge.svg)](https://github.com/itanaka66/AI-PMO-Platform/actions/workflows/tests.yml)
 
+![Alt text](images/ui-design-a.png "Image-a")
+
+![Alt text](images/ui-design-b.png "Image-b")
+
+![Alt text](images/ui-design-c.png "Image-c")
+
+![Alt text](images/ui-design-d.png "Image-d")
+
 [ランディングページ](https://itanaka66.github.io/AI-PMO-Platform/) — 概要を3分で。
 / [Landing page](https://itanaka66.github.io/AI-PMO-Platform/) — the 3-minute overview.
 
