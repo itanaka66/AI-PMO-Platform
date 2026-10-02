@@ -76,6 +76,7 @@ from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
 from ..pmo_core import Member, PmoCore, scope_briefing
+from ..inbox import build_inbox
 from ..filing import FilingConfig, FilingError, eligible, filing_state, make_filer
 from ..wbs_proposals import ProposalError, approve_and_apply
 from ..wbs_proposals import Target as WbsTarget
@@ -739,6 +740,39 @@ def create_app(
         return {"briefing": briefing, "briefing_age_seconds": age, "tasks": tasks,
                 "proposals": proposals, "projects": names, "scoped": confined,
                 "filing": filing_view, "agent_review": review_view}
+
+    @app.get("/api/inbox", dependencies=[guard])
+    def inbox_view(project: str | None = None, role: str = guard) -> dict[str, Any]:
+        """人の判断を待っているものを、種類をまたいで 1 つの一覧にする（読むだけ）。
+
+        決める操作は、各項目の `actions` が指す既存の API（権限・確認はこれまでどおり）。
+        viewer には actions を返さない。プロジェクトを限定された viewer には、組織全体の項目を出さない。
+        """
+        ledger = _pmo_ledger()
+        allowed = _allowed_projects(role, project)
+        confined = role == "viewer" and scoped_projects is not None
+        empty = {"items": [], "total": 0, "by_kind": {}, "can_act": role != "viewer",
+                 "generated_at": datetime.now(timezone.utc).isoformat()}
+        if not _ledger_present(ledger):
+            return empty
+        replans: list[dict[str, Any]] = []
+        if allowed is None and not confined and engine.adapters.has("postgres"):
+            try:
+                rows = engine.adapters.get("postgres").query(  # type: ignore[attr-defined]
+                    "pending_wbs_proposals", {"tenant": tenant})["rows"]
+                replans = [dict(r) for r in rows]
+            except Exception:                            # noqa: BLE001 — 再計画案が読めなくても、他は出す
+                logger.warning("inbox: WBS 再計画案を読めません / cannot read replan proposals",
+                               exc_info=True)
+        store = _open_store(ledger)
+        try:
+            return build_inbox(
+                store, members=members or [], filing=filing, can_act=role != "viewer",
+                allowed=allowed, confined=confined, writable=writable_trackers(engine.adapters),
+                can_file=bool(filing is not None and engine.adapters.has(filing.tracker)),
+                replans=replans)
+        finally:
+            _release(store)
 
     @app.get("/api/pmo/decisions", dependencies=[guard])
     def pmo_decisions(limit: int = 50, project: str | None = None,

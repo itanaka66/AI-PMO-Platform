@@ -46,6 +46,8 @@ ALLOWED_IDENTICAL = {
     # 製品内の固有名詞 / a proper noun of the product
     ("zh", "web_pmo"), ("ko", "web_pmo"), ("es", "web_pmo"),
     ("fr", "web_pmo"), ("de", "web_pmo"), ("pt", "web_pmo"), ("ja", "web_pmo"),
+    # 略語は言語に依らず同じ / an abbreviation, the same in every language
+    *[(lang, "web_inbox_kind_wbs") for lang in ("zh", "ko", "es", "fr", "de", "pt", "ja")],
 }
 
 

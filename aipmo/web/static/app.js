@@ -831,6 +831,254 @@ async function refreshPmo() {
   }
 }
 
+/* ---------- 受信箱 / inbox ----------
+ * 人の判断を待っているもの（判断・提案・担当・成果のレビュー・起票・再計画案）を、種類をまたいで
+ * 1 つの一覧に集める。一覧は /api/inbox（読むだけ）。決める操作は、各項目の actions が指す
+ * 既存の API を、そのまま呼ぶ — 書き込みの入口は増やさない。文字は外から来るので textContent で入れる。
+ *
+ * The inbox gathers everything waiting for a human decision. The list comes from /api/inbox (read-only);
+ * deciding calls the existing endpoint each item's `actions` names, so no new write path exists.
+ */
+const KIND_FALLBACK = {
+  judgment: "判断", followup: "対応", wbs: "WBS", assignment: "担当",
+  review: "成果", filing: "起票", replan: "再計画",
+};
+const TAB_ORDER = ["inbox", "pmo", "wbs", "templates", "runs"];
+let inboxState = { data: null, filter: "all", selected: null };
+let tabsEnabled = false;
+
+const kindLabel = (kind) => t(`web_inbox_kind_${kind}`, KIND_FALLBACK[kind] || kind);
+
+function ageLabel(seconds) {
+  const days = Math.floor(seconds / 86400);
+  if (days >= 1) return t("web_inbox_days_ago", "{n} 日前").replace("{n}", String(days));
+  const hours = Math.floor(seconds / 3600);
+  if (hours >= 1) return t("web_inbox_hours_ago", "{n} 時間前").replace("{n}", String(hours));
+  return t("web_inbox_just_now", "いま");
+}
+
+function showTab(name) {
+  if (!tabsEnabled) return;
+  for (const node of document.querySelectorAll("[data-tab]")) {
+    if (node.dataset.tab === name) node.removeAttribute("data-off");
+    else node.setAttribute("data-off", "");
+  }
+  for (const button of $("tabs").querySelectorAll("button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.target === name));
+  }
+  $("main").classList.toggle("wide", name === "inbox");
+  history.replaceState(null, "", `#${name}`);
+}
+
+function setupTabs(enabled) {
+  tabsEnabled = enabled;
+  const nav = $("tabs");
+  if (!enabled) {                       // 受信箱が使えない構成は、従来どおり全部を並べる
+    nav.hidden = true;
+    return;
+  }
+  const labels = {
+    inbox: t("web_inbox", "受信箱"), pmo: t("web_pmo", "PMO Core"),
+    wbs: t("web_proposals", "WBS Proposals"), templates: t("web_templates", "Templates"),
+    runs: t("web_runs", "Runs"),
+  };
+  nav.replaceChildren();
+  for (const name of TAB_ORDER) {
+    const button = el("button", null, labels[name]);
+    button.type = "button";
+    button.dataset.target = name;
+    if (name === "inbox") {
+      const count = el("span", "count", "");
+      count.id = "inbox-count";
+      count.hidden = true;
+      button.append(count);
+    }
+    button.addEventListener("click", () => showTab(name));
+    nav.append(button);
+  }
+  nav.hidden = false;
+  $("inbox-view").hidden = false;
+  const wanted = location.hash.slice(1);
+  showTab(TAB_ORDER.includes(wanted) ? wanted : "inbox");
+  updateInboxCount();
+}
+
+function updateInboxCount() {
+  const badge = document.getElementById("inbox-count");
+  if (!badge) return;
+  const total = inboxState.data ? inboxState.data.total : 0;
+  badge.textContent = String(total);
+  badge.hidden = !total;
+}
+
+function inboxVisible() {
+  const data = inboxState.data;
+  if (!data) return [];
+  return data.items.filter((i) => inboxState.filter === "all" || i.kind === inboxState.filter);
+}
+
+function renderInbox() {
+  const host = $("inbox");
+  const data = inboxState.data;
+  host.replaceChildren();
+  updateInboxCount();
+  if (!data || !data.total) {
+    const box = el("div", "inbox-empty");
+    box.append(el("strong", null, t("web_inbox_empty", "判断を待つものはありません")),
+      el("span", null, t("web_inbox_empty_hint", "新しい提案や警告が出ると、ここに集まります")));
+    host.append(box);
+    return;
+  }
+  const items = inboxVisible();
+  if (!items.some((i) => i.id === inboxState.selected)) {
+    inboxState.selected = items.length ? items[0].id : null;
+  }
+
+  const layout = el("div", "inbox");
+  const left = el("div");
+  const filters = el("div", "inbox-filters");
+  filters.setAttribute("role", "group");
+  filters.setAttribute("aria-label", t("web_inbox_filter", "種類"));
+  const choices = [["all", t("web_inbox_all", "すべて"), data.total]]
+    .concat(Object.entries(data.by_kind).filter(([, n]) => n > 0)
+      .map(([kind, n]) => [kind, kindLabel(kind), n]));
+  for (const [kind, label, n] of choices) {
+    const button = el("button", null, label);
+    button.type = "button";
+    button.append(el("span", "n", String(n)));
+    button.setAttribute("aria-pressed", String(inboxState.filter === kind));
+    button.addEventListener("click", () => { inboxState.filter = kind; renderInbox(); });
+    filters.append(button);
+  }
+  left.append(filters);
+
+  const list = el("ul", "inbox-items");
+  for (const item of items) {
+    const li = el("li");
+    const button = el("button", "inbox-item");
+    button.type = "button";
+    button.dataset.id = item.id;
+    button.setAttribute("aria-current", String(item.id === inboxState.selected));
+    const row = el("span", "row");
+    const chip = el("span", "kind-chip", kindLabel(item.kind));
+    chip.dataset.kind = item.kind;
+    row.append(chip, el("span", "age", ageLabel(item.age_seconds)));
+    button.append(row, el("span", "title", item.title), el("span", "sub", item.summary));
+    button.addEventListener("click", () => selectInboxItem(item.id, true));
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      const ids = inboxVisible().map((i) => i.id);
+      const next = ids[ids.indexOf(item.id) + (event.key === "ArrowDown" ? 1 : -1)];
+      if (next) { event.preventDefault(); selectInboxItem(next, false, true); }
+    });
+    li.append(button);
+    list.append(li);
+  }
+  left.append(list);
+
+  const detail = el("div", "inbox-detail");
+  detail.id = "inbox-detail";
+  detail.setAttribute("aria-live", "polite");
+  layout.append(left, detail);
+  host.append(layout);
+  renderInboxDetail();
+}
+
+function selectInboxItem(id, scroll, focus) {
+  inboxState.selected = id;
+  for (const button of document.querySelectorAll(".inbox-item")) {
+    button.setAttribute("aria-current", String(button.dataset.id === id));
+    if (focus && button.dataset.id === id) button.focus();
+  }
+  renderInboxDetail();
+  if (scroll && window.matchMedia("(max-width: 899px)").matches) {
+    $("inbox-detail").scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+}
+
+function renderInboxDetail() {
+  const pane = $("inbox-detail");
+  if (!pane) return;
+  pane.replaceChildren();
+  const item = (inboxState.data ? inboxState.data.items : []).find((i) => i.id === inboxState.selected);
+  if (!item) {
+    pane.append(el("div", "inbox-empty", t("web_inbox_select", "項目を選ぶと、理由と操作が出ます")));
+    return;
+  }
+  const chip = el("span", "kind-chip", kindLabel(item.kind));
+  chip.dataset.kind = item.kind;
+  pane.append(chip, el("h3", null, item.title), el("div", "lead", item.summary));
+  for (const section of item.detail.sections) {
+    const box = el("div", "inbox-section");
+    box.dataset.tone = section.tone || "info";
+    box.append(el("h4", null, section.heading));
+    const ul = el("ul");
+    for (const line of section.lines) ul.append(el("li", null, line));
+    box.append(ul);
+    pane.append(box);
+  }
+
+  const canAct = inboxState.data.can_act && item.actions.length;
+  if (!canAct) {
+    pane.append(el("p", "lead", t("web_inbox_viewer", "閲覧用のトークンでは、決められません")));
+    return;
+  }
+  let note = null;
+  if (item.actions.some((a) => a.needs_note)) {
+    const wrap = el("div", "inbox-note");
+    const label = el("label", null, t("web_inbox_note", "理由（差し戻すときは必須）"));
+    note = el("textarea");
+    note.id = "inbox-note";
+    label.htmlFor = "inbox-note";
+    wrap.append(label, note);
+    pane.append(wrap);
+  }
+  const bar = el("div", "inbox-actions");
+  for (const action of item.actions) {
+    const button = el("button", `btn ${action.style === "primary" ? "btn-primary" : action.style === "danger" ? "btn-reject" : ""}`, action.label);
+    button.type = "button";
+    button.addEventListener("click", () => runInboxAction(item, action, note, bar));
+    bar.append(button);
+  }
+  pane.append(bar);
+}
+
+async function runInboxAction(item, action, note, bar) {
+  const text = note ? note.value.trim() : "";
+  if (action.needs_note && !text) {
+    toast(t("web_inbox_need_note", "理由を書いてください"), "error");
+    if (note) note.focus();
+    return;
+  }
+  const buttons = bar.querySelectorAll("button");
+  buttons.forEach((b) => { b.disabled = true; });
+  const body = { ...action.body };
+  if (action.needs_note) body.note = text;
+  const visible = inboxVisible().map((i) => i.id);
+  const at = visible.indexOf(item.id);
+  try {
+    await api(action.path, { method: action.method, body: JSON.stringify(body) });
+    toast(t("web_inbox_done", "決めました"));
+    inboxState.selected = visible[at + 1] || visible[at - 1] || null;
+    await refreshInbox();
+    refreshPmo().catch(() => {});
+  } catch (error) {
+    toast(error.message, "error");
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
+async function refreshInbox() {
+  try {
+    const filter = pmoProject ? `?project=${encodeURIComponent(pmoProject)}` : "";
+    inboxState.data = await api(`/api/inbox${filter}`);
+    renderInbox();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 /* ---------- 起動 / boot ---------- */
 
 async function refreshRuns() {
@@ -886,6 +1134,9 @@ async function boot() {
     await refreshRuns();
     await refreshPmo();
     await refreshProposals();
+    // 受信箱が使える構成（PMO Core の台帳がある）なら、タブで切り替える。無ければ従来どおり。
+    // With a PMO ledger the sections become tabs and the inbox leads; otherwise nothing changes.
+    setupTabs(await refreshInbox());
     refreshHealth();
   } catch (error) {
     toast(error.message, "error");
@@ -901,6 +1152,7 @@ document.addEventListener("visibilitychange", () => {
     refreshRuns().catch(() => {});
     refreshPmo().catch(() => {});
     refreshProposals().catch(() => {});
+    if (tabsEnabled) refreshInbox();
     refreshHealth();
   }
 });

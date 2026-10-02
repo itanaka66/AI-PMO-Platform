@@ -17,18 +17,25 @@
   <span class="tenant" id="tenant"></span>
 </header>
 
-<main>
-  <h2 id="h-pmo" hidden>PMO Core</h2>
-  <div id="pmo"></div>
+<nav class="tabs" id="tabs" aria-label="Sections" hidden></nav>
 
-  <h2 id="h-proposals">WBS Proposals</h2>
-  <div id="proposals"></div>
+<main id="main">
+  <section id="inbox-view" data-tab="inbox" hidden aria-labelledby="h-inbox">
+    <h2 id="h-inbox" class="visually-hidden">Inbox</h2>
+    <div id="inbox"></div>
+  </section>
 
-  <h2 id="h-templates">Templates</h2>
-  <div id="templates"></div>
+  <h2 id="h-pmo" data-tab="pmo" hidden>PMO Core</h2>
+  <div id="pmo" data-tab="pmo"></div>
 
-  <h2 id="h-runs">Runs</h2>
-  <div id="runs" class="spine"></div>
+  <h2 id="h-proposals" data-tab="wbs">WBS Proposals</h2>
+  <div id="proposals" data-tab="wbs"></div>
+
+  <h2 id="h-templates" data-tab="templates">Templates</h2>
+  <div id="templates" data-tab="templates"></div>
+
+  <h2 id="h-runs" data-tab="runs">Runs</h2>
+  <div id="runs" class="spine" data-tab="runs"></div>
 </main>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>

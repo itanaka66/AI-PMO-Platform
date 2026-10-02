@@ -508,3 +508,22 @@ wbs:
             - "tests/test_demo.py::test_the_guides_scenario_end_to_end"
             - "docs/DEMO.md"
           notes: "SQLite と PostgreSQL に入れられる。外部サービスは mock。履歴は模擬の時計で周を回して作る"
+        - id: "6.18"
+          name: "専用 Web UI の受信箱（人の判断を 1 か所に集める）"
+          status: done
+          effort: 5
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/inbox.py"
+            - "aipmo/web/server.py::/api/inbox"
+            - "aipmo/web/static/app.js::renderInbox"
+            - "tests/test_inbox.py"
+            - "docs/UI-PLAN.md"
+          notes: "読むだけの集約。決める操作は既存の API を呼ぶ。実ブラウザの確認は tests/test_inbox_browser.py（AIPMO_TEST_BROWSER=1）"
+        - id: "6.19"
+          name: "専用 Web UI の残り（骨格と今日、WBS、タスク、判断、連携）"
+          status: todo
+          effort: 13
+          priority: Medium
+          depends_on: ["6.18"]
+          notes: "順序と追加する API は docs/UI-PLAN.md"

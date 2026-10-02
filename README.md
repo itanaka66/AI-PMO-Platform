@@ -685,6 +685,7 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 | [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |
 | [docs/JIRA-WBS.md](docs/JIRA-WBS.md) | **Jira と WBS の設定・運用ガイド**（つなぎ方・日次/週次の運用・併用のしかた） |
 | [docs/TICKET-TRACKERS.md](docs/TICKET-TRACKERS.md) | GitHub Projects・Plane・OpenProject・Azure DevOps |
+| [docs/UI-PLAN.md](docs/UI-PLAN.md) | 専用 Web UI の実装計画と受信箱（`/api/inbox`）/ web UI plan and the inbox |
 | [docs/CRAWLER.md](docs/CRAWLER.md) | Web クローラアダプタ / web crawler adapter |
 | [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
 | [docs/PARALLEL-STEPS-DESIGN.md](docs/PARALLEL-STEPS-DESIGN.md) | 依存関係ベースの並列実行 — 設計中、Engine への配線は未着手 / dependency-based parallel execution — design doc; not yet wired into the Engine |
