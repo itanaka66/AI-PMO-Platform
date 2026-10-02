@@ -52,9 +52,34 @@ aipmo ledger info                    # 台帳と、隣に置くものの置き�
 取り込みは、移行先に文書が**既にあれば上書きしません**（`--force` のときだけ上書き）。ログは移行先に 1 行でも
 あれば**足しません**（二重に取り込まない。`--force` でも）。移行元のファイルは消しません。
 
+## PostgreSQL から SQLite へ戻す / Moving back to SQLite
+
+```bash
+aipmo ledger migrate-to-sqlite                         # 移行先は設定の台帳ファイルの場所
+aipmo ledger migrate-to-sqlite --to ./task-ledger.db   # 移行先を指定
+aipmo ledger migrate-to-sqlite --side database         # 隣に置くものを SQLite の表へ（既定は隣のファイル）
+aipmo ledger migrate-to-sqlite --force                 # 移行先に行があっても、同じ id を上書きする
+```
+
+設定の `task_engine.backend: postgres` の台帳（この `tenant` の行）が移行元です。
+
+- **写したあと読み直して、移行元と一致するか確かめる。** タスクは 1 件ずつ中身を、完了実績は全件を比べる
+  （PostgreSQL の `jsonb` は書式を整え直すので、書式の違いは無視して中身で比べる）。一致しなければ成功と
+  言わない。
+- **持ち主の刻印を守る。** 移行先の SQLite に `tenant` を刻む。別のテナントの SQLite ファイルへは書かない。
+- **既存の行を壊さない。** 移行先にタスクがあれば止まる（`--force` で同じ id を上書き）。`--force` でやり直しても
+  **完了実績は二重にならない**（すでにあるものは足さない）。移行先にだけある行は消さない。
+- **隣に置くもの**（ブリーフィング・判断ログ・状態）がデータベースにあれば、移行先のファイル（`--side file`、既定）か
+  SQLite の表（`--side database`）へ写す。移行先に既にある文書は上書きしない（`--force` のときだけ）。ログは
+  移行先に 1 行でもあれば足さない。
+- **移行元は消さない。** 使い始めるには `config.yaml` の `task_engine.backend` を `sqlite`（または削除）にし、
+  確認してから PostgreSQL 側の行を片付ける。
+- 往復（SQLite → PostgreSQL → SQLite）で元に戻ることを、実 PostgreSQL で確かめた。
+
 ## 限界 / Limits
 
 - 判断ログは、データベースでもファイルでも**増え続けます**（自動では間引かない）。
+- PostgreSQL → SQLite は、台帳が大きいと全件をメモリに載せて写します（数十万件を超える規模は未確認）。
 - 常駐のスケジューラ自身の状態（`scheduler-state.json`、最後に走った時刻）は、そのホストのローカルファイルのまま
   （ホストごとのもの）。
 - 実際の運用規模（長期間・多数のテナント）での負荷は未確認です。

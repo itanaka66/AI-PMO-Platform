@@ -403,10 +403,16 @@ wbs:
           priority: Low
         - id: "6.5"
           name: "PostgreSQL から SQLite への逆方向の移行"
-          status: todo
+          status: done
           effort: 2
-          priority: Low
           depends_on: ["4.1"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/cli.py::def _migrate_to_sqlite"
+            - "aipmo/cli.py::def _verify_copy"
+            - "tests/test_ledger_reverse.py::test_sqlite_to_postgres_and_back_returns_the_original"
+            - "docs/LEDGER-STORAGE.md"
+          notes: "写した後に読み直して一致を確認。実 PostgreSQL 16 で往復を確認。あわせて、順方向 migrate の --force で完了実績が二重になる不具合も直した"
         - id: "6.6"
           name: "Web の接続プール（多数の同時アクセス）"
           status: todo

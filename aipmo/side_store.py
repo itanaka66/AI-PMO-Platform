@@ -280,8 +280,8 @@ def make_side(mode: str, ledger: Path | str, store: Any) -> SideStore:
     return DbSide(store) if mode == "database" else FileSide(ledger)
 
 
-def import_files(source: FileSide, target: SideStore, *, overwrite: bool = False) -> dict[str, str]:
-    """ローカルのファイルを、別の置き場（データベース）へ取り込む。移行元は消さない。
+def import_files(source: SideStore, target: SideStore, *, overwrite: bool = False) -> dict[str, str]:
+    """ある置き場（ファイルでもデータベースでも）の中身を、別の置き場へ写す。移行元は消さない。
 
     文書は、移行先に既にあれば**上書きしない**（`overwrite` のときだけ上書き）。ログは、移行先に
     1 行でもあれば**常に**足さない（`overwrite` でも。二重に取り込まない）。結果は名前ごとの `imported` / `kept` / `absent`。

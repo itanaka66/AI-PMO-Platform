@@ -1398,7 +1398,7 @@ def cmd_ledger(args: argparse.Namespace) -> int:
     """台帳の保存先を調べる／SQLite から PostgreSQL へ移す。"""
     from .ledger_store import (LedgerConfigError, LedgerTenantError, SqliteStore,
                                Snapshot)
-    from .task_engine import MAX_OUTCOMES, TaskEngine
+    from .task_engine import TaskEngine
 
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
@@ -1418,6 +1418,9 @@ def cmd_ledger(args: argparse.Namespace) -> int:
         print(f"プロジェクト / projects: {', '.join(target.projects()) or '-'}")
         print(f"ブリーフィング・判断ログ・状態 / side data: {target.side.describe()}")
         return 0
+
+    if args.ledger_command == "migrate-to-sqlite":
+        return _migrate_to_sqlite(args, config, base, target)
 
     if args.ledger_command == "side-import":
         return _import_side_files(target, ledger_path(config, base), args.from_dir,
@@ -1452,11 +1455,10 @@ def cmd_ledger(args: argparse.Namespace) -> int:
               f"tasks; add --force to overwrite rows with the same id", file=sys.stderr)
         return 1
 
-    with target._store.write() as tx:
-        tx.apply(snapshot.tasks, [], snapshot.outcomes, MAX_OUTCOMES)
+    added = _copy_ledger_rows(snapshot, target._store)
     moved = Snapshot(tasks=snapshot.tasks, outcomes=snapshot.outcomes)
     print(f"移行しました / migrated: {len(moved.tasks)} tasks, "
-          f"{len(moved.outcomes)} outcomes  {source_path} -> {target.describe()}")
+          f"{added} outcomes  {source_path} -> {target.describe()}")
     print("移行元のファイルは残してあります（確認後に削除してください）"
           " / the source file is left in place; delete it once you have checked")
     # 台帳の隣のファイル（ブリーフィング・判断ログ・状態）も、置き場がデータベースなら一緒に移す。
@@ -1464,6 +1466,110 @@ def cmd_ledger(args: argparse.Namespace) -> int:
     if target.side.kind == "database":
         _import_side_files(target, source_path, None, overwrite=False)
     return 0
+
+
+def _canonical(raw: str) -> str:
+    """JSON 文字列を、保存先による書式の違い（PostgreSQL の jsonb は整形し直す）に依らない形にする。"""
+    try:
+        return json.dumps(json.loads(raw), sort_keys=True, ensure_ascii=False)
+    except ValueError:
+        return raw
+
+
+def _copy_ledger_rows(snapshot: Any, destination: Any) -> int:
+    """台帳の行を移行先へ写す。同じ id のタスクは上書き、完了実績は**まだ無いものだけ**足す
+    （`--force` でやり直しても、実績が二重にならない）。足した実績の件数を返す。"""
+    from .task_engine import MAX_OUTCOMES
+
+    known = {_canonical(o) for o in destination.read().outcomes}
+    fresh = [o for o in snapshot.outcomes if _canonical(o) not in known]
+    with destination.write() as tx:
+        tx.apply(snapshot.tasks, [], fresh, MAX_OUTCOMES)
+    return len(fresh)
+
+
+def _verify_copy(snapshot: Any, destination: Any) -> list[str]:
+    """写した結果を読み直して、移行元と同じか確かめる。違いがあれば、その説明。"""
+    from .task_engine import MAX_OUTCOMES
+
+    copied = destination.read()
+    problems = []
+    for task_id, raw in snapshot.tasks.items():
+        got = copied.tasks.get(task_id)
+        if got is None:
+            problems.append(f"タスク {task_id} が移行先にありません")
+        elif _canonical(got) != _canonical(raw):
+            problems.append(f"タスク {task_id} の中身が違います")
+    want = [_canonical(o) for o in snapshot.outcomes][-MAX_OUTCOMES:]
+    have = {_canonical(o) for o in copied.outcomes}
+    missing = [o for o in want if o not in have]
+    if missing:
+        problems.append(f"完了実績が {len(missing)} 件、移行先にありません")
+    return problems
+
+
+def _migrate_to_sqlite(args: argparse.Namespace, config: dict[str, Any], base: Path,
+                       source: Any) -> int:
+    """PostgreSQL の台帳を、SQLite のファイルへ写す（`migrate` の逆向き）。
+
+    設定が指す台帳（PostgreSQL の、この `tenant` の行）が移行元。移行先は `--to`（既定は設定の
+    台帳ファイルの場所）。写したあと読み直して、移行元と同じか確かめる。移行元は消さない。
+    台帳の隣に置くもの（ブリーフィング・判断ログ・状態）がデータベースにあれば、移行先の
+    ファイル（`--side file`、既定）か SQLite の表（`--side database`）へ写す。
+    """
+    from .ledger_store import LedgerConfigError, LedgerTenantError, SqliteStore
+    from .side_store import DbSide, FileSide, import_files
+    from .task_engine import TaskEngine
+
+    if source.backend != "postgres":
+        print("移行元が PostgreSQL ではありません。config.yaml の task_engine.backend: postgres の台帳を"
+              "SQLite へ写します / the source is not PostgreSQL: this copies a PostgreSQL ledger "
+              "to SQLite", file=sys.stderr)
+        return 1
+    dest_path = TaskEngine.resolve_path(args.to or ledger_path(config, base))
+    tenant = config.get("tenant") or None
+    destination = SqliteStore(dest_path)
+    try:
+        try:
+            destination.prepare(tenant, None)
+        except (LedgerTenantError, LedgerConfigError) as exc:
+            print(f"設定エラー / config error: {exc}", file=sys.stderr)
+            return 1
+        existing = len(destination.read().tasks)
+        if existing and not args.force:
+            print(f"移行先 {dest_path} にはすでに {existing} 件のタスクがあります。同じ id の行を上書き"
+                  f"してよければ --force を付けてください / the target already holds {existing} "
+                  f"tasks; add --force to overwrite rows with the same id", file=sys.stderr)
+            return 1
+        snapshot = source._store.read()
+        added = _copy_ledger_rows(snapshot, destination)
+        problems = _verify_copy(snapshot, destination)
+        if problems:
+            print("! 写した結果が移行元と一致しません / the copy does not match the source:",
+                  file=sys.stderr)
+            for problem in problems[:10]:
+                print(f"  - {problem}", file=sys.stderr)
+            return 1
+        print(f"移行しました / migrated: {len(snapshot.tasks)} tasks, {added} outcomes  "
+              f"{source.describe()} -> sqlite:{dest_path}（読み直して一致を確認 / verified）")
+
+        if source.side.kind == "database":
+            side_target = (DbSide(destination) if args.side == "database" else FileSide(dest_path))
+            report = import_files(source.side, side_target, overwrite=args.force)
+            words = {"imported": "写しました", "kept": "移行先にあるので残しました（上書きは --force）",
+                     "absent": "移行元にありません"}
+            print(f"台帳の隣に置くもの / beside the ledger: {source.side.describe()} -> "
+                  f"{side_target.describe()}")
+            for name, state in report.items():
+                print(f"  {name:<28} {words[state]}")
+        else:
+            print("台帳の隣に置くものはファイルのままです（移す必要はありません）。")
+        print("移行元の PostgreSQL の行は残してあります。SQLite を使うには config.yaml の "
+              "task_engine.backend を sqlite にしてください（確認後に PostgreSQL 側を削除） "
+              "/ the PostgreSQL rows are left; set task_engine.backend: sqlite to use the copy")
+        return 0
+    finally:
+        destination.close()
 
 
 def _import_side_files(target: Any, ledger_file: Path, from_dir: str | None, *,
@@ -1846,6 +1952,16 @@ def main(argv: list[str] | None = None) -> int:
         "ledger", help="台帳の保存先 / the ledger's storage (info, migrate)")
     ledger_actions = p_ledger.add_subparsers(dest="ledger_command", required=True)
     ledger_actions.add_parser("info", help="保存先・件数を表示 / show store and counts")
+    p_back = ledger_actions.add_parser(
+        "migrate-to-sqlite", help="PostgreSQL の台帳を SQLite のファイルへ写す（migrate の逆向き）"
+                                  " / copy the PostgreSQL ledger back to a SQLite file")
+    p_back.add_argument("--to", metavar="PATH",
+                        help="移行先の SQLite ファイル（既定は設定の台帳ファイルの場所）")
+    p_back.add_argument("--side", choices=("file", "database"), default="file",
+                        help="台帳の隣に置くもの（ブリーフィング・判断ログ・状態）の移し先"
+                             "（file=隣のファイル、database=SQLite の表。既定 file）")
+    p_back.add_argument("--force", action="store_true",
+                        help="移行先に行があっても、同じ id を上書きする（実績は二重にしない）")
     p_side = ledger_actions.add_parser(
         "side-import", help="台帳の隣のファイル（ブリーフィング・判断ログ・状態）を、"
                             "データベースへ取り込む / import the files beside the ledger")
