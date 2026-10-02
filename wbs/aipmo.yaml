@@ -415,10 +415,16 @@ wbs:
           notes: "写した後に読み直して一致を確認。実 PostgreSQL 16 で往復を確認。あわせて、順方向 migrate の --force で完了実績が二重になる不具合も直した"
         - id: "6.6"
           name: "Web の接続プール（多数の同時アクセス）"
-          status: todo
+          status: done
           effort: 3
-          priority: Low
           depends_on: ["4.1", "4.3"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/web/pool.py"
+            - "aipmo/web/server.py::def _open_store"
+            - "tests/test_web_pool.py::test_a_burst_never_creates_more_than_the_bound_and_no_engine_is_shared"
+            - "docs/LEDGER-STORAGE.md"
+          notes: "実 PostgreSQL 16 で 40 並列の接続が +40 → +8。画面の postgres アダプタ（WBS 提案・Digital Twin）は 1 本のまま"
         - id: "6.7"
           name: "Web 画面の実機確認（スマホ幅・配色）"
           status: todo

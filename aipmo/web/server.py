@@ -52,6 +52,8 @@ import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -81,6 +83,7 @@ from ..writeback import WritebackError, make_writer, tracker_of, writable_tracke
 from ..ledger_store import LedgerConfigError, LedgerStore, LedgerTenantError
 from ..side_store import BRIEFING, DECISIONS, FileSide
 from ..task_engine import TaskEngine
+from .pool import LedgerPool, PoolExhausted
 
 logger = logging.getLogger("aipmo.web")
 
@@ -180,6 +183,9 @@ def create_app(
     lookup_assignees: bool = True,
     wbs_target: WbsTarget | None = None,
     side_storage: str = "auto",
+    pool_size: int = 8,
+    pool_timeout: float = 10.0,
+    pool_idle: float = 300.0,
 ):
     runs = store or RunStore()
     # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
@@ -519,12 +525,16 @@ def create_app(
 
     @app.get("/api/health", dependencies=[guard])
     def health() -> dict[str, Any]:
-        return {
+        result: dict[str, Any] = {
             "adapters": {
                 name: engine.adapters.get(name).health_check()
                 for name in engine.adapters.names()
             }
         }
+        if _pools:
+            # 台帳の接続プールの状況（使用中・待機・待ち・拒否した数）。
+            result["ledger_pool"] = [pool.stats() for pool in list(_pools.values())]
+        return result
 
     # -- PMO Core の表示 / PMO Core view -----------------------------------
     #
@@ -551,20 +561,20 @@ def create_app(
         隣のファイルだけを見る（台帳を作らない）。
         """
         if _ledger_present(ledger):
-            store = _open_store(ledger)
+            store = _open_store(ledger, sync=False)
             try:
                 return store.side.read_doc(name)
             finally:
-                store.close()
+                _release(store)
         return FileSide(ledger).read_doc(name)
 
     def _side_tail(ledger: Path, name: str, limit: int) -> list[str]:
         if _ledger_present(ledger):
-            store = _open_store(ledger)
+            store = _open_store(ledger, sync=False)
             try:
                 return store.side.tail(name, limit)
             finally:
-                store.close()
+                _release(store)
         return FileSide(ledger).tail(name, limit)
 
     def _ledger_present(ledger: Path) -> bool:
@@ -572,11 +582,52 @@ def create_app(
         # A PostgreSQL ledger cannot be told by a file; if it connects, it is there.
         return ledger_store_factory is not None or TaskEngine.exists(ledger)
 
-    def _open_store(ledger: Path) -> TaskEngine:
+    # 台帳の接続プール（aipmo/web/pool.py）。多数が同時にアクセスしても、台帳への接続は
+    # `pool_size` を超えない。ledger ごとに 1 つ。
+    # Ledger connection pools, one per ledger: never more than `pool_size` connections.
+    _pools: dict[str, LedgerPool] = {}
+    _pools_lock = threading.Lock()
+
+    def _pool_for(ledger: Path) -> LedgerPool:
+        key = str(ledger)
+        with _pools_lock:
+            pool = _pools.get(key)
+            if pool is None:
+                pool = _pools[key] = LedgerPool(
+                    lambda: TaskEngine(
+                        ledger, tenant=tenant or None,
+                        store=ledger_store_factory() if ledger_store_factory else None,
+                        side_storage=side_storage),
+                    size=pool_size, acquire_timeout=pool_timeout, max_idle=pool_idle)
+            return pool
+
+    def _release(store: TaskEngine) -> None:
+        """借りた台帳を返す。例外の最中なら、まだ使えるか確かめてから戻す。"""
+        pool = getattr(store, "_aipmo_pool", None)
+        if pool is None:
+            store.close()
+            return
+        pool.release(store, failed=sys.exc_info()[0] is not None)
+
+    def _close_pools() -> None:
+        for pool in list(_pools.values()):
+            pool.close()
+
+    app.router.on_shutdown.append(_close_pools)
+
+    def _open_store(ledger: Path, sync: bool = True) -> TaskEngine:
+        """台帳を借りる。`sync=False` は、ブリーフィングや判断ログだけを読むとき（台帳の読み直しを省く）。"""
+        pool = _pool_for(ledger)
         try:
-            return TaskEngine(ledger, tenant=tenant or None,
-                              store=ledger_store_factory() if ledger_store_factory else None,
-                              side_storage=side_storage)
+            store = pool.acquire(sync=sync)
+            store._aipmo_pool = pool                    # type: ignore[attr-defined]
+            return store
+        except PoolExhausted as exc:
+            # 全部使用中で、待っても空かなかった。固まらずに断り、少し後の再試行を促す。
+            # Everything is in use and nothing freed up: refuse promptly and ask for a retry.
+            logger.warning("ledger pool exhausted: %s", exc)
+            raise HTTPException(status_code=503, detail=str(exc),
+                                headers={"Retry-After": "2"}) from exc
         except LedgerTenantError as exc:
             # 別テナントの台帳を指している。データには一切触れずに断る。
             # Pointed at another tenant's ledger: refuse without touching data.
@@ -612,29 +663,25 @@ def create_app(
     @app.get("/api/pmo", dependencies=[guard])
     def pmo_view(project: str | None = None, role: str = guard) -> dict[str, Any]:
         ledger = _pmo_ledger()
-        briefing_text = _side_doc(ledger, BRIEFING)
-        if not _ledger_present(ledger) and briefing_text is None:
+        present = _ledger_present(ledger)
+        briefing_text: str | None = None if present else FileSide(ledger).read_doc(BRIEFING)
+        if not present and briefing_text is None:
             raise HTTPException(status_code=404, detail="no PMO data yet")
         allowed = _allowed_projects(role, project)
         confined = role == "viewer" and scoped_projects is not None
 
         briefing = None
         age = None
-        try:
-            briefing = json.loads(briefing_text or "")
-            generated = datetime.fromisoformat(briefing["generated_at"])
-            age = int((datetime.now(timezone.utc) - generated).total_seconds())
-        except (OSError, ValueError, KeyError):
-            briefing = None
 
         active: list[Any] = []
         pending: list[Any] = []
         names: list[str] = []
         filing_view: dict[str, Any] | None = None
         review_view: list[dict[str, Any]] | None = None
-        if _ledger_present(ledger):
-            store = _open_store(ledger)
+        if present:
+            store = _open_store(ledger)                 # 1 回の借り出しで、ブリーフィングも台帳も読む
             try:
+                briefing_text = store.side.read_doc(BRIEFING)
                 if not confined and any(m.is_agent for m in (members or [])):
                     # 役割AIの成果のレビュー待ち。台帳から今の状態で出す。
                     # Results awaiting a human's review, live from the ledger.
@@ -663,7 +710,14 @@ def create_app(
                          if not confined or scoped_projects is None
                          or n.lower() in scoped_projects]
             finally:
-                store.close()
+                _release(store)
+
+        try:
+            briefing = json.loads(briefing_text or "")
+            generated = datetime.fromisoformat(briefing["generated_at"])
+            age = int((datetime.now(timezone.utc) - generated).total_seconds())
+        except (OSError, ValueError, KeyError):
+            briefing = None
 
         if briefing is not None and allowed is not None:
             briefing = scope_briefing(briefing, active, allowed, redact_org=confined)
@@ -694,6 +748,8 @@ def create_app(
         allowed = _allowed_projects(role, project)
         try:
             lines = _side_tail(ledger, DECISIONS, 2000 if allowed is not None else limit)
+        except HTTPException:
+            raise                                        # 台帳が使えない・混んでいる(503)は、そのまま伝える
         except Exception:                                # noqa: BLE001
             return {"items": []}
 
@@ -711,7 +767,7 @@ def create_app(
                     visible = {t.id for t in store.tasks.values()
                                if t.project.lower() in allowed}
                 finally:
-                    store.close()
+                    _release(store)
             lines = lines[-2000:]
         else:
             lines = lines[-limit:]
@@ -747,7 +803,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         finally:
-            store.close()
+            _release(store)
         logger.info("pmo proposal %s: %s by %s from %s", decision, task.id, role,
                     _client_ip(request))
         return {"id": task.id, "decision": decision}
@@ -776,7 +832,7 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         finally:
-            store.close()
+            _release(store)
         logger.info("pmo agent review %s: %s by %s from %s", decision, review["task"], role,
                     _client_ip(request))
         return review
@@ -812,7 +868,7 @@ def create_app(
             status = {"adapter": 503, "target": 422}.get(exc.kind, 502)
             raise HTTPException(status_code=status, detail=str(exc)) from exc
         finally:
-            store.close()
+            _release(store)
         key = filing_state(task).get("key")
         logger.info("pmo filing %s: %s -> %s by %s from %s", decision, task.id, key, role,
                     _client_ip(request))
@@ -847,7 +903,7 @@ def create_app(
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         finally:
-            store.close()
+            _release(store)
         written = (core.last_writeback or {}).get("tracker")
         logger.info("pmo assignment accepted: %s -> %s by %s from %s (written to %s)",
                     task.id, task.assignee, role, _client_ip(request), written or "ledger only")

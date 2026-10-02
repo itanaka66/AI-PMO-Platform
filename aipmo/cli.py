@@ -363,6 +363,29 @@ def ledger_store_factory(config: dict[str, Any]):
     return lambda: PostgresStore(str(dsn), tenant)
 
 
+def web_pool_settings(web: dict[str, Any]) -> dict[str, Any]:
+    """`web.pool`（台帳の接続プール）。画面が台帳へ張る接続の上限と、待ち時間。
+
+    size: 同時に持つ接続の上限（既定 8、0 でプールを使わない）。
+    timeout_seconds: 全部使用中のとき、順番を待つ秒数（既定 10。過ぎたら 503）。
+    idle_seconds: 使われないまま持ち続ける秒数（既定 300）。
+    """
+    section = web.get("pool") or {}
+    if not isinstance(section, dict):
+        raise ConfigError("web.pool はマッピングで書いてください / web.pool must be a mapping")
+
+    def number(key: str, default: float, low: float, high: float) -> float:
+        value = section.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+            raise ConfigError(f"web.pool.{key} は {low:g}〜{high:g} の数値: {value!r} "
+                              f"/ web.pool.{key} must be a number in {low:g}..{high:g}")
+        return float(value)
+
+    return {"pool_size": int(number("size", 8, 0, 100)),
+            "pool_timeout": number("timeout_seconds", 10, 0.1, 300),
+            "pool_idle": number("idle_seconds", 300, 1, 86400)}
+
+
 def side_storage_mode(config: dict[str, Any]) -> str:
     """`task_engine.side_storage`（auto / file / database）。台帳の隣に置くものの置き場。
 
@@ -1670,6 +1693,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
     template_root = Path(web.get("templates_dir", "templates")).resolve()
+    try:
+        pool_settings = web_pool_settings(web)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
     app = create_app(engine, template_root, token, viewer_token=viewer_token,
                      tenant=config.get("tenant", ""), lang=config.get("lang"),
                      cors_origins=cors_origins or None,
@@ -1680,7 +1708,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      filing=_web_filing(config),
                      lookup_assignees=_lookup_assignees(config),
                      wbs_target=_wbs_target(config, base),
-                     side_storage=side_storage_mode(config))
+                     side_storage=side_storage_mode(config),
+                     **pool_settings)
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()
