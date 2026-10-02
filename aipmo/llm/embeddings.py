@@ -111,20 +111,27 @@ class OllamaEmbedder(Embedder):
     name = "ollama"
 
     def __init__(self, model: str = "bge-m3", dimension: int = 1024,
-                 host: str | None = None) -> None:
+                 host: str | None = None, api_key: str | None = None) -> None:
         self.model = model
         self.dimension = dimension
         self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        # OllamaProvider（llm/base.py）と同じ理由・同じ環境変数。
+        # Same reasoning and env var as OllamaProvider (llm/base.py).
+        self.api_key = api_key or os.environ.get("OLLAMA_API_KEY")
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         import urllib.request
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
 
         vectors = []
         for text in texts:
             req = urllib.request.Request(
                 f"{self.host}/api/embeddings",
                 data=json.dumps({"model": self.model, "prompt": text}).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
+                headers=headers,
             )
             with urllib.request.urlopen(req, timeout=120) as resp:
                 body = json.loads(resp.read().decode("utf-8"))

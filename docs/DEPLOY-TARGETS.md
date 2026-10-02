@@ -141,7 +141,11 @@ model, then verify.
    立ってしまう。
 5. モデルはその外部サーバー側で事前に取得しておく（このインスタンスから
    は取得しない）。
-6. 起動して確認する:
+6. 認証付きのエンドポイント（Ollama Cloud、認証を挟んだリバースプロキシ
+   など）に繋ぐ場合は、`config.yaml` の `llm` ブロックに `api_key` を
+   書くか、`.env` に `OLLAMA_API_KEY` を設定する——詳しくは
+   [docs/PROVIDERS.md](PROVIDERS.md)。
+7. 起動して確認する:
    ```bash
    docker compose up -d --build
    docker compose run --rm aipmo doctor
@@ -151,7 +155,10 @@ Make sure the external Ollama server's port 11434 is reachable from this
 instance, point `OLLAMA_HOST` at it, switch `config.yaml`'s `llm` block
 the same way as the internal case (still `provider: ollama`, `host`
 still omitted). **Do not** add `--profile ollama`. Pull the models on
-that external server yourself — not from this instance. Then verify.
+that external server yourself — not from this instance. If the endpoint
+requires auth (Ollama Cloud, a reverse proxy in front of it), set
+`api_key` in `config.yaml`'s `llm` block or `OLLAMA_API_KEY` in `.env` —
+see [docs/PROVIDERS.md](PROVIDERS.md). Then verify.
 
 ---
 
