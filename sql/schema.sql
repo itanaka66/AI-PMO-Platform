@@ -480,3 +480,23 @@ CREATE TABLE IF NOT EXISTS ledger_meta (
     value  TEXT NOT NULL,
     PRIMARY KEY (tenant, key)
 );
+
+-- 台帳の隣に置くもの（ブリーフィング・判断ログ・状態）/ what lives beside the ledger.
+-- 置き場がデータベースのとき（PostgreSQL の既定）、同じく起動時に自動で作られる。
+-- Created automatically too when the home is the database (the PostgreSQL default).
+CREATE TABLE IF NOT EXISTS ledger_side_docs (
+    tenant     TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant, name)
+);
+
+CREATE TABLE IF NOT EXISTS ledger_side_log (
+    id     BIGSERIAL PRIMARY KEY,
+    tenant TEXT NOT NULL,
+    name   TEXT NOT NULL,
+    line   TEXT NOT NULL,
+    at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ledger_side_log_name ON ledger_side_log (tenant, name, id);
