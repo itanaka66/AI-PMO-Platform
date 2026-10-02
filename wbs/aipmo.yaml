@@ -597,3 +597,14 @@ wbs:
             - "aipmo/web/static/index.html::data-tab=\"tools\""
             - "tests/test_static_app.py::test_every_tab_has_a_section_in_the_page"
           notes: "受信箱が使えない構成は従来どおり全部を並べる"
+        - id: "6.26"
+          name: "サーバーが組み立てる文章（受信箱・点数の内訳・WBS の注意）の多言語化"
+          status: done
+          effort: 3
+          depends_on: ["6.25"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/messages.py"
+            - "tests/test_messages.py::test_every_key_has_eight_languages_with_the_same_placeholders"
+            - "tests/test_messages.py::test_the_inbox_is_composed_in_the_servers_language"
+          notes: "台帳に保存された文章は書いた時点の言語のまま。日本語は従来と同じ文章"

@@ -32,6 +32,7 @@ from typing import Any
 import yaml
 
 from .adapters.risk_forecast import RiskForecastAdapter
+from .messages import translate
 
 STATUSES = ("done", "in_progress", "todo", "blocked")
 _DISPLAY = {"done": "Done", "in_progress": "In Progress", "todo": "To Do",
@@ -53,6 +54,8 @@ class Problem:
     code: str
     node: str | None
     message: str
+    # 言語ごとの文章にするための差し込み値（`aipmo/messages.py` の `wp_<code>`）。無いものは message のまま。
+    params: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {"level": self.level, "code": self.code, "node": self.node,
@@ -310,30 +313,29 @@ def _safe_relative(spec_path: str) -> bool:
     return ".." not in parts and not (len(spec_path) > 1 and spec_path[1] == ":")
 
 
-def check_evidence(spec: str, root: Path) -> tuple[bool, str]:
-    """証拠 1 件を確かめる。`path` か `path::語句`（語句がそのファイルに含まれる）。
+def evidence_detail(spec: str, root: Path) -> tuple[bool, str, dict[str, Any]]:
+    """証拠 1 件を確かめる。戻り値は (満たしたか, 理由のキー, 差し込み値)。
 
-    `*` を含む path は glob（1 件以上に一致すればよい）。ルートの外は見ない。
-    Returns (satisfied, why-not). `path` or `path::phrase`; a path with `*` is
-    a glob. Nothing outside the root is ever read.
+    キーは `aipmo/messages.py` の `ev_*`。満たしていれば キーは空。
+    Returns (satisfied, message key, params); the key is empty when satisfied.
     """
     path_part, _, phrase = spec.partition("::")
     path_part = path_part.strip()
     if not _safe_relative(path_part):
-        return False, f"ルート外・絶対パスは使えません: {path_part!r}"
+        return False, "ev_outside_root", {"path": repr(path_part)}
     root = root.resolve()
     try:
         matches = (sorted(root.glob(path_part.replace("\\", "/"))) if "*" in path_part
                    else [root / path_part])
     except (OSError, ValueError):
-        return False, f"パスを解釈できません: {path_part!r}"
+        return False, "ev_bad_path", {"path": repr(path_part)}
     matches = [m for m in matches if m.exists()
                and m.resolve().is_relative_to(root)]
     if not matches:
-        return False, f"{path_part} が見つかりません"
+        return False, "ev_not_found", {"path": path_part}
     needle = phrase.strip()
     if not needle:
-        return True, ""
+        return True, "", {}
     for match in matches:
         if not match.is_file():
             continue
@@ -341,27 +343,39 @@ def check_evidence(spec: str, root: Path) -> tuple[bool, str]:
             if match.stat().st_size > MAX_EVIDENCE_BYTES:
                 continue
             if needle in match.read_text(encoding="utf-8", errors="replace"):
-                return True, ""
+                return True, "", {}
         except OSError:
             continue
-    return False, f"{path_part} に「{needle}」が見つかりません"
+    return False, "ev_phrase_missing", {"path": path_part, "phrase": needle}
+
+
+def check_evidence(spec: str, root: Path) -> tuple[bool, str]:
+    """証拠 1 件を確かめる。`path` か `path::語句`（語句がそのファイルに含まれる）。
+
+    `*` を含む path は glob（1 件以上に一致すればよい）。ルートの外は見ない。
+    Returns (satisfied, why-not). `path` or `path::phrase`; a path with `*` is
+    a glob. Nothing outside the root is ever read.
+    """
+    ok, key, params = evidence_detail(spec, root)
+    return ok, ("" if ok else translate("ja", key, **params))
 
 
 def validate_evidence(wbs: Wbs, root: Path, as_of: date) -> list[Problem]:
     problems: list[Problem] = []
     leaf_by_id = {leaf.id: leaf for leaf in wbs.leaves()}
     for leaf in wbs.leaves():
-        results = []
+        results: list[tuple[str, bool, str, dict[str, Any]]] = []
         for spec in leaf.evidence:
             path_part = spec.partition("::")[0].strip()
             if not _safe_relative(path_part):
                 problems.append(Problem(
                     "error", "bad_evidence_path", leaf.id,
-                    f"証拠のパスはリポジトリ内の相対パスだけ: {path_part!r}"))
-                results.append((spec, False, "bad path"))
+                    f"証拠のパスはリポジトリ内の相対パスだけ: {path_part!r}",
+                    {"path": repr(path_part)}))
+                results.append((spec, False, "bad path", {}))
                 continue
-            ok, why = check_evidence(spec, root)
-            results.append((spec, ok, why))
+            ok, key, params = evidence_detail(spec, root)
+            results.append((spec, ok, key, params))
 
         if leaf.done:
             if not leaf.evidence:
@@ -369,19 +383,21 @@ def validate_evidence(wbs: Wbs, root: Path, as_of: date) -> list[Problem]:
                     "warning", "done_without_evidence", leaf.id,
                     "完了ですが証拠（evidence）がありません。現実と合っているか"
                     "確かめられません"))
-            for spec, ok, why in results:
-                if not ok and why != "bad path":
+            for spec, ok, key, params in results:
+                if not ok and key != "bad path":
                     problems.append(Problem(
                         "error", "evidence_missing", leaf.id,
-                        f"完了と書かれていますが証拠がありません: {why}"))
+                        f"完了と書かれていますが証拠がありません: {translate('ja', key, **params)}",
+                        {"why_key": key, "why_params": params}))
             blockers = [d for d in leaf.depends_on
                         if d in leaf_by_id and not leaf_by_id[d].done]
             if blockers:
                 problems.append(Problem(
                     "warning", "done_before_dependency", leaf.id,
-                    f"完了ですが依存先が未完了です: {', '.join(blockers)}"))
+                    f"完了ですが依存先が未完了です: {', '.join(blockers)}",
+                    {"deps": ", ".join(blockers)}))
         else:
-            if results and all(ok for _, ok, _ in results):
+            if results and all(ok for _, ok, _, _ in results):
                 problems.append(Problem(
                     "warning", "maybe_done", leaf.id,
                     "証拠がすべて揃っています。完了にできるか確認してください"))
@@ -391,11 +407,12 @@ def validate_evidence(wbs: Wbs, root: Path, as_of: date) -> list[Problem]:
             if leaf.due is not None and leaf.due < as_of:
                 problems.append(Problem(
                     "warning", "overdue", leaf.id,
-                    f"期限 {leaf.due.isoformat()} を過ぎています"))
+                    f"期限 {leaf.due.isoformat()} を過ぎています", {"due": leaf.due.isoformat()}))
     if wbs.deadline is not None and wbs.deadline < as_of and any(
             not leaf.done for leaf in wbs.leaves()):
         problems.append(Problem("warning", "deadline_passed", None,
-                                f"全体の期限 {wbs.deadline.isoformat()} を過ぎています"))
+                                f"全体の期限 {wbs.deadline.isoformat()} を過ぎています",
+                                {"due": wbs.deadline.isoformat()}))
     return problems
 
 
@@ -482,6 +499,11 @@ def task_items(wbs: Wbs) -> list[dict[str, Any]]:
 
 def analyse(wbs: Wbs, root: Path, as_of: date | None = None,
             problems: list[Problem] | None = None) -> dict[str, Any]:
+    return _analyse(wbs, root, as_of, problems)[0]
+
+
+def _analyse(wbs: Wbs, root: Path, as_of: date | None = None,
+             problems: list[Problem] | None = None) -> tuple[dict[str, Any], list[Problem]]:
     as_of = as_of or date.today()
     all_problems = list(problems or [])
     all_problems.extend(validate_evidence(wbs, root, as_of))
@@ -554,11 +576,11 @@ def analyse(wbs: Wbs, root: Path, as_of: date | None = None,
         "items": task_items(wbs),
     }
     result["summary_text"] = render_text(result)
-    return result
+    return result, all_problems
 
 
 def _tree_node(node: Node, root: Path, flags: dict[str, list[str]], critical: set[str],
-               blocked: set[str]) -> dict[str, Any]:
+               blocked: set[str], lang: str | None = "ja") -> dict[str, Any]:
     """画面用の木の 1 ノード。葉は証拠 1 件ごとの確認結果を持つ。親は葉の集計。"""
     out: dict[str, Any] = {
         "id": node.id, "name": node.name, "owner": node.owner, "priority": node.priority,
@@ -570,8 +592,8 @@ def _tree_node(node: Node, root: Path, flags: dict[str, list[str]], critical: se
     if node.is_leaf:
         evidence = []
         for spec in node.evidence:
-            ok, why = check_evidence(spec, root)
-            evidence.append({"spec": spec, "ok": ok, "why": why})
+            ok, key, params = evidence_detail(spec, root)
+            evidence.append({"spec": spec, "ok": ok, "why": "" if ok else translate(lang, key, **params)})
         out.update({"leaf": True, "status": node.status, "effort": node.effort,
                     "evidence": evidence, "critical": node.id in critical,
                     "blocked_by_dependency": node.id in blocked})
@@ -581,26 +603,39 @@ def _tree_node(node: Node, root: Path, flags: dict[str, list[str]], critical: se
                     "leaves": roll["leaves"], "done": roll["done"],
                     "effort": sum(leaf.effort or 0.0 for leaf in node.leaves()),
                     "remaining_effort": roll["remaining_effort"],
-                    "children": [_tree_node(c, root, flags, critical, blocked)
+                    "children": [_tree_node(c, root, flags, critical, blocked, lang)
                                  for c in node.children]})
     return out
 
 
+def _localized(problem: Problem, lang: str | None) -> str:
+    """注意の文章を `lang` で。差し込み値の無いもの（構造の誤りなど）は、書かれたまま。"""
+    key = f"wp_{problem.code}"
+    if problem.code == "evidence_missing" and problem.params:
+        why = translate(lang, problem.params["why_key"], **problem.params["why_params"])
+        return translate(lang, key, why=why)
+    if problem.params or problem.code in ("done_without_evidence", "maybe_done", "unestimated"):
+        return translate(lang, key, **problem.params)
+    return problem.message
+
+
 def view(wbs: Wbs, root: Path, as_of: date | None = None,
-         problems: list[Problem] | None = None) -> dict[str, Any]:
+         problems: list[Problem] | None = None, lang: str | None = "ja") -> dict[str, Any]:
     """画面用: `analyse` の結果に、木（`tree`）と ID ごとの注意（`flags`）を足したもの。
 
     読むだけ。木の中身は WBS ファイルと証拠の確認結果だけで、ここで新しく判断しない。
     The analysis plus the tree for display; read-only, nothing is decided here.
     """
-    result = analyse(wbs, root, as_of, problems)
+    result, found = _analyse(wbs, root, as_of, problems)
     flags: dict[str, list[str]] = {}
+    for shown, source in zip(result["problems"], found, strict=True):   # 言語ごとの文章に差し替える
+        shown["message"] = _localized(source, lang)
     for p in result["problems"]:
         if p["node"]:
             flags.setdefault(p["node"], []).append(p["code"])
     critical = set(result["critical_path"])
     blocked = set(result["blocked_by_dependency"])
-    result["tree"] = [_tree_node(r, root, flags, critical, blocked) for r in wbs.roots]
+    result["tree"] = [_tree_node(r, root, flags, critical, blocked, lang) for r in wbs.roots]
     return result
 
 

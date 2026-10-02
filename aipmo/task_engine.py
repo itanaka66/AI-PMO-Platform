@@ -247,7 +247,7 @@ def score_breakdown(task: Task, today: date,
                     pace: dict[str, Any] | None = None) -> tuple[int, list[str], list[dict[str, Any]]]:
     """採点と、その内訳を項目ごとの点数にしたもの `(点数, 文章の内訳, 項目)`。
 
-    項目は `{"kind", "points", "text"}`。点数の合計は、返す点数と必ず一致する（画面が内訳を
+    項目は `{"kind", "points", "text", "key", "params"}`（`key` と `params` で言語ごとの文章にできる）。点数の合計は、返す点数と必ず一致する（画面が内訳を
     棒で見せるため）。文章の内訳 `reasons` は、これまでと同じ。
     Scores a task and returns the breakdown as per-item points too: `{"kind", "points", "text"}`,
     which always sum to the score.
@@ -271,7 +271,10 @@ def score_breakdown(task: Task, today: date,
         reasons = [f"優先度 {task.priority} +{points}（実績による補正 {shift:+d}）"]
     else:
         reasons = [f"優先度 {task.priority or '未設定'} +{points}"]
-    parts: list[dict[str, Any]] = [{"kind": "priority", "points": points, "text": reasons[0]}]
+    parts: list[dict[str, Any]] = [{
+        "kind": "priority", "points": points, "text": reasons[0],
+        "key": "s_priority_shift" if shift else "s_priority",
+        "params": {"priority": task.priority or "", "shift": f"{shift:+d}"}}]
 
     due = _parse_date(task.due_date)
     if due is not None:
@@ -279,15 +282,18 @@ def score_breakdown(task: Task, today: date,
         if remaining < 0:
             extra = 30 + min(-remaining, 30)
             reasons.append(f"期限を {-remaining} 日超過 +{extra}")
-            parts.append({"kind": "due", "points": extra, "text": reasons[-1]})
+            parts.append({"kind": "due", "points": extra, "text": reasons[-1],
+                          "key": "s_due_over", "params": {"days": -remaining}})
         elif remaining <= 3:
             extra = 20
             reasons.append(f"期限まで残り {remaining} 日 +{extra}")
-            parts.append({"kind": "due", "points": extra, "text": reasons[-1]})
+            parts.append({"kind": "due", "points": extra, "text": reasons[-1],
+                          "key": "s_due_left", "params": {"days": remaining}})
         elif remaining <= 7:
             extra = 10
             reasons.append(f"期限まで残り {remaining} 日 +{extra}")
-            parts.append({"kind": "due", "points": extra, "text": reasons[-1]})
+            parts.append({"kind": "due", "points": extra, "text": reasons[-1],
+                          "key": "s_due_left", "params": {"days": remaining}})
         else:
             extra = 0
         points += extra
@@ -307,24 +313,29 @@ def score_breakdown(task: Task, today: date,
                 reasons.append(
                     f"見積り {task.effort:g} 点 × 実績ペース {per_point:.1f} 日/点 "
                     f"→ あと約 {still:.0f} 日、期限まで {days_left} 日 +{extra}")
-                parts.append({"kind": "pace", "points": extra, "text": reasons[-1]})
+                parts.append({"kind": "pace", "points": extra, "text": reasons[-1], "key": "s_pace",
+                              "params": {"effort": f"{task.effort:g}", "per": f"{per_point:.1f}",
+                                         "still": f"{still:.0f}", "left": days_left}})
 
     if task.blocked:
         points += 15
         reasons.append("ブロック中 +15")
-        parts.append({"kind": "blocked", "points": 15, "text": reasons[-1]})
+        parts.append({"kind": "blocked", "points": 15, "text": reasons[-1], "key": "s_blocked",
+                      "params": {}})
 
     others = len(task.templates) - 1
     if others > 0:
         extra = min(others * _CORROBORATION_STEP, _CORROBORATION_CAP)
         points += extra
         reasons.append(f"他 {others} 件のテンプレートも指摘 +{extra}")
-        parts.append({"kind": "corroboration", "points": extra, "text": reasons[-1]})
+        parts.append({"kind": "corroboration", "points": extra, "text": reasons[-1],
+                      "key": "s_corroboration", "params": {"n": others}})
 
     if not task.assignee:
         points += 5
         reasons.append("担当者未定 +5")
-        parts.append({"kind": "unassigned", "points": 5, "text": reasons[-1]})
+        parts.append({"kind": "unassigned", "points": 5, "text": reasons[-1], "key": "s_unassigned",
+                      "params": {}})
 
     if label_bonus:
         hits = [(label_bonus[label.lower()], label) for label in task.labels
@@ -333,7 +344,8 @@ def score_breakdown(task: Task, today: date,
             extra, label = max(hits)
             points += extra
             reasons.append(f"過去実績で遅れやすいラベル「{label}」 +{extra}")
-            parts.append({"kind": "label", "points": extra, "text": reasons[-1]})
+            parts.append({"kind": "label", "points": extra, "text": reasons[-1], "key": "s_label",
+                          "params": {"label": label}})
 
     return points, reasons, parts
 

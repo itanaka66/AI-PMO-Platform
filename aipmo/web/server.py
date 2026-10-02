@@ -76,6 +76,7 @@ from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
 from ..judgment import read_control, write_control
+from ..messages import translate
 from ..pmo_core import Member, PmoCore, scope_briefing
 from ..inbox import build_inbox
 from ..filing import FilingConfig, FilingError, eligible, filing_state, make_filer
@@ -800,7 +801,7 @@ def create_app(
                 store, members=members or [], filing=filing, can_act=role != "viewer",
                 allowed=allowed, confined=confined, writable=writable_trackers(engine.adapters),
                 can_file=bool(filing is not None and engine.adapters.has(filing.tracker)),
-                replans=replans)
+                replans=replans, lang=ui_lang)
         finally:
             _release(store)
 
@@ -821,7 +822,7 @@ def create_app(
             loaded, problems = load_wbs(file)
         except WbsError as exc:
             raise HTTPException(status_code=500, detail=f"cannot read the WBS: {exc}") from exc
-        result = wbs_analysis(loaded, root, problems=problems)
+        result = wbs_analysis(loaded, root, problems=problems, lang=ui_lang)
         for key in ("tasks", "items", "summary_text"):       # 画面に要らない（重い）もの
             result.pop(key, None)
         return result
@@ -893,8 +894,13 @@ def create_app(
             learned.get("priority_delta") or {}, learned.get("pace") or {})
         gap = task.score - points
         if gap:
-            parts.append({"kind": "other", "points": gap,
-                          "text": f"その他の補正 {gap:+d}（学習モデルの更新差など）"})
+            parts.append({"kind": "other", "points": gap, "key": "s_other",
+                          "params": {"gap": f"{gap:+d}"}})
+        for part in parts:                              # 画面の言語の文章にする
+            params = dict(part.get("params") or {})
+            if part.get("key") == "s_priority" or part.get("key") == "s_priority_shift":
+                params["priority"] = params.get("priority") or translate(ui_lang, "s_unset")
+            part["text"] = translate(ui_lang, part["key"], **params)
         return parts
 
     def _task_row(t: Any, parts: list[dict[str, Any]]) -> dict[str, Any]:
