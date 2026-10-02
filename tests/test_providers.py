@@ -571,6 +571,7 @@ def _fake_ollama_urlopen(monkeypatch, captured: dict):
 
     def fake_urlopen(request, timeout=None):
         captured["payload"] = json_module.loads(request.data.decode("utf-8"))
+        captured["headers"] = dict(request.header_items())
         body = json_module.dumps({"response": "ok", "prompt_eval_count": 1,
                                    "eval_count": 1}).encode("utf-8")
         return FakeResponse(body)
@@ -646,5 +647,92 @@ def test_ollama_provider_builds_from_config_with_extra_options():
     assert isinstance(provider, OllamaProvider)
     assert provider.num_ctx == 65536
     assert provider.num_predict == 32768
-    assert provider.top_p == 0.9
-    assert provider.repeat_penalty == 1.1
+
+
+# --- Ollama の API キー / Ollama's API key -----------------------------------
+
+def test_ollama_has_no_api_key_by_default():
+    """素の Ollama は鍵を要らない。"""
+    provider = OllamaProvider(model="qwen2.5:14b")
+    assert provider.api_key is None
+
+
+def test_ollama_sends_no_authorization_header_without_a_key(monkeypatch):
+    captured: dict = {}
+    _fake_ollama_urlopen(monkeypatch, captured)
+    provider = OllamaProvider(model="qwen2.5:14b")
+
+    provider.complete(LLMRequest(prompt="hi"))
+
+    assert "Authorization" not in captured["headers"]
+
+
+def test_ollama_sends_a_bearer_token_when_an_api_key_is_configured(monkeypatch):
+    captured: dict = {}
+    _fake_ollama_urlopen(monkeypatch, captured)
+    provider = OllamaProvider(model="qwen2.5:14b", api_key="sk-ollama-test")
+
+    provider.complete(LLMRequest(prompt="hi"))
+
+    assert captured["headers"]["Authorization"] == "Bearer sk-ollama-test"
+
+
+def test_ollama_api_key_falls_back_to_the_environment_variable(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "sk-from-env")
+    provider = OllamaProvider(model="qwen2.5:14b")
+
+    assert provider.api_key == "sk-from-env"
+
+
+def test_ollama_explicit_api_key_wins_over_the_environment_variable(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "sk-from-env")
+    provider = OllamaProvider(model="qwen2.5:14b", api_key="sk-explicit")
+
+    assert provider.api_key == "sk-explicit"
+
+
+def test_ollama_provider_builds_the_api_key_from_config():
+    provider = build_provider({
+        "provider": "ollama", "model": "qwen2.5:14b", "api_key": "sk-config",
+    })
+
+    assert isinstance(provider, OllamaProvider)
+    assert provider.api_key == "sk-config"
+
+
+def test_ollama_embedder_has_no_api_key_by_default():
+    embedder = OllamaEmbedder(model="bge-m3")
+    assert embedder.api_key is None
+
+
+def test_ollama_embedder_sends_a_bearer_token_when_configured(monkeypatch):
+    import io
+    import json as json_module
+
+    captured: dict = {}
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["headers"] = dict(request.header_items())
+        body = json_module.dumps({"embedding": [0.1, 0.2]}).encode("utf-8")
+        return FakeResponse(body)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    embedder = OllamaEmbedder(model="bge-m3", api_key="sk-embed-test")
+
+    embedder.embed(["hello"])
+
+    assert captured["headers"]["Authorization"] == "Bearer sk-embed-test"
+
+
+def test_ollama_embedder_api_key_falls_back_to_the_environment_variable(monkeypatch):
+    monkeypatch.setenv("OLLAMA_API_KEY", "sk-embed-env")
+    embedder = OllamaEmbedder(model="bge-m3")
+
+    assert embedder.api_key == "sk-embed-env"

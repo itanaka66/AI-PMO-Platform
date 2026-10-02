@@ -299,12 +299,20 @@ class OllamaProvider(LLMProvider):
 
     def __init__(self, model: str = "qwen2.5:14b",
                  host: str | None = None,
+                 api_key: str | None = None,
                  num_ctx: int | None = None,
                  num_predict: int | None = None,
                  top_p: float | None = None,
                  repeat_penalty: float | None = None) -> None:
         self.model = model
         self.host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        # 素の Ollama は鍵を要らないが、Ollama Cloud や認証付きリバース
+        # プロキシの背後では必要になる。環境変数はホストとの対称性のため。
+        #
+        # Plain Ollama needs no key, but Ollama Cloud and an
+        # authenticating reverse proxy in front of it do. The env var
+        # mirrors OLLAMA_HOST for the same reason.
+        self.api_key = api_key or os.environ.get("OLLAMA_API_KEY")
 
         defaults = (_RTX3090_DEFAULTS if self.host.rstrip("/") == _RTX3090_HOST
                     else {})
@@ -340,10 +348,14 @@ class OllamaProvider(LLMProvider):
         if request.json_mode:
             payload["format"] = "json"
 
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
         req = urllib.request.Request(
             f"{self.host}/api/generate",
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers=headers,
         )
         with urllib.request.urlopen(req, timeout=600) as resp:
             body = json.loads(resp.read().decode("utf-8"))

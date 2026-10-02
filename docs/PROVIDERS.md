@@ -18,7 +18,7 @@ resolves to is configuration, so **switching providers changes no template**.
 | `groq` | クラウド | **なし** | `GROQ_API_KEY` |
 | `openrouter` | クラウド | **なし** | `OPENROUTER_API_KEY` |
 | `claude` | クラウド | **なし** | `ANTHROPIC_API_KEY` |
-| `ollama` | ローカル | あり | 不要 |
+| `ollama` | ローカル | あり | `OLLAMA_API_KEY`（任意 / optional） |
 | `vllm` | ローカル | あり | 不要 |
 | `lmstudio` | ローカル | あり | 不要 |
 | `llamacpp` | ローカル | — | 不要 |
@@ -123,6 +123,15 @@ llm:
     provider: ollama
     model: qwen2.5:14b
     host: http://localhost:11434
+    # 素の Ollama には不要。Ollama Cloud や認証付きリバースプロキシの
+    # 背後にある場合だけ指定する。環境変数 OLLAMA_API_KEY でも渡せる
+    # （こちらは config.yaml に鍵を書かずに済む）。
+    #
+    # Not needed for plain Ollama. Only set this when it sits behind
+    # Ollama Cloud or an authenticating reverse proxy. Can also come from
+    # the OLLAMA_API_KEY environment variable instead, so the key never
+    # has to live in config.yaml.
+    # api_key: ...
     # num_ctx・num_predict・top_p・repeat_penalty は省略すると Ollama 自身の
     # 既定値のまま送られる（VRAM の少ないホストではそれが安全）。
     # 明示的に書けば、この host がどれであっても常にそちらが優先される。
