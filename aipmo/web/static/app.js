@@ -1784,7 +1784,10 @@ const KIND_FALLBACK = {
   judgment: "判断", followup: "対応", wbs: "WBS", assignment: "担当",
   review: "成果", filing: "起票", replan: "再計画",
 };
+// スマホの下タブには主な 4 つだけを並べ、残りは「その他」にまとめる（広い画面は全部を並べる）。
+const PRIMARY_TABS = ["today", "inbox", "tasks", "wbs"];
 const TAB_ORDER = ["today", "inbox", "tasks", "wbs", "reviews", "judgment", "members", "integrations", "tools"];
+const SECONDARY_TABS = TAB_ORDER.filter((n) => !PRIMARY_TABS.includes(n));
 let inboxState = { data: null, filter: "all", selected: null };
 let tabsEnabled = false;
 
@@ -1804,9 +1807,15 @@ function showTab(name) {
     if (node.dataset.tab === name) node.removeAttribute("data-off");
     else node.setAttribute("data-off", "");
   }
-  for (const button of $("tabs").querySelectorAll("button")) {
+  for (const button of $("tabs").querySelectorAll("button[data-target]")) {
     button.setAttribute("aria-pressed", String(button.dataset.target === name));
   }
+  const more = document.getElementById("tabs-more-button");
+  if (more) {                                   // 「その他」の中の画面を見ているときは、「その他」を選択中にする
+    more.setAttribute("aria-pressed", String(SECONDARY_TABS.includes(name)));
+    more.setAttribute("aria-expanded", "false");
+  }
+  $("tabs").removeAttribute("data-more");
   $("main").classList.toggle("wide", name !== "tools");
   if (location.hash !== `#${name}`) history.pushState(null, "", `#${name}`);
 }
@@ -1825,7 +1834,9 @@ function setupTabs(enabled) {
     wbs: wbsState.data ? "WBS" : t("web_proposals", "WBS Proposals"),
   };
   nav.replaceChildren();
-  for (const name of TAB_ORDER) {
+  const sheet = el("div", "tabs-sheet");
+  sheet.id = "tabs-sheet";
+  const makeButton = (name) => {
     const button = el("button", null, labels[name]);
     button.type = "button";
     button.dataset.target = name;
@@ -1836,8 +1847,24 @@ function setupTabs(enabled) {
       button.append(count);
     }
     button.addEventListener("click", () => showTab(name));
-    nav.append(button);
+    return button;
+  };
+  for (const name of TAB_ORDER) {
+    if (PRIMARY_TABS.includes(name)) nav.append(makeButton(name));
+    else sheet.append(makeButton(name));
   }
+  // 「その他」: 狭い画面だけに出る。押すと残りの画面の一覧が開く。
+  const more = el("button", "tabs-more", t("web_tabs_more", "その他"));
+  more.type = "button";
+  more.id = "tabs-more-button";
+  more.setAttribute("aria-controls", "tabs-sheet");
+  more.setAttribute("aria-expanded", "false");
+  more.addEventListener("click", () => {
+    const open = nav.getAttribute("data-more") === null;
+    if (open) nav.setAttribute("data-more", ""); else nav.removeAttribute("data-more");
+    more.setAttribute("aria-expanded", String(open));
+  });
+  nav.append(more, sheet);
   nav.hidden = false;
   $("inbox-view").hidden = false;
   $("today-view").hidden = false;

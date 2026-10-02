@@ -715,3 +715,16 @@ main.wide { max-width: 1240px; }
 .tag[data-dir="up"] { color: var(--ok); border-color: var(--ok); }
 .bar { position: relative; }
 .cap-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); }
+
+/* ---------- 下タブの「その他」/ the "more" tab ---------- */
+.tabs-sheet { display: contents; }
+.tabs-more { display: none !important; }
+@media (max-width: 899.98px) {
+  .tabs-more { display: inline-flex !important; }
+  .tabs-sheet { display: none; position: fixed; left: 0; right: 0; bottom: calc(var(--tap) + env(safe-area-inset-bottom));
+    z-index: 19; flex-direction: column; background: var(--surface); border-top: 1px solid var(--rule);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, .12); padding: 4px var(--gap); }
+  .tabs[data-more] .tabs-sheet { display: flex; }
+  .tabs-sheet button { flex: none; justify-content: flex-start; font-size: 15px; border-top: 0; border-left: 3px solid transparent; }
+  .tabs-sheet button[aria-pressed="true"] { border-left-color: var(--accent); }
+}

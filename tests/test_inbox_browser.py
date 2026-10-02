@@ -161,7 +161,13 @@ async def drive(base: str) -> dict:
             await b.open(f"{base}/?token={OPERATOR}#inbox", width=390, height=844, mobile=True)
             out["mobile_scroll_width"] = await b.js("document.documentElement.scrollWidth")
             out["badge"] = await b.js("document.getElementById('inbox-count').textContent")
-            out["tabs"] = await b.js("[...document.querySelectorAll('#tabs button')].map(b => b.dataset.target)")
+            out["tabs"] = await b.js("[...document.querySelectorAll('#tabs button[data-target]')].map(b => b.dataset.target)")
+            out["mobile_bar_buttons"] = await b.js(
+                "[...document.querySelectorAll('#tabs > button')].filter(b => b.offsetParent !== null).length")
+            out["sheet_hidden"] = await b.js("document.getElementById('tabs-sheet').getBoundingClientRect().height === 0")
+            await b.js("document.getElementById('tabs-more-button').click()")
+            out["sheet_open"] = await b.js("document.getElementById('tabs-sheet').getBoundingClientRect().height > 0")
+            await b.js("document.getElementById('tabs-more-button').click()")
             out["mobile_items"] = await b.js("document.querySelectorAll('.inbox-item').length")
 
             # デスクトップ: 選んだ項目を承認する
@@ -261,6 +267,7 @@ def test_the_inbox_works_in_a_real_browser(served):
     assert result["today_kpis"][0] == "23" and result["today_has_top"] == 5
     assert result["mobile_scroll_width"] <= 390                       # スマホ幅で横にはみ出さない
     assert result["badge"] == "14" and result["tabs"] == ["today", "inbox", "tasks", "wbs", "reviews", "judgment", "members", "integrations", "tools"]
+    assert result["mobile_bar_buttons"] == 5 and result["sheet_hidden"] and result["sheet_open"]   # 4 つ + その他
     assert result["mobile_items"] == 14
     assert result["detail_sections"] >= 4 and {"do", "dont", "info"} <= set(result["tones"])
     assert result["approved_gone"] is True and tuple(result["count"]) == (14, 13)

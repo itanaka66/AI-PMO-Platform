@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 
 from .console import configure_stdio, mark
+from .messages import localize_briefing, suggestion_reason, task_title
 from .adapters.base import AdapterRegistry
 from .adapters.mock import MockJiraAdapter, MockSlackAdapter, MockTeamsAdapter
 from .adapters.chroma import ChromaAdapter
@@ -578,7 +579,7 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
     return PmoCore(task_engine=task_engine, rules=rules, filing=filing, filer=filer,
                    collector=collector, generation=generation, judgment=judgment,
                    acting=engine is not None and launch_base is not None,
-                   members=members, notify=notify,
+                   members=members, notify=notify, lang=_display_lang(config),
                    renotify_hours=int(notify_config.get("renotify_hours", 24)),
                    learning=bool(learning.get("enabled", True)),
                    min_samples=int(learning.get("min_samples", 5)),
@@ -640,6 +641,33 @@ def _template_index(root: Path) -> dict[str, Any]:
     return index
 
 
+def _why_lines(task, task_engine, lang: str) -> list[str]:
+    """点数の内訳の各行。日本語は従来の文章、他の言語は項目（key + params）から組み立てる。"""
+    from datetime import datetime as _dt
+
+    from .messages import translate
+    from .task_engine import score_breakdown
+
+    if lang == "ja" or task.done:
+        return list(task.reasons)
+    _, _, parts = score_breakdown(task, _dt.now().date(), task_engine.label_bonus,
+                                  task_engine.priority_delta, task_engine.pace)
+    lines = []
+    for part in parts:
+        params = dict(part.get("params") or {})
+        if part["key"] in ("s_priority", "s_priority_shift") and not params.get("priority"):
+            params["priority"] = translate(lang, "s_unset")
+        lines.append(f"{translate(lang, part['key'], **params)} {part['points']:+d}")
+    return lines
+
+
+def _display_lang(config: dict[str, Any]) -> str:
+    """通知とCLI の表示に使う言語。設定の `lang`。無ければ従来どおり日本語。"""
+    from .i18n import normalize
+
+    return normalize(config.get("lang")) if config.get("lang") else "ja"
+
+
 def _open_ledger(args: argparse.Namespace):
     config = load_config(Path(args.config))
     base = Path(args.config).resolve().parent
@@ -656,6 +684,7 @@ def cmd_pmo(args: argparse.Namespace) -> int:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
     briefing = core.cycle()
+    briefing = localize_briefing(core.lang, briefing)       # 警告・担当の理由などを、設定の言語で
     if args.project:
         # 周は組織全体で回し、表示だけをプロジェクトに絞る。
         # The cycle runs over everything; only what is shown is narrowed.
@@ -751,8 +780,8 @@ def cmd_assign(args: argparse.Namespace) -> int:
         if not proposals:
             print("提案はありません / no proposals")
         for t in proposals:
-            print(f"{t.key or t.id:<14} {t.title} → {t.suggested_assignee}"
-                  f"  ({t.suggestion_reason})")
+            print(f"{t.key or t.id:<14} {task_title(core.lang, t.title, t.payload)} → {t.suggested_assignee}"
+                  f"  ({suggestion_reason(core.lang, t.suggestion_reason, t.payload)})")
         return 0
 
     if not args.apply:
@@ -869,16 +898,17 @@ def cmd_tasks(args: argparse.Namespace) -> int:
         print("タスクはありません / no tasks. "
               "(`aipmo schedule` が走ると集まります / gathered while the scheduler runs)")
         return 0
+    lang = core.lang
     for position, task in enumerate(ranked, 1):
         who = task.assignee or "-"
         due = task.due_date or "-"
         if not task.assignee and task.suggested_assignee:
             who = f"担当未定→提案 {task.suggested_assignee}"
         where = f"{task.project}, " if task.project and not args.project else ""
-        print(f"{position:>3}. [{task.score:>3}] {task.key or '':<10} {task.title}"
+        print(f"{position:>3}. [{task.score:>3}] {task.key or '':<10} {task_title(lang, task.title, task.payload)}"
               f"  ({where}{who}, 期限 {due}, {', '.join(task.templates)})")
         if args.why:
-            for reason in task.reasons:
+            for reason in _why_lines(task, task_engine, lang):
                 print(f"        - {reason}")
     return 0
 
@@ -928,7 +958,7 @@ def cmd_judgment(args: argparse.Namespace) -> int:
         print("自律的な判断は設定されていません。config.yaml に pmo_core.judgment を書きます "
               "/ judgment is not configured: add pmo_core.judgment")
         return 0
-    judgment = core.cycle().get("judgment") or {}
+    judgment = localize_briefing(core.lang, {"judgment": core.cycle().get("judgment") or {}})["judgment"]
     flags = ("  [一時停止中]" if judgment.get("paused") else "") + \
             ("  [遮断器が作動中: 自動は提案に落ちています]" if judgment.get("tripped") else "")
     print(f"自律的な判断 / autonomous judgment{flags}")

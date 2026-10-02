@@ -232,3 +232,66 @@ def test_a_suggestion_without_a_structure_or_a_reason_does_not_break_the_briefin
         == "古い理由"                                               # 古い構造は使わない（取り違えない）
     fresh = {"i18n_suggestion": {"text": "x", "spec": {"key": "sg_room", "params": {"load": 1, "cap": 5}}}}
     assert suggestion_reason("en", "x", fresh) == "Chosen for availability (currently 1/5)"
+
+
+# ===== 通知（Slack など）と CLI の表示 =================================================================
+
+def _core_with_notes(base: Path, lang: str):
+    config = cli.load_config(base / "config.yaml")
+    config["lang"] = lang
+    core = cli.build_pmo_core(config, cli.open_ledger(config, base), base=base)
+    notes: list[str] = []
+    core.notify = notes.append
+    return core, notes
+
+
+@pytest.mark.parametrize("lang", ["en", "de"])
+def test_notifications_go_out_in_the_configured_language(tmp_path, lang):
+    base = tmp_path / "demo"
+    shutil.copytree(ROOT / "demo", base, ignore=shutil.ignore_patterns("task-ledger.db*", "pmo-*"))
+    demo.load(cli.load_config(base / "config.yaml"), base)
+    core, notes = _core_with_notes(base, lang)
+
+    core.cycle()
+    assert notes
+    assert core.lang == lang
+
+
+    text = "\n".join(notes)
+    assert "期限を" not in text and "日超過" not in text and "overdue" in text
+    for key in ("n_judgment", "n_judgment_pending", "n_judgment_demoted", "n_breaker", "n_proposal"):
+        rendered = translate(lang, key, title="T", evidence="E", remedy="R", id="I", n=3)
+        assert not CJK.search(rendered), key
+
+
+
+def test_alert_notice_text_is_translated_and_japanese_is_unchanged(tmp_path):
+    from aipmo.pmo_core import Violation
+
+    base = tmp_path / "demo"
+    shutil.copytree(ROOT / "demo", base, ignore=shutil.ignore_patterns("task-ledger.db*", "pmo-*"))
+    demo.load(cli.load_config(base / "config.yaml"), base)
+    for lang, expected in (("en", "3 day(s) past the due date (threshold 1)"),
+                           ("ja", "期限を 3 日超過（基準 1 日）")):
+        core, notes = _core_with_notes(base, lang)
+        v = Violation("overdue", "T", "high", "期限を 3 日超過（基準 1 日）",
+                      {"key": "al_overdue", "params": {"late": 3, "base": 1}})
+        core._notice(v, "Title", {}, __import__("datetime").datetime.now())
+        assert notes == [f"[high] Title — {expected} (overdue)"]
+
+
+def test_cli_shows_alerts_and_the_why_lines_in_the_configured_language(tmp_path, capsys):
+    base = tmp_path / "demo"
+    shutil.copytree(ROOT / "demo", base, ignore=shutil.ignore_patterns("task-ledger.db*", "pmo-*"))
+    demo.load(cli.load_config(base / "config.yaml"), base)
+    config_en = base / "config.en.yaml"
+    config_en.write_text((base / "config.yaml").read_text(encoding="utf-8").replace("lang: ja", "lang: en", 1),
+                         encoding="utf-8")
+    assert cli.main(["--config", str(config_en), "pmo"]) == 0
+    out = capsys.readouterr().out
+    assert "past the due date" in out and "期限を" not in out
+    assert cli.main(["--config", str(config_en), "tasks", "--why", "--limit", "3"]) == 0
+    why = capsys.readouterr().out
+    assert "Priority " in why and "期限を" not in why
+    assert cli.main(["--config", str(base / "config.yaml"), "tasks", "--why", "--limit", "3"]) == 0
+    assert "優先度 " in capsys.readouterr().out                 # 設定に lang が無ければ従来どおり日本語

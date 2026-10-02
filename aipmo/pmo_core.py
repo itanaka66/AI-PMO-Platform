@@ -45,9 +45,9 @@ from .filing import FilingConfig, FilingError, eligible, filing_state
 from .generation import (GenerationConfig, due_date, followup_id, period_key,
                          recurring_id, wbs_drift_id)
 from .judgment import rationale_spec
-from .judgment import (LABEL, MAX_RETRIES_PER_TASK, REMEDIES, Diagnosis, JudgmentConfig,
+from .judgment import (MAX_RETRIES_PER_TASK, REMEDIES, Diagnosis, JudgmentConfig,
                        candidates, diagnose, judgment_id, rationale, read_control)
-from .messages import render, spec
+from .messages import localized, render, spec, translate
 from .wbs import problem_spec as wbs_problem_spec
 from .pmo_learning import (DEFAULT_MAX_ESTIMATE_ERROR, DEFAULT_MIN_SAMPLES, LearnedModel,
                            learn)
@@ -561,6 +561,8 @@ class PmoCore:
     # Notification; None means decide and record only.
     notify: Callable[[str], None] | None = None
     renotify_hours: int = 24
+    # 通知（Slack など）に使う言語。台帳に残る文章は常に日本語（部品を添えて）で、これは送る文章だけ。
+    lang: str = "ja"
     # 学習（過去の実績からの重み調整）。aipmo/pmo_learning.py
     # Learning from track record.
     learning: bool = True
@@ -710,7 +712,8 @@ class PmoCore:
         briefing["generated"] = {
             "pending": [{"id": t.id, "title": t.title, "project": t.project,
                          "priority": t.priority, "due_date": t.due_date,
-                         "origin": t.origin, "generated_from": t.generated_from}
+                         "origin": t.origin, "generated_from": t.generated_from,
+                         "i18n": (t.payload.get("i18n") or {}).get("title")}
                         for t in engine.proposals()],
             "created": created}
         briefing["agent_dispatch"] = dispatch_report
@@ -1027,10 +1030,18 @@ class PmoCore:
         if len(j["failures"]) >= cfg.breaker_failures:
             j["tripped_at"] = now.isoformat()
             self._log("judgment_breaker_tripped", now, failures=len(j["failures"]))
-            self._say(f"[判断] 自動実行の失敗が {len(j['failures'])} 回続いたため、自動実行を"
-                      f"止めて提案に切り替えました（戻す: aipmo judgment reset）")
+            self._say(translate(self.lang, "n_breaker", n=len(j["failures"])))
             return True
         return False
+
+    def _diag_title(self, d: Diagnosis) -> str:
+        return localized(self.lang, d.title, (d.i18n or {}).get("title"))
+
+    def _diag_evidence(self, d: Diagnosis) -> list[str]:
+        nodes = (d.i18n or {}).get("evidence")
+        if nodes and self.lang != "ja":
+            return [render(self.lang, e) for e in nodes]
+        return list(d.evidence)
 
     def _say(self, text: str) -> bool:
         if self.notify is None:
@@ -1150,8 +1161,8 @@ class PmoCore:
         if cfg.autonomy.get("notify", "auto") != "off":
             last = ep.get("notified_at")
             if last is None or not self._within(last, now, cfg.renotify_hours):
-                if self._say(f"[判断] {d.title}\n根拠: {'; '.join(d.evidence) or '-'}"
-                             f"\n詳細: aipmo judgment"):
+                if self._say(translate(self.lang, "n_judgment", title=self._diag_title(d),
+                                       evidence="; ".join(self._diag_evidence(d)) or "-")):
                     ep["notified_at"] = now.isoformat()
                     self._log("judgment_notified", now, diagnosis=d.fingerprint)
                     summary["actions"].append({"diagnosis": d.fingerprint, "remedy": "notify",
@@ -1212,8 +1223,8 @@ class PmoCore:
         summary["actions"].append({"diagnosis": d.fingerprint, "remedy": remedy,
                                    "level": level, "ref": record.id})
         if level == "propose":
-            self._say(f"[判断・承認待ち] {d.title}\n提案: {LABEL[remedy]}"
-                      f"\n承認: aipmo generated approve {record.id}")
+            self._say(translate(self.lang, "n_judgment_pending", title=self._diag_title(d),
+                                remedy=translate(self.lang, f"remedy_{remedy}"), id=record.id))
         else:
             j["auto_log"] = self._recent(j["auto_log"], now) + [now.isoformat()]
             summary.setdefault("_run", []).append(record.id)      # 錠を放してから実行
@@ -1230,7 +1241,8 @@ class PmoCore:
             task.payload.update(state="proposed", auto=False,
                                 demoted="自動実行の失敗が続いたため、提案に切り替えました")
             fingerprint, args, title = task.payload.get("fingerprint"), \
-                dict(task.payload.get("args") or {}), task.title
+                dict(task.payload.get("args") or {}), localized(
+                    self.lang, task.title, (task.payload.get("i18n") or {}).get("title"))
         with self._lock:
             j = self._jstate()
             ep = j["episodes"].get(fingerprint or "")
@@ -1244,8 +1256,7 @@ class PmoCore:
             if j["auto_log"]:
                 j["auto_log"].pop()
         self._log("judgment_demoted", now, judgment=task_id)
-        self._say(f"[判断・承認待ち] {title}\n（自動実行を止めたため提案に切り替え）"
-                  f"\n承認: aipmo generated approve {task_id}")
+        self._say(translate(self.lang, "n_judgment_demoted", id=task_id, title=title))
 
     def _remedy_args(self, d: Diagnosis, remedy: str, active: list[Task]) -> dict[str, Any]:
         if remedy == "retry_agent":
@@ -1471,7 +1482,8 @@ class PmoCore:
                       origin="followup", alert=violation.key, pending=True)
             if self.notify is not None:
                 try:
-                    self.notify(f"[提案] {proposal.title}（承認待ち: aipmo generated）")
+                    self.notify(translate(self.lang, "n_proposal", title=localized(
+                        self.lang, proposal.title, (proposal.payload.get("i18n") or {}).get("title"))))
                 except Exception:                          # noqa: BLE001
                     logger.warning("提案の通知に失敗 / proposal notice failed", exc_info=True)
         return created
@@ -1547,7 +1559,8 @@ class PmoCore:
                       origin="followup", wbs=key, pending=True)
             if self.notify is not None:
                 try:
-                    self.notify(f"[提案] {proposal.title}（承認待ち: aipmo generated）")
+                    self.notify(translate(self.lang, "n_proposal", title=localized(
+                        self.lang, proposal.title, (proposal.payload.get("i18n") or {}).get("title"))))
                 except Exception:                          # noqa: BLE001
                     logger.warning("提案の通知に失敗 / proposal notice failed", exc_info=True)
 
@@ -2034,7 +2047,9 @@ class PmoCore:
                 entry: dict[str, str], now: datetime) -> None:
         if self.notify is None:
             return
-        text = f"[{violation.severity}] {title} — {violation.message} ({violation.rule})"
+        text = translate(self.lang, "n_alert", severity=violation.severity, title=title,
+                         message=localized(self.lang, violation.message, violation.spec),
+                         rule=violation.rule)
         try:
             self.notify(text)
         except Exception:

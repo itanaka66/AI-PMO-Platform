@@ -621,3 +621,22 @@ wbs:
             - "tests/test_messages.py::test_structured_text_is_rebuilt_in_the_servers_language"
             - "tests/test_messages.py::test_the_japanese_text_is_the_structure_rendered_in_japanese"
           notes: "日本語の文章は従来どおり保存し、部品を添える。部品の無い古い記録は書かれたまま"
+        - id: "6.28"
+          name: "Slack 通知・CLI の多言語化と、スマホの下タブの整理"
+          status: done
+          effort: 2
+          depends_on: ["6.27"]
+          done_on: 2026-10-02
+          evidence:
+            - "tests/test_messages.py::test_notifications_go_out_in_the_configured_language"
+            - "tests/test_messages.py::test_cli_shows_alerts_and_the_why_lines_in_the_configured_language"
+            - "aipmo/web/static/app.js::tabs-more-button"
+          notes: "通知とCLI は設定の lang。無ければ日本語"
+        - id: "6.29"
+          name: "再計画案の受信箱・プレビューを実 PostgreSQL で確かめる"
+          status: todo
+          effort: 1
+          priority: Medium
+          depends_on: ["6.21"]
+          notes: "Docker Desktop が起動できず未実施"
+
