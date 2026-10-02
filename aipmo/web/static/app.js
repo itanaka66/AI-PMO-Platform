@@ -134,12 +134,49 @@ function proposalCard(item) {
     card.append(jsonBlock("assumptions", item.assumptions));
   }
   card.append(jsonBlock("diff", item.diff));
+  card.append(previewBlock(item));
 
   if (canRun) {
     card.append(proposalActions(item));
   }
 
   return card;
+}
+
+/* 承認したらファイルがどう変わるか。開いたときに読む（読むだけ。何も書かない）。
+ * What approving would do to the file; fetched when opened, read-only. */
+function previewBlock(item) {
+  const details = document.createElement("details");
+  details.className = "proposal-json proposal-preview";
+  const summary = document.createElement("summary");
+  summary.textContent = t("web_preview", "承認したらどうなるか（反映後の差分）");
+  details.append(summary);
+  const body = document.createElement("div");
+  details.append(body);
+  let loaded = false;
+  details.addEventListener("toggle", async () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    try {
+      const p = await api(`/api/wbs-proposals/${encodeURIComponent(item.id)}/preview`);
+      body.replaceChildren();
+      if (!p.applicable) {
+        body.append(el("div", "card-note error", (p.problems && p.problems.length)
+          ? p.problems.join(" / ") : t("web_preview_none", "この提案はファイルに反映できません")));
+        return;
+      }
+      if (p.already_applied) body.append(el("div", "card-note", t("web_preview_applied", "すでに反映済みです")));
+      for (const line of p.report) body.append(el("div", "pmo-meta", line));
+      const pre = document.createElement("pre");
+      pre.className = "preview-diff";
+      pre.textContent = p.diff || "";
+      body.append(pre);
+    } catch (error) {
+      loaded = false;
+      body.replaceChildren(el("div", "card-note error", error.message));
+    }
+  });
+  return details;
 }
 
 function jsonBlock(label, value) {
@@ -813,6 +850,8 @@ function renderPmo(data, decisions) {
   }
 }
 
+let pmoData = null;
+
 async function refreshPmo() {
   // PMO のデータが無い構成（台帳が無い・未設定）は 404。エラーではなく
   // 「使っていない機能」として、見出しごと隠す。
@@ -824,10 +863,912 @@ async function refreshPmo() {
     const { items } = await api(`/api/pmo/decisions?limit=20${filter ? "&" + filter : ""}`)
       .catch(() => ({ items: [] }));
     $("h-pmo").hidden = false;
+    pmoData = data;
     renderPmo(data, items);
+    renderToday();
+    renderReviews();
+    renderJudgment();
   } catch (error) {
     $("h-pmo").hidden = true;
     $("pmo").replaceChildren();
+  }
+}
+
+/* ---------- 今日 / today ----------
+ * /api/pmo のブリーフィングと受信箱の件数を、1 画面に組み替える。新しい API も計算も持たない
+ * （数えるのは画面で、台帳の判断はサーバーが済ませたもの）。文字は textContent で入れる。
+ *
+ * One screen recomposed from the briefing /api/pmo already returns plus the inbox count; no new
+ * API and no new decision logic.
+ */
+function kpi(label, value, tone) {
+  const card = el("div", "kpi");
+  if (tone) card.dataset.tone = tone;
+  card.append(el("div", "kpi-value", String(value)), el("div", "kpi-label", label));
+  return card;
+}
+
+function todaySection(title, count) {
+  const wrap = el("section", "today-block");
+  const head = el("h3", "today-h", title);
+  if (count != null) head.append(el("span", "pmo-count", String(count)));
+  wrap.append(head);
+  return wrap;
+}
+
+function renderToday() {
+  const host = document.getElementById("today");
+  if (!host) return;
+  host.replaceChildren();
+  const briefing = pmoData && pmoData.briefing;
+  if (!briefing) {
+    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    return;
+  }
+  const waiting = inboxState.data ? inboxState.data.total : 0;
+  const overloaded = (briefing.overloaded_members || []).length;
+  const level = el("span", "tag level", `${t("web_pmo_level", "Overall")}: ${briefing.overall_level}`);
+  level.dataset.level = briefing.overall_level;
+  const head = el("div", "today-head");
+  head.append(level);
+  if (pmoData.briefing_age_seconds != null) {
+    head.append(el("span", "pmo-meta", humanAge(pmoData.briefing_age_seconds)));
+  }
+  host.append(head);
+
+  const kpis = el("div", "kpis");
+  kpis.append(
+    kpi(t("web_today_active", "進行中"), briefing.active_count),
+    kpi(t("web_today_alerts", "警告"), (briefing.alerts || []).length,
+        (briefing.alerts || []).length ? "warn" : ""),
+    kpi(t("web_today_waiting", "判断待ち"), waiting, waiting ? "do" : ""),
+    kpi(t("web_today_overloaded", "過負荷"), overloaded, overloaded ? "warn" : ""),
+  );
+  host.append(kpis);
+
+  if (waiting) {
+    const go = el("button", "btn today-go", `${t("web_today_open_inbox", "受信箱で決める")} (${waiting})`);
+    go.type = "button";
+    go.addEventListener("click", () => showTab("inbox"));
+    host.append(go);
+  }
+
+  const cols = el("div", "today-cols");
+  const left = el("div"), right = el("div");
+
+  const top = todaySection(t("web_today_top", "まず手を付けるもの"), null);
+  for (const item of (briefing.top_priorities || []).slice(0, 5)) {
+    const row = el("div", "today-task");
+    row.append(el("span", "today-score", String(item.score)));
+    const body = el("div", "today-task-body");
+    body.append(el("div", "pmo-title", item.title));
+    body.append(el("div", "pmo-meta",
+      [item.project, item.assignee, item.due_date].filter(Boolean).join(" · ")));
+    if (item.reasons && item.reasons.length) {
+      body.append(el("div", "pmo-meta", item.reasons.slice(0, 3).join(" / ")));
+    }
+    row.append(body);
+    top.append(row);
+  }
+  left.append(top);
+
+  const projects = briefing.projects || [];
+  if (projects.length) {
+    const block = todaySection(t("web_today_projects", "プロジェクト"), projects.length);
+    for (const p of projects) {
+      const row = el("div", "today-project");
+      const tag = el("span", "tag level", p.level);
+      tag.dataset.level = p.level;
+      row.append(el("span", "pmo-title", p.project), tag,
+        el("span", "pmo-meta", `${p.active_count} / ${p.alert_count}`));
+      block.append(row);
+    }
+    left.append(block);
+  }
+
+  const loads = briefing.member_loads || [];
+  if (loads.length) {
+    const block = todaySection(t("web_today_load", "メンバーの負荷"), null);
+    for (const m of loads) {
+      const row = el("div", "today-load");
+      const ratio = m.capacity ? m.load / m.capacity : 0;
+      const bar = el("div", "bar");
+      const fill = el("div", "bar-fill");
+      fill.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
+      if (ratio > 1) fill.dataset.over = "";
+      bar.append(fill);
+      row.append(el("span", "today-name", m.member), bar,
+        el("span", "pmo-meta", `${m.load}/${m.capacity}`));
+      block.append(row);
+    }
+    right.append(block);
+  }
+
+  const j = briefing.judgment;
+  if (j && j.enabled) {
+    const block = todaySection(t("web_today_judgment", "自律的な判断"), null);
+    const state = j.tripped ? t("web_today_tripped", "遮断器が作動")
+      : j.paused ? t("web_today_paused", "一時停止中") : t("web_today_running", "動作中");
+    const modes = Object.values(j.autonomy || {});
+    const autos = modes.filter((m) => m === "auto").length;
+    block.append(el("div", "pmo-meta", `${state} · auto ${autos}/${modes.length}`));
+    for (const d of (j.diagnoses || []).slice(0, 3)) {
+      block.append(el("div", "pmo-meta", d.title || d.summary || d.kind || ""));
+    }
+    right.append(block);
+  }
+
+  cols.append(left, right);
+  host.append(cols);
+}
+
+/* ---------- メンバーと学習 / members & learning ----------
+ * /api/learning/members（読むだけ）。上限がなぜ補正されたかを、実績（期限内の割合・平均の遅れ・件数）で見せる。
+ * 実績が少ない人は補正しない（係数 ×1.00）ことも、そのまま出す。
+ *
+ * Why each capacity was adjusted, from the track record; members with too few samples are shown uncorrected.
+ */
+let membersState = { data: null };
+
+async function refreshMembers() {
+  try {
+    membersState.data = await api("/api/learning/members");
+  } catch (error) {
+    membersState.data = null;                       // 403（範囲を限られた閲覧）や台帳なし
+  }
+  renderMembers();
+}
+
+function memberCard(m) {
+  const card = el("div", "member-card");
+  const head = el("div", "member-head");
+  head.append(el("span", "pmo-title", m.name));
+  if (m.is_agent) head.append(el("span", "tag", "AI"));
+  const factor = el("span", "tag", `×${m.factor.toFixed(2)}`);
+  factor.dataset.dir = m.factor < 1 ? "down" : m.factor > 1 ? "up" : "flat";
+  head.append(factor);
+  card.append(head);
+  if (m.capacity != null) {
+    const row = el("div", "today-load");
+    const bar = el("div", "bar");
+    const fill = el("div", "bar-fill");
+    const scale = Math.max(m.capacity, m.effective_capacity || 0, m.load, 1);
+    fill.style.width = `${Math.min(100, (m.load / scale) * 100)}%`;
+    if (m.load > (m.effective_capacity || m.capacity)) fill.dataset.over = "";
+    const mark = el("span", "cap-mark");
+    mark.style.left = `${((m.effective_capacity || m.capacity) / scale) * 100}%`;
+    bar.append(fill, mark);
+    row.append(bar, el("span", "pmo-meta", `${m.load} / ${m.effective_capacity} (${m.capacity})`));
+    card.append(row);
+  }
+  const facts = [];
+  if (m.on_time_rate != null) {
+    facts.push(`${t("web_members_ontime", "期限内")} ${Math.round(m.on_time_rate * 100)}%`);
+    facts.push(`${t("web_members_late", "平均の遅れ")} ${m.avg_late_days} d`);
+  }
+  if (m.pace != null) facts.push(`${t("web_members_pace", "ペース")} ${m.pace} d/pt`);
+  facts.push(`${t("web_members_samples", "実績")} ${m.samples}`);
+  card.append(el("div", "pmo-meta", facts.join(" · ")));
+  if (m.samples < 5) card.append(el("div", "pmo-meta", t("web_members_few", "実績が少ないので補正していません")));
+  return card;
+}
+
+function renderMembers() {
+  const host = document.getElementById("members");
+  if (!host) return;
+  host.replaceChildren();
+  const data = membersState.data;
+  if (!data) {
+    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    return;
+  }
+  const grid = el("div", "members-grid");
+  for (const m of data.members) grid.append(memberCard(m));
+  host.append(grid);
+
+  const side = todaySection(t("web_members_learned", "学習した補正"), null);
+  const base = data.baseline_late_rate != null ? `${Math.round(data.baseline_late_rate * 100)}%` : "—";
+  side.append(el("div", "pmo-meta",
+    `${t("web_members_samples", "実績")} ${data.samples} · ${t("web_members_baseline", "全体の遅れ率")} ${base}`));
+  for (const l of data.labels) {
+    side.append(el("div", "pmo-meta", `${l.label}: +${l.bonus}${l.samples ? ` (${l.samples})` : ""}`));
+  }
+  for (const p of data.priorities) {
+    side.append(el("div", "pmo-meta",
+      `${p.priority}: ${p.delta > 0 ? "+" : ""}${p.delta}${p.samples ? ` (${p.samples})` : ""}`));
+  }
+  side.append(el("div", "pmo-meta", data.pace.reliable
+    ? t("web_members_pace_ok", "見積りは当たっているので、順位に使います")
+    : t("web_members_pace_no", "見積りの当たりが確かめられないので、順位には使いません")));
+  host.append(side);
+}
+
+/* ---------- 連携 / integrations ----------
+ * /api/integrations（読むだけ）。アダプタの疎通・書き戻せるか・収集の直近の結果・WBS ファイルの検査・
+ * 起票の設定・メンバーのアカウント。名前からの引き当ては外部への問い合わせなので、ここでは行わない
+ * （`aipmo members`）。
+ *
+ * State of the integrations, read-only. Name lookups call the tracker and are not done here.
+ */
+let integState = { data: null };
+
+async function refreshIntegrations() {
+  try {
+    integState.data = await api("/api/integrations");
+  } catch (error) {
+    integState.data = null;
+  }
+  renderIntegrations();
+}
+
+function renderIntegrations() {
+  const host = document.getElementById("integrations");
+  if (!host) return;
+  host.replaceChildren();
+  const d = integState.data;
+  if (!d) {
+    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    return;
+  }
+  const grid = el("div", "members-grid");
+  for (const a of d.adapters) {
+    const card = el("div", "member-card integ-card");
+    card.dataset.healthy = String(a.healthy);
+    const head = el("div", "member-head");
+    head.append(el("span", "pmo-title", a.name),
+      el("span", "tag", a.healthy ? t("web_integ_ok", "疎通") : t("web_integ_down", "不通")));
+    card.append(head);
+    card.append(el("div", "pmo-meta", a.writeback
+      ? t("web_integ_writeback", "担当・起票を書き戻せる") : t("web_integ_readonly", "読むだけ")));
+    grid.append(card);
+  }
+  host.append(grid);
+
+  const col = todaySection(t("web_integ_collect", "進捗の収集"), null);
+  if (!d.collection) {
+    col.append(el("div", "pmo-meta", t("web_integ_collect_none", "収集は設定されていないか、まだ動いていません")));
+  } else {
+    const c = d.collection;
+    col.append(el("div", "pmo-meta", `${clock(c.at)} · ${c.refreshed} refreshed · ${c.failed} failed · ${c.completed} completed`));
+    if (c.error) col.append(el("div", "card-note error", c.error));
+    for (const s of c.sources || []) {
+      const line = el("div", "wbs-msg", `${s.id}: ${s.error || `${s.items} items`}`);
+      line.dataset.level = s.error ? "error" : "ok";
+      col.append(line);
+    }
+  }
+  host.append(col);
+
+  const wbs = todaySection(t("web_integ_wbs", "WBS ファイルの検査"), null);
+  if (!d.wbs) {
+    wbs.append(el("div", "pmo-meta", "—"));
+  } else {
+    wbs.append(el("div", "pmo-meta", `${clock(d.wbs.checked_at)} · ${d.wbs.file}`));
+    wbs.append(d.wbs.error ? el("div", "card-note error", d.wbs.error)
+      : el("div", "pmo-meta", `${t("web_integ_drift", "ずれ")} ${d.wbs.found}`));
+  }
+  host.append(wbs);
+
+  if (d.filing) {
+    const f = todaySection(t("web_integ_filing", "起票"), d.filing.pending);
+    f.append(el("div", "pmo-meta",
+      `${d.filing.tracker} · auto: ${d.filing.auto.length ? d.filing.auto.join(", ") : "—"} · ${d.filing.can_file ? t("web_integ_ok", "疎通") : t("web_integ_down", "不通")}`));
+    host.append(f);
+  }
+
+  const acc = todaySection(t("web_integ_accounts", "メンバーのアカウント"), d.accounts.length);
+  for (const m of d.accounts) {
+    const pairs = Object.entries(m.accounts).map(([k, v]) => `${k}: ${v}`);
+    acc.append(el("div", "pmo-meta", `${m.member}${m.is_agent ? " (AI)" : ""} — ${pairs.length ? pairs.join(", ") : "—"}`));
+  }
+  acc.append(el("div", "pmo-meta", d.lookup_assignees
+    ? t("web_integ_lookup_on", "書いていない人は、名前でトラッカーから引き当てます（aipmo members で確認）")
+    : t("web_integ_lookup_off", "名前の引き当ては無効です")));
+  host.append(acc);
+}
+
+/* ---------- 成果レビュー / reviews ----------
+ * 役割AIの成果を人が確かめた履歴（/api/agents/reviews、読むだけ）と、いま待っているもの。
+ * 認める／差し戻すは受信箱で行う（書き込みの入口を増やさない）。
+ *
+ * Human reviews of role-AI results (read-only history) and what still waits. Deciding happens in the inbox.
+ */
+let reviewsState = { data: null };
+
+async function refreshReviews() {
+  try {
+    reviewsState.data = await api("/api/agents/reviews?limit=50");
+  } catch (error) {
+    reviewsState.data = null;
+  }
+  renderReviews();
+}
+
+function renderReviews() {
+  const host = document.getElementById("reviews");
+  if (!host) return;
+  host.replaceChildren();
+  const briefing = pmoData && pmoData.briefing;
+  const data = reviewsState.data;
+  if (!briefing || !data) {
+    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    return;
+  }
+  const cards = el("div", "kpis");
+  for (const [agent, c] of Object.entries(data.tally)) {
+    const total = c.accepted + c.rejected;
+    cards.append(kpi(agent, total ? `${Math.round((c.accepted / total) * 100)}%` : "—"));
+    cards.lastChild.append(el("div", "pmo-meta",
+      `${t("web_review_accepted", "認めた")} ${c.accepted} / ${t("web_review_rejected", "差し戻し")} ${c.rejected}`));
+  }
+  if (cards.children.length) host.append(cards);
+
+  const pending = (briefing.agent_review && briefing.agent_review.pending) || [];
+  const wait = todaySection(t("web_review_pending", "確認待ち"), pending.length);
+  for (const p of pending) {
+    const row = el("div", "today-task");
+    const body = el("div", "today-task-body");
+    body.append(el("div", "pmo-title", p.title), el("div", "pmo-meta", [p.project, p.agent].filter(Boolean).join(" · ")));
+    if (p.excerpt) body.append(el("div", "review-excerpt", p.excerpt));
+    row.append(body);
+    wait.append(row);
+  }
+  if (pending.length) {
+    const go = el("button", "btn today-go", t("web_today_open_inbox", "受信箱で決める"));
+    go.type = "button";
+    go.addEventListener("click", () => { inboxState.filter = "review"; showTab("inbox"); renderInbox(); });
+    wait.append(go);
+  } else {
+    wait.append(el("div", "pmo-meta", "—"));
+  }
+  host.append(wait);
+
+  const history = todaySection(t("web_review_history", "確かめた履歴"), data.total);
+  for (const e of data.items) {
+    const row = el("div", "review-row");
+    row.dataset.decision = e.decision;
+    const label = e.decision === "accepted" ? t("web_review_accepted", "認めた") : t("web_review_rejected", "差し戻し");
+    row.append(el("span", "tag", label), el("span", "pmo-title", e.title || e.task),
+      el("div", "pmo-meta", [e.project, e.agent, e.by, clock(e.at)].filter(Boolean).join(" · ")));
+    if (e.note) row.append(el("div", "pmo-meta", e.note));
+    history.append(row);
+  }
+  if (!data.items.length) history.append(el("div", "pmo-meta", "—"));
+  host.append(history);
+}
+
+/* ---------- 自律的な判断 / judgment ----------
+ * 状態・自律度・診断・直近の判断（ブリーフィングから）。operator は、止める／再開／遮断器を戻すだけできる
+ * （POST /api/judgment/*）。自律度の変更は設定ファイルのまま — 画面からは変えられない。
+ *
+ * State, autonomy, diagnoses and recent actions from the briefing. An operator may pause, resume or reset
+ * the breaker; autonomy levels stay in the config file.
+ */
+let judgmentCtl = {};
+
+async function refreshJudgmentControl() {
+  try {
+    judgmentCtl = (await api("/api/judgment/control")).control || {};
+  } catch (error) {
+    judgmentCtl = {};
+  }
+  renderJudgment();
+}
+
+async function judgmentControl(action, button) {
+  button.disabled = true;
+  try {
+    const result = await api(`/api/judgment/${action}`, { method: "POST", body: "{}" });
+    judgmentCtl = result.control || {};
+    toast(t("web_judgment_next_cycle", "依頼しました。常駐が次の周で反映します"));
+    await refreshPmo();
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderJudgment() {
+  const host = document.getElementById("judgment");
+  if (!host) return;
+  host.replaceChildren();
+  const j = pmoData && pmoData.briefing && pmoData.briefing.judgment;
+  if (!j || !j.enabled) {
+    host.append(empty(t("web_judgment_off", "自律的な判断は設定されていません")));
+    return;
+  }
+  // 画面の「止める」は依頼。常駐が次の周で読むまで、ブリーフィングの状態は変わらない。
+  // 依頼済みの状態（control）を出して、押したのに何も起きないように見えないようにする。
+  // A pause is a request the resident reads next cycle; show the requested state so a press is visible.
+  const wantPaused = judgmentCtl.paused === undefined ? j.paused : Boolean(judgmentCtl.paused);
+  const head = el("div", "today-head");
+  const state = j.tripped ? t("web_today_tripped", "遮断器が作動")
+    : j.paused ? t("web_today_paused", "一時停止中") : t("web_today_running", "動作中");
+  const chip = el("span", "tag level", state);
+  chip.dataset.level = j.tripped ? "critical" : j.paused ? "high" : "low";
+  head.append(chip, el("span", "pmo-meta", `${t("web_today_waiting", "判断待ち")} ${j.pending}`));
+  if (wantPaused !== j.paused) {
+    const note = el("span", "tag", wantPaused ? t("web_judgment_req_pause", "一時停止を依頼済み（次の周で反映）")
+      : t("web_judgment_req_resume", "再開を依頼済み（次の周で反映）"));
+    note.id = "judgment-requested";
+    head.append(note);
+  }
+  host.append(head);
+
+  if (canRun) {
+    const bar = el("div", "judgment-controls");
+    for (const [action, label] of [["pause", t("web_judgment_pause", "一時停止")],
+                                   ["resume", t("web_judgment_resume", "再開")],
+                                   ["reset", t("web_judgment_reset", "遮断器を戻す")]]) {
+      const hidden = (action === "pause" && wantPaused) || (action === "resume" && !wantPaused)
+        || (action === "reset" && !j.tripped);
+      if (hidden) continue;
+      const button = el("button", "btn", label);
+      button.type = "button";
+      button.dataset.action = action;
+      button.addEventListener("click", () => judgmentControl(action, button));
+      bar.append(button);
+    }
+    host.append(bar);
+  }
+
+  const levels = todaySection(t("web_judgment_autonomy", "自律度"), null);
+  for (const [kind, mode] of Object.entries(j.autonomy || {})) {
+    const row = el("div", "today-project");
+    const tag = el("span", "tag", mode);
+    tag.dataset.mode = mode;
+    row.append(el("span", "pmo-title", kind), tag);
+    levels.append(row);
+  }
+  levels.append(el("div", "pmo-meta", t("web_judgment_config_only", "自律度は設定ファイル（config.yaml）で変えます")));
+  host.append(levels);
+
+  const diagnoses = todaySection(t("web_judgment_diagnoses", "いまの診断"), (j.diagnoses || []).length);
+  for (const d of j.diagnoses || []) {
+    const row = el("div", "today-task");
+    row.append(el("span", "today-score", String(d.severity)));
+    const body = el("div", "today-task-body");
+    body.append(el("div", "pmo-title", d.title));
+    for (const line of (d.evidence || []).slice(0, 3)) body.append(el("div", "pmo-meta", line));
+    row.append(body);
+    diagnoses.append(row);
+  }
+  host.append(diagnoses);
+
+  const recent = todaySection(t("web_judgment_recent", "直近の判断"), (j.recent || []).length);
+  for (const r of j.recent || []) {
+    const row = el("div", "review-row");
+    row.append(el("span", "tag", r.state), el("span", "pmo-title", r.title),
+      el("div", "pmo-meta", `${clock(r.at)}${r.result ? ` · ${r.result}` : ""}`));
+    recent.append(row);
+  }
+  host.append(recent);
+}
+
+/* ---------- タスク / tasks ----------
+ * /api/tasks（読むだけ）の一覧と、/api/tasks/{id} の詳細。点数は項目ごとの内訳（parts）を棒で見せる。
+ * 担当の確定・起票などの操作は、受信箱と PMO Core にある（この画面には書き込みが無い）。
+ *
+ * The task table (read-only /api/tasks) and a detail pane (/api/tasks/{id}); the score is drawn from its
+ * per-item parts. No write happens here — deciding stays in the inbox.
+ */
+const PART_LABEL = {
+  priority: "priority", due: "due", pace: "pace", blocked: "blocked",
+  corroboration: "templates", unassigned: "unassigned", label: "label", other: "other",
+};
+let tasksState = { data: null, selected: null, detail: null, query: {
+  project: "", assignee: "", q: "", sort: "score", limit: 50 }, ready: false };
+
+function tasksUrl() {
+  const q = tasksState.query;
+  const params = new URLSearchParams({ sort: q.sort, limit: String(q.limit) });
+  for (const key of ["project", "assignee", "q"]) if (q[key]) params.set(key, q[key]);
+  return `/api/tasks?${params}`;
+}
+
+const signed = (n) => (n >= 0 ? `+${n}` : String(n));
+
+function scoreBar(parts, score) {
+  const bar = el("div", "score-bar");
+  bar.setAttribute("role", "img");
+  bar.setAttribute("aria-label", parts.map((p) => `${PART_LABEL[p.kind] || p.kind} ${signed(p.points)}`).join(", "));
+  const total = Math.max(score, 1);
+  for (const part of parts) {
+    if (part.points <= 0) continue;
+    const seg = el("span", "score-seg");
+    seg.dataset.kind = part.kind;
+    seg.style.width = `${(part.points / total) * 100}%`;
+    seg.title = part.text;
+    bar.append(seg);
+  }
+  return bar;
+}
+
+function tasksFilters(data) {
+  const wrap = el("div", "tasks-filters");
+  const search = document.createElement("input");
+  search.type = "search";
+  search.id = "tasks-q";
+  search.placeholder = t("web_tasks_search", "検索");
+  search.setAttribute("aria-label", t("web_tasks_search", "検索"));
+  search.value = tasksState.query.q;
+  let timer = null;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => { tasksState.query.q = search.value.trim(); refreshTasks(true); }, 250);
+  });
+  const select = (id, label, current, options, onChange) => {
+    const node = document.createElement("select");
+    node.id = id;
+    node.setAttribute("aria-label", label);
+    for (const [value, text] of options) {
+      const option = el("option", null, text);
+      option.value = value;
+      node.append(option);
+    }
+    node.value = current;
+    node.addEventListener("change", () => onChange(node.value));
+    return node;
+  };
+  const all = t("web_tasks_all", "すべて");
+  wrap.append(
+    search,
+    select("tasks-project", t("web_today_projects", "プロジェクト"), tasksState.query.project,
+      [["", all], ...data.projects.map((p) => [p, p])],
+      (v) => { tasksState.query.project = v; refreshTasks(true); }),
+    select("tasks-assignee", t("web_tasks_assignee", "担当"), tasksState.query.assignee,
+      [["", all], ["-", t("web_tasks_unassigned", "担当なし")], ...data.assignees.map((p) => [p, p])],
+      (v) => { tasksState.query.assignee = v; refreshTasks(true); }),
+    select("tasks-sort", t("web_tasks_sort", "並び"), tasksState.query.sort,
+      [["score", t("web_tasks_sort_score", "点数")], ["due", t("web_tasks_sort_due", "期限")],
+       ["priority", t("web_tasks_sort_priority", "優先度")]],
+      (v) => { tasksState.query.sort = v; refreshTasks(true); }),
+  );
+  return wrap;
+}
+
+function tasksRow(item) {
+  const row = el("button", "task-row");
+  row.type = "button";
+  row.dataset.id = item.id;
+  if (tasksState.selected === item.id) row.setAttribute("aria-current", "true");
+  const score = el("span", "task-score", String(item.score));
+  const body = el("span", "task-body");
+  body.append(el("span", "pmo-title", item.title),
+    el("span", "pmo-meta", [item.project, item.key, item.assignee || t("web_tasks_unassigned", "担当なし"),
+      item.due_date].filter(Boolean).join(" · ")),
+    scoreBar(item.parts, item.score));
+  row.append(score, body);
+  row.addEventListener("click", () => selectTask(item.id));
+  return row;
+}
+
+async function selectTask(id) {
+  tasksState.selected = id;
+  for (const node of document.querySelectorAll(".task-row")) {
+    if (node.dataset.id === id) node.setAttribute("aria-current", "true");
+    else node.removeAttribute("aria-current");
+  }
+  const pane = document.getElementById("task-detail");
+  if (!pane) return;
+  try {
+    tasksState.detail = await api(`/api/tasks/${encodeURIComponent(id)}`);
+  } catch (error) {
+    toast(error.message, "error");
+    return;
+  }
+  renderTaskDetail(pane);
+  if (window.matchMedia("(max-width: 899.98px)").matches) pane.scrollIntoView({ block: "start" });
+}
+
+function renderTaskDetail(pane) {
+  pane.replaceChildren();
+  const d = tasksState.detail;
+  if (!d) {
+    pane.append(el("p", "lead", t("web_tasks_pick", "タスクを選ぶと、点数の内訳が出ます")));
+    return;
+  }
+  pane.append(el("h3", "wbs-dh", d.title));
+  pane.append(el("div", "pmo-meta", [d.project, d.key || d.id, d.status, d.assignee, d.due_date,
+    d.priority].filter(Boolean).join(" · ")));
+  const parts = el("div", "task-parts");
+  parts.append(el("h4", "wbs-eh", `${t("web_tasks_parts", "点数の内訳")} — ${d.score}`));
+  for (const part of d.parts) {
+    const line = el("div", "task-part");
+    const seg = el("span", "score-seg");
+    seg.dataset.kind = part.kind;
+    line.append(seg, el("span", "task-part-pts", signed(part.points)), el("span", "pmo-meta", part.text));
+    parts.append(line);
+  }
+  pane.append(parts);
+  if (d.alerts.length) {
+    const block = el("div");
+    block.append(el("h4", "wbs-eh", t("web_today_alerts", "警告")));
+    for (const a of d.alerts) {
+      const line = el("div", "wbs-msg", `${a.title} — ${a.message}`);
+      line.dataset.level = a.severity === "critical" || a.severity === "high" ? "error" : "warn";
+      block.append(line);
+    }
+    pane.append(block);
+  }
+  if (d.dispatches.length) {
+    const block = el("div");
+    block.append(el("h4", "wbs-eh", t("web_tasks_runs", "役割AIの実行")));
+    for (const r of d.dispatches.slice(-5)) {
+      block.append(el("div", "pmo-meta", `${r.agent || ""} · ${r.status} · ${clock(r.at)}`));
+    }
+    pane.append(block);
+  }
+  if (d.history.length) {
+    const block = el("div");
+    block.append(el("h4", "wbs-eh", t("web_tasks_history", "判断の履歴")));
+    for (const h of d.history.slice(0, 8)) {
+      block.append(el("div", "pmo-meta", `${clock(h.at)} ${h.kind}`));
+    }
+    pane.append(block);
+  }
+}
+
+function renderTasks() {
+  const host = $("tasks");
+  const data = tasksState.data;
+  const keepSearch = document.activeElement && document.activeElement.id === "tasks-q";
+  host.replaceChildren();
+  if (!data) {
+    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    return;
+  }
+  host.append(tasksFilters(data));
+  const grid = el("div", "tasks-grid");
+  const list = el("div", "tasks-list");
+  if (!data.items.length) list.append(empty("—"));
+  for (const item of data.items) list.append(tasksRow(item));
+  if (data.total > data.items.length) {
+    const more = el("button", "btn tasks-more",
+      `${t("web_tasks_more", "さらに表示")} (${data.items.length}/${data.total})`);
+    more.type = "button";
+    more.addEventListener("click", () => { tasksState.query.limit += 50; refreshTasks(false); });
+    list.append(more);
+  }
+  const pane = el("aside", "wbs-detail");
+  pane.id = "task-detail";
+  renderTaskDetail(pane);
+  grid.append(list, pane);
+  host.append(grid);
+  if (keepSearch) {
+    const box = document.getElementById("tasks-q");
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }
+}
+
+async function refreshTasks(reset) {
+  if (reset) tasksState.query.limit = 50;
+  try {
+    tasksState.data = await api(tasksUrl());
+    tasksState.ready = true;
+  } catch (error) {
+    tasksState.data = null;
+  }
+  renderTasks();
+}
+
+/* ---------- WBS ----------
+ * /api/wbs（読むだけ）の木を、表と工程バーで見せる。WBS ファイルを変える操作は、この画面には無い
+ * （変更の提案は下の「再計画提案」から、人が承認する）。工程バーは日付だけから描く：
+ * 終わり = 完了日、無ければ期限。始まり = 依存先の終わりの最も遅い日、無ければ軸の左端。
+ * 日付の無い作業にはバーを描かない。文字は textContent で入れる。
+ *
+ * The WBS tree as a table with schedule bars, from the read-only /api/wbs. Bars come from dates alone:
+ * end = done_on else due; start = the latest end among dependencies, else the axis start. No dates, no bar.
+ */
+let wbsState = { data: null, selected: null, collapsed: new Set(), nodes: new Map() };
+const DAY = 86400000;
+const dayOf = (iso) => (iso ? Date.parse(`${iso}T00:00:00Z`) : null);
+
+function wbsStatusLabel(status) {
+  return { done: "done", in_progress: "doing", blocked: "blocked", todo: "todo" }[status] || status;
+}
+
+function indexWbs(nodes, depth, out) {
+  for (const node of nodes) {
+    node._depth = depth;
+    out.set(node.id, node);
+    if (node.children) indexWbs(node.children, depth + 1, out);
+  }
+  return out;
+}
+
+function wbsEnd(node) {
+  const end = dayOf(node.done_on);
+  return end != null ? end : dayOf(node.due);
+}
+
+function wbsAxis(data) {
+  const points = [Date.now()];
+  for (const node of wbsState.nodes.values()) {
+    for (const iso of [node.due, node.done_on]) if (iso) points.push(dayOf(iso));
+  }
+  if (data.wbs.deadline) points.push(dayOf(data.wbs.deadline));
+  const min = Math.min(...points) - 3 * DAY, max = Math.max(...points) + 3 * DAY;
+  return { min, max, span: Math.max(max - min, DAY) };
+}
+
+function wbsBar(node, axis) {
+  const cell = el("div", "wbs-barcell");
+  const today = el("span", "wbs-today");
+  today.style.left = `${((Date.now() - axis.min) / axis.span) * 100}%`;
+  cell.append(today);
+  const end = wbsEnd(node);
+  if (end == null) return cell;
+  let start = axis.min + 3 * DAY;
+  for (const dep of node.depends_on || []) {
+    const d = wbsState.nodes.get(dep);
+    const e = d ? wbsEnd(d) : null;
+    if (e != null && e > start) start = e;
+  }
+  start = Math.min(start, end - DAY);
+  const bar = el("span", "wbs-bar");
+  bar.dataset.status = node.status;
+  if ((node.flags || []).includes("overdue")) bar.dataset.late = "";
+  bar.style.left = `${((start - axis.min) / axis.span) * 100}%`;
+  bar.style.width = `${Math.max(1.5, ((end - start) / axis.span) * 100)}%`;
+  cell.append(bar);
+  return cell;
+}
+
+function wbsRows(nodes, axis, host) {
+  for (const node of nodes) {
+    const row = el("div", "wbs-row");
+    row.dataset.id = node.id;
+    row.dataset.leaf = String(node.leaf);
+    if (wbsState.selected === node.id) row.setAttribute("aria-current", "true");
+    const name = el("div", "wbs-name");
+    name.style.paddingLeft = `${node._depth * 16}px`;
+    if (!node.leaf) {
+      const caret = el("button", "wbs-caret", wbsState.collapsed.has(node.id) ? "▸" : "▾");
+      caret.type = "button";
+      caret.setAttribute("aria-label", node.name);
+      caret.setAttribute("aria-expanded", String(!wbsState.collapsed.has(node.id)));
+      caret.addEventListener("click", (event) => {
+        event.stopPropagation();
+        if (wbsState.collapsed.has(node.id)) wbsState.collapsed.delete(node.id);
+        else wbsState.collapsed.add(node.id);
+        renderWbs();
+      });
+      name.append(caret);
+    }
+    name.append(el("span", "wbs-id", node.id), el("span", "wbs-title", node.name));
+    const flagged = (node.flags || []).filter((f) => f !== "unestimated");
+    if (flagged.length) {
+      const mark = el("span", "wbs-flag", "!");
+      mark.title = flagged.join(", ");
+      name.append(mark);
+    }
+    const status = el("span", "tag wbs-status", wbsStatusLabel(node.status));
+    status.dataset.status = node.status;
+    const extra = node.leaf ? (node.owner || "") : `${node.percent}%`;
+    row.append(name, status, el("div", "wbs-owner", extra), el("div", "wbs-effort",
+      node.effort != null ? String(node.effort) : ""), wbsBar(node, axis));
+    row.addEventListener("click", () => {
+      wbsState.selected = node.id;
+      renderWbs();
+    });
+    host.append(row);
+    if (!node.leaf && !wbsState.collapsed.has(node.id)) wbsRows(node.children, axis, host);
+  }
+}
+
+function wbsDetail(host) {
+  host.replaceChildren();
+  const node = wbsState.nodes.get(wbsState.selected);
+  if (!node) {
+    host.append(el("p", "lead", t("web_wbs_pick", "作業を選ぶと、証拠と依存が出ます")));
+    return;
+  }
+  const messages = (wbsState.data.problems || []).filter((p) => p.node === node.id);
+  host.append(el("h3", "wbs-dh", `${node.id} ${node.name}`));
+  const facts = [node.owner, node.priority, node.due && `${t("web_wbs_deadline", "期限")} ${node.due}`,
+    node.done_on && `done ${node.done_on}`, node.effort != null && `${node.effort} pt`].filter(Boolean);
+  if (facts.length) host.append(el("div", "pmo-meta", facts.join(" · ")));
+  if (node.depends_on && node.depends_on.length) {
+    host.append(el("div", "pmo-meta", `${t("web_wbs_depends", "依存")}: ${node.depends_on.join(", ")}`));
+  }
+  for (const p of messages) {
+    const note = el("div", "wbs-msg", p.message);
+    note.dataset.level = p.level;
+    host.append(note);
+  }
+  if (node.leaf) {
+    const block = el("div", "wbs-evidence");
+    block.append(el("h4", "wbs-eh", t("web_wbs_evidence", "証拠")));
+    if (!node.evidence.length) block.append(el("div", "pmo-meta", "—"));
+    for (const ev of node.evidence) {
+      const line = el("div", "wbs-ev");
+      line.dataset.ok = String(ev.ok);
+      line.append(el("span", "wbs-evmark", ev.ok ? "✓" : "✗"), el("code", null, ev.spec));
+      if (!ev.ok && ev.why) line.append(el("div", "pmo-meta", ev.why));
+      block.append(line);
+    }
+    host.append(block);
+  }
+  if (node.notes) host.append(el("p", "pmo-meta", node.notes));
+}
+
+function renderWbs() {
+  const host = $("wbs-screen");
+  const data = wbsState.data;
+  host.replaceChildren();
+  if (!data) return;
+  const summary = data.summary;
+  const head = el("div", "wbs-head");
+  head.append(el("h3", "wbs-name-h", data.wbs.name));
+  const meter = el("div", "wbs-meter");
+  const bar = el("div", "bar");
+  const fill = el("div", "bar-fill");
+  fill.style.width = `${summary.percent_by_effort}%`;
+  bar.append(fill);
+  meter.append(bar, el("span", "wbs-pct", `${summary.percent_by_effort}%`));
+  head.append(el("div", "pmo-meta", t("web_wbs_progress", "進捗（見積りの重み）")), meter);
+  const facts = [
+    `${summary.done}/${summary.leaves} done`, `${summary.in_progress} doing`, `${summary.blocked} blocked`,
+    data.wbs.deadline && `${t("web_wbs_deadline", "期限")} ${data.wbs.deadline}`,
+    data.velocity.per_day != null && `${t("web_wbs_velocity", "速度")} ${data.velocity.per_day}/d`,
+  ].filter(Boolean);
+  head.append(el("div", "pmo-meta", facts.join(" · ")));
+  if (data.forecast) {
+    const f = data.forecast;
+    const drift = f.drift_days != null ? `drift ${f.drift_days > 0 ? "+" : ""}${f.drift_days} d` : "";
+    head.append(el("div", "pmo-meta", `${f.projected_finish || f.finish_date || ""} ${drift}`.trim()));
+  } else if (data.error_count) {
+    head.append(el("div", "card-note error",
+      t("web_wbs_forecast_off", "予測は出せません（先に誤りを直してください）")));
+  }
+  host.append(head);
+
+  const grid = el("div", "wbs-grid");
+  const table = el("div", "wbs-table");
+  table.setAttribute("role", "list");
+  wbsRows(data.tree, wbsAxis(data), table);
+  const side = el("aside", "wbs-detail");
+  side.id = "wbs-detail";
+  wbsDetail(side);
+  grid.append(table, side);
+  host.append(grid);
+
+  const lower = el("div", "wbs-lower");
+  if (data.ready && data.ready.length) {
+    const block = todaySection(t("web_wbs_ready", "次に着手できる"), data.ready.length);
+    for (const r of data.ready.slice(0, 6)) {
+      block.append(el("div", "pmo-meta", `${r.id} ${r.name}${r.effort != null ? ` · ${r.effort} pt` : ""}`));
+    }
+    lower.append(block);
+  }
+  if (data.problems && data.problems.length) {
+    const block = todaySection(t("web_wbs_problems", "ずれ・注意"), data.problems.length);
+    for (const p of data.problems) {
+      const line = el("div", "wbs-msg", `${p.node || ""} ${p.message}`.trim());
+      line.dataset.level = p.level;
+      block.append(line);
+    }
+    lower.append(block);
+  }
+  host.append(lower);
+}
+
+async function refreshWbs() {
+  try {
+    const data = await api("/api/wbs");
+    wbsState.nodes = indexWbs(data.tree, 0, new Map());
+    wbsState.data = data;
+    if (!wbsState.nodes.has(wbsState.selected)) wbsState.selected = null;
+    renderWbs();
+    return true;
+  } catch (error) {                       // 設定が無い(404)・権限が無い(403)は「使わない画面」
+    wbsState.data = null;
+    $("wbs-screen").replaceChildren();
+    return false;
   }
 }
 
@@ -843,7 +1784,7 @@ const KIND_FALLBACK = {
   judgment: "判断", followup: "対応", wbs: "WBS", assignment: "担当",
   review: "成果", filing: "起票", replan: "再計画",
 };
-const TAB_ORDER = ["inbox", "pmo", "wbs", "templates", "runs"];
+const TAB_ORDER = ["today", "inbox", "tasks", "wbs", "reviews", "judgment", "members", "integrations", "tools"];
 let inboxState = { data: null, filter: "all", selected: null };
 let tabsEnabled = false;
 
@@ -866,8 +1807,8 @@ function showTab(name) {
   for (const button of $("tabs").querySelectorAll("button")) {
     button.setAttribute("aria-pressed", String(button.dataset.target === name));
   }
-  $("main").classList.toggle("wide", name === "inbox");
-  history.replaceState(null, "", `#${name}`);
+  $("main").classList.toggle("wide", name !== "tools");
+  if (location.hash !== `#${name}`) history.pushState(null, "", `#${name}`);
 }
 
 function setupTabs(enabled) {
@@ -878,9 +1819,10 @@ function setupTabs(enabled) {
     return;
   }
   const labels = {
-    inbox: t("web_inbox", "受信箱"), pmo: t("web_pmo", "PMO Core"),
-    wbs: t("web_proposals", "WBS Proposals"), templates: t("web_templates", "Templates"),
-    runs: t("web_runs", "Runs"),
+    today: t("web_today", "今日"), inbox: t("web_inbox", "受信箱"), tasks: t("web_tasks", "タスク"), reviews: t("web_reviews", "成果"),
+    judgment: t("web_judgment", "判断"), members: t("web_members", "メンバー"),
+    integrations: t("web_integrations", "連携"), tools: t("web_tools", "ツール"),
+    wbs: wbsState.data ? "WBS" : t("web_proposals", "WBS Proposals"),
   };
   nav.replaceChildren();
   for (const name of TAB_ORDER) {
@@ -898,8 +1840,15 @@ function setupTabs(enabled) {
   }
   nav.hidden = false;
   $("inbox-view").hidden = false;
+  $("today-view").hidden = false;
+  $("tasks-view").hidden = false;
+  $("reviews-view").hidden = false;
+  $("judgment-view").hidden = false;
+  $("members-view").hidden = false;
+  $("integrations-view").hidden = false;
   const wanted = location.hash.slice(1);
-  showTab(TAB_ORDER.includes(wanted) ? wanted : "inbox");
+  showTab(TAB_ORDER.includes(wanted) ? wanted : "today");
+  renderToday();
   updateInboxCount();
 }
 
@@ -909,6 +1858,7 @@ function updateInboxCount() {
   const total = inboxState.data ? inboxState.data.total : 0;
   badge.textContent = String(total);
   badge.hidden = !total;
+  renderToday();
 }
 
 function inboxVisible() {
@@ -1134,9 +2084,11 @@ async function boot() {
     await refreshRuns();
     await refreshPmo();
     await refreshProposals();
+    await refreshWbs();
     // 受信箱が使える構成（PMO Core の台帳がある）なら、タブで切り替える。無ければ従来どおり。
     // With a PMO ledger the sections become tabs and the inbox leads; otherwise nothing changes.
     setupTabs(await refreshInbox());
+    if (tabsEnabled) { refreshTasks(true); refreshReviews(); refreshJudgmentControl(); refreshMembers(); refreshIntegrations(); }
     refreshHealth();
   } catch (error) {
     toast(error.message, "error");
@@ -1145,6 +2097,15 @@ async function boot() {
 
 boot();
 
+// 戻るボタンやリンクでハッシュが変わったら、その画面を出す。
+// Show the screen the hash names when it changes (back button, links).
+const followHash = () => {
+  const wanted = location.hash.slice(1);
+  if (tabsEnabled && TAB_ORDER.includes(wanted)) showTab(wanted);
+};
+window.addEventListener("hashchange", followHash);
+window.addEventListener("popstate", followHash);
+
 // 画面に戻ったときだけ更新する。定期ポーリングは電池を消費するので避ける。
 // Refresh on return to the screen; polling on a timer would drain the battery.
 document.addEventListener("visibilitychange", () => {
@@ -1152,7 +2113,8 @@ document.addEventListener("visibilitychange", () => {
     refreshRuns().catch(() => {});
     refreshPmo().catch(() => {});
     refreshProposals().catch(() => {});
-    if (tabsEnabled) refreshInbox();
+    refreshWbs();
+    if (tabsEnabled) { refreshInbox(); refreshTasks(false); refreshReviews(); refreshMembers(); refreshIntegrations(); }
     refreshHealth();
   }
 });

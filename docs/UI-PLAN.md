@@ -2,10 +2,10 @@
 
 画面案（デザインキャンバス: 今日・タスク・WBS・受信箱・成果レビュー・自律的な判断・メンバーと学習・連携・スマホ）を、
 **既存の Web（`aipmo serve`）に取り込む**ための計画です。既存の API でできる範囲、足す API、順序と判断が要る点を、
-実際のコードに当てて洗い出しました。第 5 章の **受信箱は実装済み**です。
+実際のコードに当てて洗い出しました。**第 6 章のとおり、すべて実装済み**です。
 
 The mockups become the existing web (`aipmo serve`) step by step. This lists what the existing `/api` already
-covers, what to add, the order, and the decisions needed. The inbox (chapter 5) is implemented.
+covers, what to add, the order, and the decisions needed. Everything in chapter 6 is implemented.
 
 ## 1. 設計の原則（画面案から）
 
@@ -82,19 +82,41 @@ covers, what to add, the order, and the decisions needed. The inbox (chapter 5) 
 実ブラウザの確認では、スマホ幅（390px）で横にはみ出さないこと、承認で件数が 14 → 13 になること、理由なしの差し戻しが
 止まること、タブの切り替え、viewer にボタンが出ないことを確かめた。
 
-## 6. 順序と見積り
+## 6. 順序と状況（2026-10-02 時点）
 
-| 順 | 内容 | 追加する API | 規模 | 備考 |
-|---|---|---|---|---|
-| 1 | 受信箱 | `/api/inbox` | ✅ 済 | |
-| 2 | 骨格（サイドバー／下タブ）と「今日」 | なし | M | 既存の `/api/pmo` を組み替える。旧画面はタブで残す |
-| 3 | WBS 画面（ツリー・工程バー・ずれ・詳細） | `/api/wbs`（`analyse` にツリーを足す） | L | 画面案で一番手間。工程バーは日付から計算して描く |
-| 4 | 再計画案のプレビュー | `/api/wbs-proposals/{id}/preview` | S | PostgreSQL が要る（実機での確認は未） |
-| 5 | タスク（表・内訳・詳細） | `/api/tasks`、内訳の構造化 | M | `score_task` の戻り値を構造化。既存のテストに注意 |
-| 6 | 成果レビュー（履歴）・自律的な判断（操作） | `/api/agents/reviews`、`/api/judgment/*` | M | 唯一の新しい書き込み |
-| 7 | メンバーと学習 | `/api/learning/members` | S | |
-| 8 | 連携 | `/api/integrations` | M | 担当アカウントの対応表は読み取り（Plane/OpenProject への通信を伴う。キャッシュ） |
-| 9 | 旧画面の整理 | — | S | テンプレート実行・実行履歴を「ツール」に寄せる |
+すべて実装済みです。確認したのは、サーバー側のテストと、**ヘッドレス Chrome とデモのデータ**での操作までです
+（実 PostgreSQL・実 Jira・実機のスマホは未確認）。
+
+| 順 | 内容 | 追加した API | 状況 |
+|---|---|---|---|
+| 1 | 受信箱 | `GET /api/inbox` | ✅ |
+| 2 | 骨格（サイドバー／下タブ）と「今日」 | なし（`/api/pmo` と `/api/inbox` を組み替え） | ✅ |
+| 3 | WBS 画面（木・工程バー・証拠の確認・次に着手できる・注意） | `GET /api/wbs`（`wbs.view` が `analyse` に木を足す） | ✅ |
+| 4 | 再計画案のプレビュー | `GET /api/wbs-proposals/{id}/preview` | ✅（偽の PostgreSQL での試験。実機は未） |
+| 5 | タスク（表・検索・絞り込み・点数の内訳・詳細） | `GET /api/tasks`、`GET /api/tasks/{id}`、`score_breakdown`（内訳の構造化。`score_task` の戻り値は変えていない） | ✅ |
+| 6 | 成果レビューの履歴・自律的な判断の操作 | `GET /api/agents/reviews`、`GET /api/judgment/control`、`POST /api/judgment/{pause,resume,reset}` | ✅ |
+| 7 | メンバーと学習 | `GET /api/learning/members` | ✅ |
+| 8 | 連携 | `GET /api/integrations` | ✅（名前の引き当ては行わない） |
+| 9 | 旧画面の整理 | なし | ✅（テンプレート・実行履歴・旧 PMO Core を「ツール」へ） |
+
+### 実装で決めたこと・分かったこと
+
+- **点数の内訳**: 内訳の合計は台帳の点数と一致する。画面の台帳には常駐が学習した補正が載っていないので、`pmo-learned` を
+  読んで再計算し、それでも差が出たときは隠さず「その他の補正」の項目として出す。
+- **判断の操作は「依頼」**: 一時停止・再開・遮断器を戻すは制御の文書に書くだけで、常駐が**次の周**で読む。画面は
+  「依頼済み（次の周で反映）」を出す。判断ログに `judgment_control` として残す。自律度は画面から変えない。
+- **範囲を限られた viewer**: WBS・メンバーと学習・連携（組織全体の情報）は 403、タスク・成果の履歴は範囲内だけ。
+- **WBS の予測**: 証拠の欠けなどの「誤り」があると、既存の判断どおり予測と順序を出さない。画面もそう出す。
+- **工程バー**: WBS に開始日は無いので、終わり（完了日、無ければ期限）と、依存先の終わりの最も遅い日から描く。日付が無い作業には描かない。
+- **関数名の衝突**: `app.js` は 1 ファイルなので、同名の関数が後のもので前のものを黙って上書きする（実際にタスク画面が旧い
+  PMO 画面を空にした）。`tests/test_static_app.py` が重複を止める。
+
+### 残っていること
+
+- 画面の文言のうち、サーバーが返す文章（受信箱の詳細・診断・内訳の説明）は日本語のみ。
+- ブラウザは Chrome（ヘッドレス）だけで確認。Safari・Firefox・実機のスマホは未確認。
+- 画面の WBS は読むだけ。WBS の変更は再計画案の承認（PostgreSQL が要る）からのみ。
+- 常駐の周（`aipmo schedule`）を待たずに画面を自動更新する仕組み（SSE）は無い。画面に戻ったときと操作のあとに読み直す。
 
 ## 7. 判断が要ること
 

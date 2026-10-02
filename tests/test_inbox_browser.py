@@ -68,7 +68,8 @@ def served(tmp_path):
     llms.register("default", EchoProvider())
     app = create_app(Engine(built.adapters, llms), base / "templates", OPERATOR, viewer_token=VIEWER,
                      lang="ja", store=RunStore(), pmo_ledger=base / "task-ledger.db",
-                     members=load_members(config["pmo_core"]["members"]), filing=cli._web_filing(config))
+                     members=load_members(config["pmo_core"]["members"]), filing=cli._web_filing(config),
+                     wbs_view=cli._wbs_view(config, base))
     port = free_port()
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -145,6 +146,17 @@ async def drive(base: str) -> dict:
             await b.call("Network.enable")
             out: dict = {}
 
+            # 既定の画面は「今日」：KPI が 4 つ、判断待ちの件数は受信箱と同じ
+            await b.call("Emulation.setDeviceMetricsOverride", deviceScaleFactor=1, width=1280, height=900, mobile=False)
+            await b.call("Page.navigate", url=f"{base}/?token={OPERATOR}")
+            await b.until("document.querySelectorAll('#today .kpi').length === 4 && document.querySelector('#today .today-go') !== null")
+            out["today_hash"] = await b.js("location.hash")
+            out["today_kpis"] = await b.js("[...document.querySelectorAll('#today .kpi-value')].map(e => e.textContent)")
+            out["today_has_top"] = await b.js("document.querySelectorAll('#today .today-task').length")
+            await b.js("document.querySelector('#today .today-go').click()")
+            await b.until("location.hash === '#inbox'")
+            await b.call("Page.navigate", url="about:blank")
+
             # スマホ幅
             await b.open(f"{base}/?token={OPERATOR}#inbox", width=390, height=844, mobile=True)
             out["mobile_scroll_width"] = await b.js("document.documentElement.scrollWidth")
@@ -182,11 +194,51 @@ async def drive(base: str) -> dict:
             out["review_after"] = await b.js("document.querySelectorAll('.inbox-item').length")
 
             # タブ
-            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'pmo').click()")
+            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'tools').click()")
             await asyncio.sleep(0.5)
-            out["pmo_visible"] = await b.js("!document.getElementById('pmo').hasAttribute('data-off')")
+            out["pmo_visible"] = await b.js("!document.getElementById('pmo').hasAttribute('data-off') && !document.getElementById('templates').hasAttribute('data-off') && !document.getElementById('runs').hasAttribute('data-off')")
             out["inbox_hidden"] = await b.js("document.getElementById('inbox-view').hasAttribute('data-off')")
             out["hash"] = await b.js("location.hash")
+
+            # タスク：一覧から選ぶと、点数の内訳が出る。検索で絞れる
+            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'tasks').click()")
+            await b.until("document.querySelectorAll('.task-row').length >= 20")
+            await b.js("document.querySelector('.task-row').click()")
+            await b.until("document.querySelectorAll('.task-part').length >= 2")
+            out["task_parts_sum"] = await b.js(
+                "[[...document.querySelectorAll('.task-part-pts')].map(e => e.textContent),"
+                " document.querySelector('.task-parts h4').textContent.split('— ').pop()]")
+            await b.js("(() => { const q = document.getElementById('tasks-q'); q.value = 'push'; q.dispatchEvent(new Event('input')); })()")
+            await b.until("document.querySelectorAll('.task-row').length < 5")
+            out["task_search"] = await b.js("document.querySelectorAll('.task-row').length")
+
+            # 旧い PMO 画面が空にならない / 判断：止める・再開（操作の結果が画面に出る）
+            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'tools').click()")
+            await b.until("document.querySelectorAll('#pmo .pmo-alert').length > 0")
+            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'judgment').click()")
+            await b.until("document.querySelector('.judgment-controls button[data-action=pause]') !== null")
+            await b.js("document.querySelector('.judgment-controls button[data-action=pause]').click()")
+            await b.until("document.querySelector('.judgment-controls button[data-action=resume]') !== null")
+            out["judgment_paused"] = await b.js("document.getElementById('judgment-requested').textContent")
+            await b.js("document.querySelector('.judgment-controls button[data-action=resume]').click()")
+            await b.until("document.querySelector('.judgment-controls button[data-action=pause]') !== null"
+                          " && !document.getElementById('judgment-requested')")
+
+            # メンバー・連携：カードが出る
+            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'members').click()")
+            await b.until("document.querySelectorAll('.member-card').length >= 5")
+            out["member_factors"] = await b.js("[...document.querySelectorAll('.member-head .tag')].map(e => e.textContent).filter(t => t.startsWith('×'))")
+            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'integrations').click()")
+            await b.until("document.querySelectorAll('.integ-card').length >= 1")
+            out["integ_cards"] = await b.js("document.querySelectorAll('.integ-card').length")
+
+            # WBS：木が出て、作業を選ぶと証拠の確認結果が出る
+            await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'wbs').click()")
+            await b.until("document.querySelectorAll('.wbs-row').length === 7")
+            await b.js("[...document.querySelectorAll('.wbs-row')].find(r => r.dataset.id === '2.1').click()")
+            await b.until("document.querySelector('.wbs-ev[data-ok=false]') !== null")
+            out["wbs_label"] = await b.js("document.querySelector('#tabs button[data-target=wbs]').textContent")
+            out["wbs_bars"] = await b.js("document.querySelectorAll('.wbs-bar').length")
 
             # 閲覧用
             await b.call("Network.clearBrowserCookies")
@@ -205,13 +257,21 @@ async def drive(base: str) -> dict:
 
 def test_the_inbox_works_in_a_real_browser(served):
     result = asyncio.run(drive(served))
+    assert result["today_hash"] == "#today" and result["today_kpis"][2] == "14"
+    assert result["today_kpis"][0] == "23" and result["today_has_top"] == 5
     assert result["mobile_scroll_width"] <= 390                       # スマホ幅で横にはみ出さない
-    assert result["badge"] == "14" and result["tabs"] == ["inbox", "pmo", "wbs", "templates", "runs"]
+    assert result["badge"] == "14" and result["tabs"] == ["today", "inbox", "tasks", "wbs", "reviews", "judgment", "members", "integrations", "tools"]
     assert result["mobile_items"] == 14
     assert result["detail_sections"] >= 4 and {"do", "dont", "info"} <= set(result["tones"])
     assert result["approved_gone"] is True and tuple(result["count"]) == (14, 13)
     assert result["toast"] == "決めました" and result["next_selected"] is True
     assert result["blocked_toast"] == "理由を書いてください" and result["review_listed"] == 1
     assert result["review_after"] == 0
-    assert result["pmo_visible"] is True and result["inbox_hidden"] is True and result["hash"] == "#pmo"
+    assert result["pmo_visible"] is True and result["inbox_hidden"] is True and result["hash"] == "#tools"
+    assert sum(int(x) for x in result["task_parts_sum"][0]) == int(result["task_parts_sum"][1]), result["task_parts_sum"]
+    assert 0 <= result["task_search"] < 5
+    assert "一時停止を依頼済み" in result["judgment_paused"]
+    assert "×0.73" in result["member_factors"] and "×1.18" in result["member_factors"]
+    assert result["integ_cards"] >= 1
+    assert result["wbs_label"] == "WBS" and result["wbs_bars"] >= 4
     assert result["viewer_buttons"] == 0 and result["viewer_items"] > 0   # 閲覧用は見えるが、決められない

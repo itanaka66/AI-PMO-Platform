@@ -521,9 +521,79 @@ wbs:
             - "docs/UI-PLAN.md"
           notes: "読むだけの集約。決める操作は既存の API を呼ぶ。実ブラウザの確認は tests/test_inbox_browser.py（AIPMO_TEST_BROWSER=1）"
         - id: "6.19"
-          name: "専用 Web UI の残り（骨格と今日、WBS、タスク、判断、連携）"
-          status: todo
-          effort: 13
-          priority: Medium
+          name: "専用 Web UI の骨格（サイドバー／下タブ）と「今日」"
+          status: done
+          effort: 3
           depends_on: ["6.18"]
-          notes: "順序と追加する API は docs/UI-PLAN.md"
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/web/static/app.js::function renderToday"
+            - "aipmo/web/static/app.css::骨格"
+            - "tests/test_inbox_browser.py::test_the_inbox_works_in_a_real_browser"
+            - "tests/test_static_app.py"
+          notes: "新しい API は無し。/api/pmo と /api/inbox を組み替える。旧画面は「ツール」に残す"
+        - id: "6.20"
+          name: "WBS 画面（木・工程バー・証拠の確認）と GET /api/wbs"
+          status: done
+          effort: 5
+          depends_on: ["6.19"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/wbs.py::def view"
+            - "aipmo/web/server.py::/api/wbs"
+            - "aipmo/web/static/app.js::function renderWbs"
+            - "tests/test_wbs_screen.py"
+          notes: "読むだけ。誤りがあると予測を出さない既存の判断をそのまま画面に出す"
+        - id: "6.21"
+          name: "WBS 再計画案の反映前プレビュー（GET /api/wbs-proposals/{id}/preview）"
+          status: done
+          effort: 2
+          depends_on: ["6.20"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/web/server.py::def preview_wbs_proposal"
+            - "tests/test_wbs_proposals.py::test_the_preview_shows_what_approving_would_do_and_writes_nothing"
+          notes: "試験は PostgreSQL の代わりの偽物で行った。実機の PostgreSQL での確認は未"
+        - id: "6.22"
+          name: "タスク画面（GET /api/tasks, /api/tasks/{id}・点数の内訳の構造化）"
+          status: done
+          effort: 4
+          depends_on: ["6.19"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/task_engine.py::def score_breakdown"
+            - "aipmo/web/server.py::/api/tasks"
+            - "tests/test_tasks_screen.py::test_the_parts_of_every_score_add_up_to_the_score"
+          notes: "内訳の合計は台帳の点数に必ず一致させる。差は隠さず「その他の補正」に出す"
+        - id: "6.23"
+          name: "成果レビューの履歴と、自律的な判断の止める／再開／遮断器を戻す"
+          status: done
+          effort: 3
+          depends_on: ["6.19"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/web/server.py::/api/agents/reviews"
+            - "aipmo/web/server.py::def judgment_control"
+            - "tests/test_review_judgment_screen.py"
+          notes: "唯一の新しい書き込み。operator のみ、判断ログに残す。自律度は画面から変えない"
+        - id: "6.24"
+          name: "メンバーと学習・連携の画面（GET /api/learning/members, /api/integrations）"
+          status: done
+          effort: 3
+          depends_on: ["6.19"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/web/server.py::/api/learning/members"
+            - "aipmo/web/server.py::/api/integrations"
+            - "tests/test_tasks_screen.py::test_the_learning_screen_shows_why_each_member_was_adjusted"
+          notes: "読むだけ。担当者の名前からの引き当ては外部への問い合わせなので画面では行わない"
+        - id: "6.25"
+          name: "旧画面の整理（テンプレート・実行履歴・旧 PMO Core を「ツール」へ）"
+          status: done
+          effort: 1
+          depends_on: ["6.19"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/web/static/index.html::data-tab=\"tools\""
+            - "tests/test_static_app.py::test_every_tab_has_a_section_in_the_page"
+          notes: "受信箱が使えない構成は従来どおり全部を並べる"

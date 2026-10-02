@@ -557,6 +557,53 @@ def analyse(wbs: Wbs, root: Path, as_of: date | None = None,
     return result
 
 
+def _tree_node(node: Node, root: Path, flags: dict[str, list[str]], critical: set[str],
+               blocked: set[str]) -> dict[str, Any]:
+    """画面用の木の 1 ノード。葉は証拠 1 件ごとの確認結果を持つ。親は葉の集計。"""
+    out: dict[str, Any] = {
+        "id": node.id, "name": node.name, "owner": node.owner, "priority": node.priority,
+        "due": node.due.isoformat() if node.due else None,
+        "done_on": node.done_on.isoformat() if node.done_on else None,
+        "depends_on": list(node.depends_on), "notes": node.notes,
+        "flags": flags.get(node.id, []),
+    }
+    if node.is_leaf:
+        evidence = []
+        for spec in node.evidence:
+            ok, why = check_evidence(spec, root)
+            evidence.append({"spec": spec, "ok": ok, "why": why})
+        out.update({"leaf": True, "status": node.status, "effort": node.effort,
+                    "evidence": evidence, "critical": node.id in critical,
+                    "blocked_by_dependency": node.id in blocked})
+    else:
+        roll = _rollup(node)
+        out.update({"leaf": False, "status": roll["status"], "percent": roll["percent"],
+                    "leaves": roll["leaves"], "done": roll["done"],
+                    "effort": sum(leaf.effort or 0.0 for leaf in node.leaves()),
+                    "remaining_effort": roll["remaining_effort"],
+                    "children": [_tree_node(c, root, flags, critical, blocked)
+                                 for c in node.children]})
+    return out
+
+
+def view(wbs: Wbs, root: Path, as_of: date | None = None,
+         problems: list[Problem] | None = None) -> dict[str, Any]:
+    """画面用: `analyse` の結果に、木（`tree`）と ID ごとの注意（`flags`）を足したもの。
+
+    読むだけ。木の中身は WBS ファイルと証拠の確認結果だけで、ここで新しく判断しない。
+    The analysis plus the tree for display; read-only, nothing is decided here.
+    """
+    result = analyse(wbs, root, as_of, problems)
+    flags: dict[str, list[str]] = {}
+    for p in result["problems"]:
+        if p["node"]:
+            flags.setdefault(p["node"], []).append(p["code"])
+    critical = set(result["critical_path"])
+    blocked = set(result["blocked_by_dependency"])
+    result["tree"] = [_tree_node(r, root, flags, critical, blocked) for r in wbs.roots]
+    return result
+
+
 def render_text(a: dict[str, Any]) -> str:
     """人が読む状況報告（Slack・端末）。数字はすべて上の集計から。"""
     s, name = a["summary"], a["wbs"]["name"]

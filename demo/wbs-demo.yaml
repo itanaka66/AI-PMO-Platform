@@ -4,7 +4,7 @@
 wbs:
   id: demo-product
   name: デモ製品のリリース計画
-  deadline: null
+  deadline: 2026-10-31
   nodes:
     - id: "1"
       name: "企画"
@@ -20,6 +20,8 @@ wbs:
           name: "画面設計"
           status: todo
           effort: 3
+          due: 2026-10-05
+          depends_on: ["1.1"]
           evidence:
             - "evidence/screens.md::画面一覧"
     - id: "2"
@@ -36,8 +38,11 @@ wbs:
           name: "検索機能"
           status: in_progress
           effort: 5
+          due: 2026-10-14
+          depends_on: ["1.2"]
         - id: "2.3"
           name: "決済機能"
           status: todo
           effort: 8
+          due: 2026-10-28
           depends_on: ["2.1"]

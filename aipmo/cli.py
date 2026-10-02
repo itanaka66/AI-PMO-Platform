@@ -608,6 +608,16 @@ def _wbs_target(config: dict[str, Any], base: Path):
                   decisions=decisions)
 
 
+def _wbs_view(config: dict[str, Any], base: Path):
+    """WBS 画面が読むファイルと、証拠の基準。`pmo_core.generate.wbs`、無ければ `adapters.wbs_replan`。"""
+    spec = (((config.get("pmo_core") or {}).get("generate") or {}).get("wbs"))         or (config.get("adapters") or {}).get("wbs_replan") or {}
+    if not isinstance(spec, dict) or not spec.get("file"):
+        return None
+    file, root = Path(str(spec["file"])), Path(str(spec.get("root", ".")))
+    return ((file if file.is_absolute() else base / file).resolve(),
+            (root if root.is_absolute() else base / root).resolve())
+
+
 def _web_filing(config: dict[str, Any]):
     """Web の起票ボタン用。設定が壊れていれば、ボタンを出さない(起動は止めない)。"""
     from .filing import FilingConfigError, load_filing
@@ -1762,6 +1772,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      filing=_web_filing(config),
                      lookup_assignees=_lookup_assignees(config),
                      wbs_target=_wbs_target(config, base),
+                     wbs_view=_wbs_view(config, base),
                      side_storage=side_storage_mode(config),
                      **pool_settings)
 

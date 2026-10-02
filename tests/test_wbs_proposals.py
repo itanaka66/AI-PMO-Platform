@@ -456,3 +456,41 @@ def test_a_decided_proposal_is_reported_as_decided_even_if_its_changes_are_also_
     with pytest.raises(ProposalError) as caught:
         approve(pg, "acme", "p1", "sato", None, target)
     assert caught.value.kind == "not_pending"
+
+
+# ===== (7) 反映前のプレビュー / preview before approving ==========================================================
+
+def test_the_preview_shows_what_approving_would_do_and_writes_nothing(tmp_path):
+    pg = StubPostgres()
+    pg.add("p1", {"changes": GOOD})
+    client, wbs = web(tmp_path, pg)
+    before = wbs.read_bytes()
+    body = client.get("/api/wbs-proposals/p1/preview", headers=headers(VIEWER)).json()
+    assert body["applicable"] is True and body["changed"] is True and body["report"]
+    assert "2026-11-01" in body["diff"] and body["already_applied"] is False
+    assert wbs.read_bytes() == before and pg.rows["p1"]["status"] == "pending" and not pg.executed
+
+
+def test_the_preview_says_why_it_cannot_apply_instead_of_failing(tmp_path):
+    pg = StubPostgres()
+    pg.add("bad", {"changes": [{"op": "set", "node": "9.9", "field": "effort", "value": 1}]})
+    pg.add("free", {"move": "1.1 を後ろへ"})
+    client, _ = web(tmp_path, pg)
+    bad = client.get("/api/wbs-proposals/bad/preview", headers=headers(OPERATOR)).json()
+    assert bad["applicable"] is False and bad["reason"] == "invalid" and "9.9" in " ".join(bad["problems"])
+    free = client.get("/api/wbs-proposals/free/preview", headers=headers(OPERATOR)).json()
+    assert free["applicable"] is False and free["reason"] == "free_form"
+    assert client.get("/api/wbs-proposals/nope/preview", headers=headers(OPERATOR)).status_code == 404
+    assert client.get("/api/wbs-proposals/bad/preview").status_code == 401
+
+
+def test_the_preview_without_a_target_and_after_applying(tmp_path):
+    pg = StubPostgres()
+    pg.add("p1", {"changes": GOOD})
+    plain, _ = web(tmp_path, pg, with_target=False)
+    out = plain.get("/api/wbs-proposals/p1/preview", headers=headers(OPERATOR)).json()
+    assert out["applicable"] is False and out["reason"] == "no_target"
+    client, _ = web(tmp_path, pg)
+    assert client.post("/api/wbs-proposals/p1/approve", headers=headers(OPERATOR), json={}).status_code == 200
+    after = client.get("/api/wbs-proposals/p1/preview", headers=headers(OPERATOR)).json()
+    assert after["already_applied"] is True

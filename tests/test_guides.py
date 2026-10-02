@@ -131,6 +131,8 @@ def test_internal_links_resolve(path):
     import re
 
     for target in re.findall(r"\]\(([^)#]+)\)", path.read_text(encoding="utf-8")):
+        # `![alt](images/a.png "タイトル")` の、タイトルは宛先ではない / a link title is not part of the target
+        target = re.sub(r'\s+"[^"]*"\s*$', "", target).strip()
         if target.startswith(("http", "mailto")):
             continue
         assert (path.parent / target).resolve().exists(), \

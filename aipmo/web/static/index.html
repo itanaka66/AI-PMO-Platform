@@ -20,22 +20,54 @@
 <nav class="tabs" id="tabs" aria-label="Sections" hidden></nav>
 
 <main id="main">
+  <section id="today-view" data-tab="today" hidden aria-labelledby="h-today">
+    <h2 id="h-today" class="visually-hidden">Today</h2>
+    <div id="today"></div>
+  </section>
+
+  <section id="tasks-view" data-tab="tasks" hidden aria-labelledby="h-tasks">
+    <h2 id="h-tasks" class="visually-hidden">Tasks</h2>
+    <div id="tasks"></div>
+  </section>
+
+  <section id="reviews-view" data-tab="reviews" hidden aria-labelledby="h-reviews">
+    <h2 id="h-reviews" class="visually-hidden">Reviews</h2>
+    <div id="reviews"></div>
+  </section>
+
+  <section id="judgment-view" data-tab="judgment" hidden aria-labelledby="h-judgment">
+    <h2 id="h-judgment" class="visually-hidden">Judgment</h2>
+    <div id="judgment"></div>
+  </section>
+
+  <section id="members-view" data-tab="members" hidden aria-labelledby="h-members">
+    <h2 id="h-members" class="visually-hidden">Members</h2>
+    <div id="members"></div>
+  </section>
+
+  <section id="integrations-view" data-tab="integrations" hidden aria-labelledby="h-integrations">
+    <h2 id="h-integrations" class="visually-hidden">Integrations</h2>
+    <div id="integrations"></div>
+  </section>
+
   <section id="inbox-view" data-tab="inbox" hidden aria-labelledby="h-inbox">
     <h2 id="h-inbox" class="visually-hidden">Inbox</h2>
     <div id="inbox"></div>
   </section>
 
-  <h2 id="h-pmo" data-tab="pmo" hidden>PMO Core</h2>
-  <div id="pmo" data-tab="pmo"></div>
+  <h2 id="h-pmo" data-tab="tools" hidden>PMO Core</h2>
+  <div id="pmo" data-tab="tools"></div>
+
+  <div id="wbs-screen" data-tab="wbs"></div>
 
   <h2 id="h-proposals" data-tab="wbs">WBS Proposals</h2>
   <div id="proposals" data-tab="wbs"></div>
 
-  <h2 id="h-templates" data-tab="templates">Templates</h2>
-  <div id="templates" data-tab="templates"></div>
+  <h2 id="h-templates" data-tab="tools">Templates</h2>
+  <div id="templates" data-tab="tools"></div>
 
-  <h2 id="h-runs" data-tab="runs">Runs</h2>
-  <div id="runs" class="spine" data-tab="runs"></div>
+  <h2 id="h-runs" data-tab="tools">Runs</h2>
+  <div id="runs" class="spine" data-tab="tools"></div>
 </main>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>

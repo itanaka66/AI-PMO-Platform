@@ -75,15 +75,19 @@ from ..dsl import loader
 from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
+from ..judgment import read_control, write_control
 from ..pmo_core import Member, PmoCore, scope_briefing
 from ..inbox import build_inbox
 from ..filing import FilingConfig, FilingError, eligible, filing_state, make_filer
-from ..wbs_proposals import ProposalError, approve_and_apply
+from ..wbs import WbsError, load_wbs
+from ..wbs import view as wbs_analysis
+from ..wbs_proposals import ProposalError, applied_before, approve_and_apply
+from ..wbs_proposals import plan_for as plan_wbs_proposal
 from ..wbs_proposals import Target as WbsTarget
 from ..writeback import WritebackError, make_writer, tracker_of, writable_trackers
 from ..ledger_store import LedgerConfigError, LedgerStore, LedgerTenantError
-from ..side_store import BRIEFING, DECISIONS, FileSide
-from ..task_engine import TaskEngine
+from ..side_store import BRIEFING, DECISIONS, LEARNED, FileSide
+from ..task_engine import TaskEngine, score_breakdown
 from .pool import LedgerPool, PoolExhausted
 
 logger = logging.getLogger("aipmo.web")
@@ -167,6 +171,13 @@ def discover_templates(root: Path) -> list[dict[str, Any]]:
 def _client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
+_PRIORITY_ORDER = {"highest": 5, "critical": 5, "high": 4, "medium": 3, "low": 2, "lowest": 1}
+
+
+def _priority_rank(priority: str | None) -> int:
+    return _PRIORITY_ORDER.get((priority or "").strip().lower(), 0)
+
+
 def create_app(
     engine: Engine,
     template_root: Path,
@@ -183,6 +194,7 @@ def create_app(
     filing: FilingConfig | None = None,
     lookup_assignees: bool = True,
     wbs_target: WbsTarget | None = None,
+    wbs_view: tuple[Path, Path] | None = None,
     side_storage: str = "auto",
     pool_size: int = 8,
     pool_timeout: float = 10.0,
@@ -616,12 +628,30 @@ def create_app(
 
     app.router.on_shutdown.append(_close_pools)
 
+    def _give_learning(store: TaskEngine) -> None:
+        """常駐が学習した補正（pmo-learned）を、借りた台帳の採点に渡す。
+
+        画面の台帳は学習を知らない。渡さないと、画面で提案を承認するなど「再採点を伴う書き込み」のたびに、
+        学習した補正が抜けた点数で全タスクが採点し直され、次の周まで順位が崩れる。
+        The ledger a request borrows knows nothing of what the resident process learned. Without it any
+        write that rescores (approving a proposal) re-scores every task without the learned corrections.
+        """
+        try:
+            doc = json.loads(store.side.read_doc(LEARNED) or "{}")
+        except (OSError, ValueError):
+            return
+        if isinstance(doc, dict) and doc:
+            store.label_bonus = dict(doc.get("label_bonus") or {})
+            store.priority_delta = dict(doc.get("priority_delta") or {})
+            store.pace = dict(doc.get("pace") or {})
+
     def _open_store(ledger: Path, sync: bool = True) -> TaskEngine:
         """台帳を借りる。`sync=False` は、ブリーフィングや判断ログだけを読むとき（台帳の読み直しを省く）。"""
         pool = _pool_for(ledger)
         try:
             store = pool.acquire(sync=sync)
             store._aipmo_pool = pool                    # type: ignore[attr-defined]
+            _give_learning(store)
             return store
         except PoolExhausted as exc:
             # 全部使用中で、待っても空かなかった。固まらずに断り、少し後の再試行を促す。
@@ -774,6 +804,28 @@ def create_app(
         finally:
             _release(store)
 
+    @app.get("/api/wbs", dependencies=[guard])
+    def wbs_screen(role: str = guard) -> dict[str, Any]:
+        """WBS の木・進捗・予測・ずれ・次に着手できる作業（読むだけ）。
+
+        WBS ファイルは組織全体のものなので、プロジェクトを限定された viewer には出さない。
+        The WBS tree, progress, forecast, drift and what can start next. Read-only; a viewer confined
+        to some projects does not see it (the file is org-wide).
+        """
+        if wbs_view is None:
+            raise HTTPException(status_code=404, detail="WBS is not configured")
+        if role == "viewer" and scoped_projects is not None:
+            raise HTTPException(status_code=403, detail="WBS is not available to a scoped viewer")
+        file, root = wbs_view
+        try:
+            loaded, problems = load_wbs(file)
+        except WbsError as exc:
+            raise HTTPException(status_code=500, detail=f"cannot read the WBS: {exc}") from exc
+        result = wbs_analysis(loaded, root, problems=problems)
+        for key in ("tasks", "items", "summary_text"):       # 画面に要らない（重い）もの
+            result.pop(key, None)
+        return result
+
     @app.get("/api/pmo/decisions", dependencies=[guard])
     def pmo_decisions(limit: int = 50, project: str | None = None,
                       role: str = guard) -> dict[str, Any]:
@@ -818,6 +870,337 @@ def create_app(
             if len(items) >= limit:
                 break
         return {"items": items}
+
+    def _learned_of(store: Any) -> dict[str, Any]:
+        """常駐側が学習した補正（pmo-learned）。画面の台帳には載っていないので、ここで読む。"""
+        try:
+            doc = json.loads(store.side.read_doc(LEARNED) or "{}")
+        except (OSError, ValueError):
+            return {}
+        return doc if isinstance(doc, dict) else {}
+
+    def _parts_of(store: Any, task: Any, learned: dict[str, Any]) -> list[dict[str, Any]]:
+        """点数の内訳（項目ごと）。合計は台帳の点数に必ず一致させる。
+
+        学習のモデルが古い・読めないなどで差が出たら、隠さず「その他の補正」として出す。
+        The per-item score; it always sums to the ledger's score, and any gap (a stale learned model)
+        is shown as its own item rather than hidden.
+        """
+        if task.done:
+            return []
+        points, _, parts = score_breakdown(
+            task, store.now().date(), learned.get("label_bonus") or {},
+            learned.get("priority_delta") or {}, learned.get("pace") or {})
+        gap = task.score - points
+        if gap:
+            parts.append({"kind": "other", "points": gap,
+                          "text": f"その他の補正 {gap:+d}（学習モデルの更新差など）"})
+        return parts
+
+    def _task_row(t: Any, parts: list[dict[str, Any]]) -> dict[str, Any]:
+        return {"id": t.id, "key": t.key, "title": t.title, "score": t.score, "parts": parts,
+                "project": t.project, "tracker": tracker_of(t), "origin": t.origin,
+                "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
+                "due_date": t.due_date, "priority": t.priority, "status": t.status,
+                "blocked": t.blocked, "done": t.done, "labels": t.labels, "effort": t.effort,
+                "proposed": t.proposed}
+
+    @app.get("/api/tasks", dependencies=[guard])
+    def tasks_list(project: str | None = None, assignee: str | None = None, q: str | None = None,
+                   state: str = "active", sort: str = "score", limit: int = 50, offset: int = 0,
+                   role: str = guard) -> dict[str, Any]:
+        """タスクの一覧（読むだけ）。絞り込み・並び・ページつき。点数は項目ごとの内訳つき。
+
+        state: active（未完了。既定）| done | all。sort: score | due | priority。
+        The task list, read-only: filters, sort, paging, and the score as per-item parts.
+        """
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        if state not in ("active", "done", "all") or sort not in ("score", "due", "priority"):
+            raise HTTPException(status_code=422, detail="bad state or sort")
+        allowed = _allowed_projects(role, project)
+        limit, offset = max(1, min(limit, 200)), max(0, offset)
+        store = _open_store(ledger)
+        try:
+            pool = [t for t in store.tasks.values()
+                    if not t.origin == "judgment"
+                    and (allowed is None or t.project.lower() in allowed)]
+            names = sorted({t.project for t in pool if t.project}, key=str.lower)
+            people = sorted({t.assignee for t in pool if t.assignee}, key=str.lower)
+            if state == "active":
+                pool = [t for t in pool if not t.done and not t.proposed]
+            elif state == "done":
+                pool = [t for t in pool if t.done]
+            if assignee == "-":
+                pool = [t for t in pool if not t.assignee]
+            elif assignee:
+                pool = [t for t in pool if (t.assignee or "").lower() == assignee.lower()]
+            if q:
+                needle = q.strip().lower()
+                pool = [t for t in pool if needle in t.title.lower()
+                        or needle in (t.key or "").lower() or needle in t.id.lower()]
+            if sort == "due":
+                pool.sort(key=lambda t: (t.due_date or "9999-99-99", -t.score, t.id))
+            elif sort == "priority":
+                pool.sort(key=lambda t: (-_priority_rank(t.priority), -t.score, t.id))
+            else:
+                pool.sort(key=lambda t: (-t.score, t.due_date or "9999-99-99", t.id))
+            page = pool[offset:offset + limit]
+            learned = _learned_of(store)
+            rows = [_task_row(t, _parts_of(store, t, learned)) for t in page]
+            return {"items": rows, "total": len(pool), "limit": limit, "offset": offset,
+                    "projects": names, "assignees": people}
+        finally:
+            _release(store)
+
+    @app.get("/api/tasks/{task_id}", dependencies=[guard])
+    def task_detail(task_id: str, role: str = guard) -> dict[str, Any]:
+        """1 件の詳細（読むだけ）: 点数の内訳・由来・役割AIの実行・関係する警告と判断の履歴。"""
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        allowed = _allowed_projects(role, None)
+        store = _open_store(ledger)
+        try:
+            task = store.tasks.get(task_id)
+            if task is None or task.origin == "judgment" or (
+                    allowed is not None and task.project.lower() not in allowed):
+                raise HTTPException(status_code=404, detail="no such task")
+            parts = _parts_of(store, task, _learned_of(store))
+            briefing_text = store.side.read_doc(BRIEFING)
+            history_lines = store.side.tail(DECISIONS, 2000)
+            detail = _task_row(task, parts)
+            detail.update({
+                "sources": task.sources[-10:], "dispatches": task.dispatches,
+                "generated_from": task.generated_from, "first_seen": task.first_seen,
+                "last_seen": task.last_seen, "started_at": task.started_at,
+                "status_since": task.status_since, "blocked_since": task.blocked_since,
+                "external_id": task.external_id or (task.key if tracker_of(task) == "jira" else None),
+                "suggestion_reason": task.suggestion_reason,
+                "filing": (task.payload or {}).get("filing") or None})
+        finally:
+            _release(store)
+        alerts: list[Any] = []
+        try:
+            alerts = [a for a in json.loads(briefing_text or "{}").get("alerts", [])
+                      if a.get("task") == task_id]
+        except ValueError:
+            pass
+        history = []
+        for line in reversed(history_lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("task") == task_id:
+                history.append(entry)
+            if len(history) >= 20:
+                break
+        detail.update({"alerts": alerts, "history": history})
+        return detail
+
+    _health_cache: dict[str, tuple[float, bool]] = {}
+
+    def _adapter_healthy(name: str) -> bool:
+        """アダプタの疎通。外部サービスへ問い合わせることがあるので、30 秒は覚えておく。"""
+        now = time.monotonic()
+        hit = _health_cache.get(name)
+        if hit is not None and now - hit[0] < 30:
+            return hit[1]
+        try:
+            ok = bool(engine.adapters.get(name).health_check())
+        except Exception:                                # noqa: BLE001 — 疎通できないだけで、画面は落とさない
+            ok = False
+        _health_cache[name] = (now, ok)
+        return ok
+
+    @app.get("/api/integrations", dependencies=[guard])
+    def integrations(role: str = guard) -> dict[str, Any]:
+        """連携の状態（読むだけ）: アダプタの疎通と書き戻せるか、収集の直近の結果、WBS ファイルの検査、
+        起票の設定、メンバーのアカウントの対応表。
+
+        担当者の名前からの引き当て（Plane・OpenProject）は外部サービスへの問い合わせなので、ここでは
+        しない。`aipmo members` で事前に確かめる。組織全体の情報なので、範囲を限られた viewer には出さない。
+        The state of the integrations, read-only. Name lookups need the tracker, so they are not done
+        here (`aipmo members` does them). Org-wide, hence not for a scoped viewer.
+        """
+        if role == "viewer" and scoped_projects is not None:
+            raise HTTPException(status_code=403, detail="not available to a scoped viewer")
+        writable = writable_trackers(engine.adapters)
+        adapters = [{"name": name, "healthy": _adapter_healthy(name), "writeback": name in writable}
+                    for name in sorted(engine.adapters.names())]
+        briefing: dict[str, Any] = {}
+        ledger = pmo_ledger
+        if ledger is not None:
+            try:
+                briefing = json.loads(_side_doc(ledger, BRIEFING) or "{}")
+            except (OSError, ValueError, HTTPException):
+                briefing = {}
+        filing_info = None
+        if filing is not None:
+            pending = (briefing.get("filing") or {}).get("pending") or []
+            filing_info = {"tracker": filing.tracker, "auto": list(filing.auto),
+                           "can_file": engine.adapters.has(filing.tracker), "pending": len(pending)}
+        accounts = [{"member": m.name, "is_agent": m.is_agent, "accounts": dict(m.accounts)}
+                    for m in (members or [])]
+        return {"adapters": adapters, "collection": briefing.get("collection"),
+                "wbs": briefing.get("wbs_drift"), "filing": filing_info,
+                "accounts": accounts, "lookup_assignees": lookup_assignees,
+                "generated_at": briefing.get("generated_at")}
+
+    @app.get("/api/learning/members", dependencies=[guard])
+    def learning_members(role: str = guard) -> dict[str, Any]:
+        """メンバーごとの実績と、学習で補正した上限・ペース（読むだけ）。補正の根拠を見せるための API。
+
+        実績は台帳の完了の記録。補正の係数は常駐が学習した pmo-learned。組織全体の数字なので、
+        プロジェクトを限定された viewer には出さない。
+        Per-member track record and the learned corrections, read-only, so the screen can show why a
+        capacity was adjusted. Org-wide, hence not for a scoped viewer.
+        """
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        if role == "viewer" and scoped_projects is not None:
+            raise HTTPException(status_code=403, detail="not available to a scoped viewer")
+        store = _open_store(ledger)
+        try:
+            outcomes = [dict(o) for o in store.outcomes]
+            load: dict[str, int] = {}
+            for t in store.tasks.values():
+                if not t.done and not t.proposed and t.origin != "judgment" and t.assignee:
+                    load[t.assignee.lower()] = load.get(t.assignee.lower(), 0) + 1
+            learned = _learned_of(store)
+        finally:
+            _release(store)
+        factors = learned.get("member_factor") or {}
+        pace = learned.get("pace") or {}
+        by_name: dict[str, list[dict[str, Any]]] = {}
+        for o in outcomes:
+            if o.get("assignee"):
+                by_name.setdefault(str(o["assignee"]).lower(), []).append(o)
+        names = {m.name.lower(): m for m in (members or [])}
+        rows = []
+        for key in sorted(set(names) | set(by_name), key=lambda k: (names[k].name if k in names else k)):
+            member = names.get(key)
+            done = by_name.get(key, [])
+            dated = [o for o in done if o.get("late_days") is not None]
+            factor = factors.get(key, 1.0)
+            capacity = member.capacity if member else None
+            rows.append({
+                "name": member.name if member else key,
+                "is_agent": bool(member and member.is_agent),
+                "capacity": capacity, "factor": factor,
+                "effective_capacity": (max(1, round(capacity * factor)) if capacity else None),
+                "load": load.get(key, 0),
+                "samples": len(dated),
+                "on_time_rate": (round(sum(1 for o in dated if o["late_days"] <= 0) / len(dated), 3)
+                                 if dated else None),
+                "avg_late_days": (round(sum(o["late_days"] for o in dated) / len(dated), 1)
+                                  if dated else None),
+                "pace": (pace.get("members") or {}).get(key),
+                "recent": [{k: o.get(k) for k in ("task", "late_days", "effort", "duration_days",
+                                                 "priority", "labels", "done_at")}
+                           for o in sorted(done, key=lambda o: str(o.get("done_at")), reverse=True)[:5]]})
+        evidence = learned.get("evidence") or {}
+        return {
+            "members": rows, "samples": learned.get("samples", len(outcomes)),
+            "baseline_late_rate": learned.get("baseline_late_rate"),
+            "labels": [{"label": k, "bonus": v, **(evidence.get(f"label:{k}") or {})}
+                       for k, v in sorted((learned.get("label_bonus") or {}).items())],
+            "priorities": [{"priority": k, "delta": v, **(evidence.get(f"priority:{k}") or {})}
+                           for k, v in sorted((learned.get("priority_delta") or {}).items())],
+            "pace": {"team": pace.get("team"), "reliable": bool(pace.get("reliable")),
+                     "median_error": pace.get("median_error"), "max_error": pace.get("max_error"),
+                     "samples": pace.get("samples", 0)},
+            "generated_at": learned.get("generated_at")}
+
+    @app.get("/api/agents/reviews", dependencies=[guard])
+    def agent_reviews(limit: int = 50, project: str | None = None, role: str = guard) -> dict[str, Any]:
+        """役割AIの成果を人が確かめた履歴（新しい順。読むだけ）と、AI ごとの認めた／差し戻した件数。
+
+        判断ログの `agent_reviewed` から作る。プロジェクトを限定された viewer には、範囲内のタスクだけ。
+        The history of human reviews of role-AI results, newest first, with a per-agent tally, from the
+        decision log. A scoped viewer sees only tasks in scope.
+        """
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        limit = max(1, min(limit, 200))
+        allowed = _allowed_projects(role, project)
+        store = _open_store(ledger)
+        try:
+            lines = store.side.tail(DECISIONS, 5000)
+            titles = {t.id: (t.title, t.project) for t in store.tasks.values()}
+        finally:
+            _release(store)
+        latest: dict[tuple[Any, Any], dict[str, Any]] = {}
+        history: list[dict[str, Any]] = []
+        for line in lines:
+            if '"agent_reviewed"' not in line:
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("kind") != "agent_reviewed":
+                continue
+            title, task_project = titles.get(entry.get("task"), (None, ""))
+            if allowed is not None and (task_project or "").lower() not in allowed:
+                continue
+            entry["title"], entry["project"] = title, task_project
+            latest[(entry.get("task"), entry.get("dispatch"))] = entry
+            history.append(entry)
+        tally: dict[str, dict[str, int]] = {}
+        for entry in latest.values():                 # 同じ実行を何度か確かめたら、最後の判断だけ数える
+            counts = tally.setdefault(str(entry.get("agent", "")), {"accepted": 0, "rejected": 0})
+            if entry.get("decision") in counts:
+                counts[entry["decision"]] += 1
+        history.reverse()
+        return {"items": history[:limit], "total": len(history), "tally": tally}
+
+    @app.get("/api/judgment/control", dependencies=[guard])
+    def judgment_control_state() -> dict[str, Any]:
+        """止める・戻すの依頼の現在値（読むだけ）。常駐は次の周でこれを読むので、画面は依頼済みかどうかを出す。"""
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        store = _open_store(ledger, sync=False)
+        try:
+            return {"control": read_control(store.side)}
+        finally:
+            _release(store)
+
+    @app.post("/api/judgment/{action}")
+    def judgment_control(action: str, request: Request, role: str = operator_guard) -> dict[str, Any]:
+        """自律的な判断を止める／再開する／遮断器を戻す（operator のみ）。
+
+        `aipmo judgment pause|resume|reset` と同じ制御の文書に書く。常駐が次の周で読む。
+        画面から変えられるのはこの 3 つだけで、自律度（off/propose/auto）は設定ファイルのまま。
+        記録は判断ログにも残す。
+        Pause, resume or reset the circuit breaker (operator only): the same control document the CLI
+        writes, read by the resident process on its next cycle. Autonomy levels stay in the config file.
+        """
+        if action not in ("pause", "resume", "reset"):
+            raise HTTPException(status_code=404, detail="unknown action")
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        stamp = datetime.now(timezone.utc).isoformat()
+        changes: dict[str, dict[str, Any]] = {"pause": {"paused": True, "paused_at": stamp},
+                                              "resume": {"paused": False, "resumed_at": stamp},
+                                              "reset": {"reset_at": stamp}}
+        change = changes[action]
+        store = _open_store(ledger, sync=False)
+        try:
+            state = write_control(store.side, **change)
+            store.side.append(DECISIONS, json.dumps(
+                {"at": stamp, "kind": "judgment_control", "action": action, "by": role},
+                ensure_ascii=False))
+        finally:
+            _release(store)
+        logger.info("judgment %s by %s from %s", action, role, _client_ip(request))
+        return {"action": action, "control": state}
 
     @app.post("/api/pmo/proposals/decide")
     def pmo_decide(request: Request, payload: dict[str, Any],
@@ -970,6 +1353,36 @@ def create_app(
         pg = _postgres_or_503()
         result = pg.query("pending_wbs_proposals", {"tenant": tenant})
         return {"items": result["rows"]}
+
+    @app.get("/api/wbs-proposals/{proposal_id}/preview", dependencies=[guard])
+    def preview_wbs_proposal(proposal_id: str) -> dict[str, Any]:
+        """承認したらファイルがどう変わるか（書かない）。反映できない理由もそのまま返す。
+
+        What approving would do to the WBS file, without writing anything; when it cannot apply,
+        the reason is returned rather than an error.
+        """
+        pg = _postgres_or_503()
+        result = pg.query("get_wbs_proposal", {"tenant": tenant, "id": proposal_id})
+        if not result["rows"]:
+            raise HTTPException(status_code=404, detail="no such proposal")
+        row = dict(result["rows"][0])
+        out: dict[str, Any] = {"id": proposal_id, "status": row.get("status"), "applicable": False,
+                               "reason": None, "report": [], "diff": "", "changed": False,
+                               "already_applied": False, "problems": []}
+        if wbs_target is None:
+            out["reason"] = "no_target"
+            return out
+        try:
+            plan = plan_wbs_proposal(row, wbs_target)
+        except ProposalError as exc:
+            out.update(reason=exc.kind, problems=list(exc.problems), message=str(exc))
+            return out
+        if plan is None:
+            out["reason"] = "free_form"
+            return out
+        out.update(applicable=True, report=plan.report, diff=plan.diff, changed=plan.changed,
+                   already_applied=applied_before(wbs_target.decisions, proposal_id))
+        return out
 
     @app.get("/api/wbs-proposals/{proposal_id}", dependencies=[guard])
     def get_wbs_proposal(proposal_id: str) -> Any:
