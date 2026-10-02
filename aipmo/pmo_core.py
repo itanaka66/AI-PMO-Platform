@@ -44,8 +44,11 @@ from .agent_roles import (KEEP_DISPATCHES, REVIEW_DECISIONS, SETTLED_BAD, excerp
 from .filing import FilingConfig, FilingError, eligible, filing_state
 from .generation import (GenerationConfig, due_date, followup_id, period_key,
                          recurring_id, wbs_drift_id)
+from .judgment import rationale_spec
 from .judgment import (LABEL, MAX_RETRIES_PER_TASK, REMEDIES, Diagnosis, JudgmentConfig,
                        candidates, diagnose, judgment_id, rationale, read_control)
+from .messages import render, spec
+from .wbs import problem_spec as wbs_problem_spec
 from .pmo_learning import (DEFAULT_MAX_ESTIMATE_ERROR, DEFAULT_MIN_SAMPLES, LearnedModel,
                            learn)
 from .side_store import BRIEFING, CONTROL, DECISIONS, LEARNED, STATE, FileSide, SideStore
@@ -121,6 +124,8 @@ class Violation:
     task_id: str
     severity: str
     message: str
+    # 言語に依らない文章の部品（aipmo/messages.py）。画面が選んだ言語で組み立て直す。message と同じ内容。
+    spec: dict[str, Any] | None = None
 
     @property
     def key(self) -> str:
@@ -136,53 +141,53 @@ def _days_since(stamp: str | None, now: datetime) -> int | None:
 def evaluate_rule(rule: Rule, task: Task, now: datetime) -> Violation | None:
     status = (task.status or "").strip().lower()
     message: str | None = None
+    note: dict[str, Any] | None = None
 
     if rule.kind == "overdue":
         due = _parse_date(task.due_date)
         if due is not None:
             late = (now.date() - due).days
             if late >= rule.days:
-                message = f"期限を {late} 日超過（基準 {rule.days} 日）"
+                note = spec("al_overdue", late=late, base=rule.days)
     elif rule.kind == "stalled":
         if status in _IN_PROGRESS:
             held = _days_since(task.status_since, now)
             if held is not None and held >= rule.days:
-                message = f"「{task.status}」のまま {held} 日動きなし（基準 {rule.days} 日）"
+                note = spec("al_stalled", status=task.status, held=held, base=rule.days)
     elif rule.kind == "blocked_long":
         held = _days_since(task.blocked_since, now) if task.blocked else None
         if held is not None and held >= rule.days:
-            message = f"ブロックが {held} 日続いている（基準 {rule.days} 日）"
+            note = spec("al_blocked_long", held=held, base=rule.days)
     elif rule.kind == "unassigned":
         if not task.assignee:
             held = _days_since(task.first_seen, now)
             if held is not None and held >= rule.days:
-                message = f"担当者が {held} 日決まっていない（基準 {rule.days} 日）"
+                note = spec("al_unassigned", held=held, base=rule.days)
     elif rule.kind == "not_started_near_due":
         due = _parse_date(task.due_date)
         if due is not None and status in _NOT_STARTED:
             remaining = (due - now.date()).days
             if 0 <= remaining <= rule.days:
-                message = f"期限まで残り {remaining} 日だが未着手（基準 {rule.days} 日）"
+                note = spec("al_not_started", remaining=remaining, base=rule.days)
 
     elif rule.kind == "agent_attention":
         latest = latest_dispatch(task)
         if (latest is not None and latest.get("status") in SETTLED_BAD
                 and (task.assignee or "").lower() == str(latest.get("agent", "")).lower()):
             reason = latest.get("error") or ""
-            message = (f"役割AI {latest['agent']} の実行が {latest['status']} で終わりました"
-                       + (f": {reason}" if reason else "") + "（人が引き取ってください）")
+            note = spec("al_agent_failed", agent=latest["agent"], status=latest["status"],
+                        detail=f": {reason}" if reason else "")
         elif (latest is not None and review_of(latest).get("decision") == "rejected"
                 and (task.assignee or "").lower() == str(latest.get("agent", "")).lower()):
             # 人が成果を差し戻した。理由つきで、人が引き取るか、もう一度任せる。
             # A human sent the result back: take it over, or hand it over again.
-            note = review_of(latest).get("note") or ""
-            message = (f"役割AI {latest['agent']} の成果が差し戻されました"
-                       + (f": {note}" if note else "")
-                       + "（人が引き取るか、aipmo agents run でもう一度任せてください）")
+            why = review_of(latest).get("note") or ""
+            note = spec("al_agent_rejected", agent=latest["agent"], detail=f": {why}" if why else "")
 
-    if message is None:
+    if note is None:
         return None
-    return Violation(rule.id, task.id, rule.severity, message)
+    message = render("ja", note)
+    return Violation(rule.id, task.id, rule.severity, message, note)
 
 
 def evaluate_rules(rules: list[Rule], tasks: list[Task], now: datetime) -> list[Violation]:
@@ -303,6 +308,14 @@ def member_loads(tasks: list[Task], members: list[Member]) -> dict[str, int]:
                 continue
         loads[member.name] += 1
     return loads
+
+
+def suggestion_spec(task: Task, member: Member, load: int) -> dict[str, Any]:
+    """`suggest_assignee` の理由を、言語に依らない部品にしたもの（同じ内容）。`load` は選ぶ前の持ち数。"""
+    matched = sorted({label.lower() for label in task.labels} & set(member.skills))
+    if matched:
+        return spec("sg_skill", load=load, cap=member.capacity, labels=", ".join(matched))
+    return spec("sg_room", load=load, cap=member.capacity)
 
 
 def suggest_assignee(task: Task, members: list[Member],
@@ -863,6 +876,7 @@ class PmoCore:
             if picked is None:
                 continue
             member, reason = picked
+            reason_spec = suggestion_spec(task, member, loads[member.name])
             loads[member.name] += 1
             if member.is_agent and member.auto_confirm:
                 # 運用者が「この役割AIは人の確定なしでよい」と設定したときだけ。
@@ -872,6 +886,7 @@ class PmoCore:
                           assignee=member.name, reason=reason, score=task.score)
                 continue
             task.suggested_assignee, task.suggestion_reason = member.name, reason
+            task.payload["i18n_suggestion"] = {"text": reason, "spec": reason_spec}
             self._log("assignment_proposed", now, task=task.id, title=task.title,
                       assignee=member.name, reason=reason, score=task.score)
 
@@ -978,7 +993,8 @@ class PmoCore:
         summary["recent"] = [{
             "id": t.id, "title": t.title, "state": t.payload.get("state"),
             "remedy": t.payload.get("remedy"), "auto": bool(t.payload.get("auto")),
-            "at": t.first_seen, "result": t.payload.get("result")} for t in records]
+            "at": t.first_seen, "result": t.payload.get("result"),
+            "i18n": t.payload.get("i18n")} for t in records]
 
     def _level(self, remedy: str, now: datetime, tripped: bool) -> str:
         """この対処の、いまの自律度。遮断器が働いている間は auto を propose に落とす。"""
@@ -1168,17 +1184,21 @@ class PmoCore:
             # cycle must see the slot as used.
             args["reserved"] = True
         why = rationale(d, remedy, j["stats"], level)
+        why_spec = rationale_spec(d, remedy, j["stats"], level)
         attempt = 1 + sum(1 for ex in ep["executions"] if ex["remedy"] == remedy)
+        title_spec = spec("t_judgment_n" if attempt > 1 else "t_judgment",
+                          title=(d.i18n or {}).get("title") or {"text": d.title},
+                          remedy=spec(f"remedy_{remedy}"), attempt=attempt)
         record = self.task_engine.create_task(
             judgment_id(d.fingerprint, remedy, ep["first_seen"], attempt),
-            f"[判断] {d.title} → {LABEL[remedy]}" + (f"（{attempt} 回目）" if attempt > 1 else ""),
+            render("ja", title_spec),
             origin="judgment",
             proposed=(level == "propose"), project=d.project, priority="High",
             generated_from=f"judgment:{d.fingerprint}",
             payload={"state": "proposed" if level == "propose" else "approved",
                      "auto": level == "auto", "remedy": remedy, "args": args,
                      "diagnosis": d.as_dict(), "fingerprint": d.fingerprint,
-                     "rationale": why})
+                     "rationale": why, "i18n": {"title": title_spec, "rationale": why_spec}})
         if record is None:
             return 0
         ep["executions"].append({"remedy": remedy, "at": now.isoformat(), "ref": record.id,
@@ -1234,8 +1254,9 @@ class PmoCore:
             entry = self._launch_entry(d)
             return {"entry": entry.id} if entry is not None else {}
         if remedy == "followup":
-            return {"title": f"対応を決める: {d.title}", "project": d.project,
-                    "labels": ["followup", d.kind], "due_in_days": 3}
+            decide = spec("t_decide", title=(d.i18n or {}).get("title") or {"text": d.title})
+            return {"title": render("ja", decide), "project": d.project,
+                    "labels": ["followup", d.kind], "due_in_days": 3, "i18n": {"title": decide}}
         return {}
 
     # -- 実行 / execution ----------------------------------------------------------------
@@ -1330,7 +1351,8 @@ class PmoCore:
                 project=str(args.get("project") or ""), priority="High",
                 due_date=due_date(now, int(args.get("due_in_days", 3))),
                 labels=tuple(args.get("labels") or ("followup",)),
-                generated_from=f"judgment:{task_id}")
+                generated_from=f"judgment:{task_id}",
+                payload={"i18n": args["i18n"]} if args.get("i18n") else None)
             return "executed", {"task": created.id if created else f"{task_id}:task"}
         return "failed", {"error": f"知らない対処: {remedy}"}
 
@@ -1432,13 +1454,16 @@ class PmoCore:
             raised = (open_alerts.get(violation.key) or {}).get("raised_at")
             if not raised or (now - datetime.fromisoformat(raised)).days < follow.after_days:
                 continue
+            title_spec = spec("t_followup", title={"text": task.title},
+                              reason=violation.spec or {"text": violation.message})
             proposal = self.task_engine.create_task(
                 followup_id(violation.rule, task.id, raised),
-                f"対応を決める: {task.title} — {violation.message}",
+                render("ja", title_spec),
                 origin="followup", proposed=True, project=task.project,
                 priority=follow.priority, due_date=due_date(now, follow.due_in_days),
                 labels=(*follow.labels, violation.rule),
-                generated_from=f"alert:{violation.key}")
+                generated_from=f"alert:{violation.key}",
+                payload={"i18n": {"title": title_spec}})
             if proposal is None:
                 continue
             created.append(proposal.id)
@@ -1507,11 +1532,14 @@ class PmoCore:
             leaf = leaves[str(problem.node)]
             task_id = wbs_drift_id(problem.code, leaf.id, now.isoformat())
             open_[key] = {"id": task_id, "raised_at": now.isoformat()}
+            title_spec = spec("t_wbs", id=leaf.id, name={"text": leaf.name},
+                              reason=wbs_problem_spec(problem))
             proposal = self.task_engine.create_task(
                 task_id, f"WBS を確かめる: {leaf.id} {leaf.name} — {problem.message}",
                 origin="followup", proposed=True, project=watch.project or wbs.id,
                 priority=watch.priority, due_date=due_date(now, watch.due_in_days),
-                labels=(*watch.labels, problem.code), generated_from=f"wbs:{key}")
+                labels=(*watch.labels, problem.code), generated_from=f"wbs:{key}",
+                payload={"i18n": {"title": title_spec}})
             if proposal is None:
                 continue
             report["created"].append(proposal.id)
@@ -2046,12 +2074,16 @@ class PmoCore:
                 {"rule": v.rule, "task": v.task_id,
                  "title": by_id[v.task_id].title if v.task_id in by_id else v.task_id,
                  "project": by_id[v.task_id].project if v.task_id in by_id else "",
-                 "severity": v.severity, "message": v.message}
+                 "severity": v.severity, "message": v.message, "i18n": v.spec}
                 for v in violations
             ],
             "assignment_proposals": [
                 {"task": t.id, "title": t.title, "assignee": t.suggested_assignee,
-                 "reason": t.suggestion_reason, "project": t.project}
+                 "reason": t.suggestion_reason, "project": t.project,
+                 "i18n": ({"spec": t.payload["i18n_suggestion"]["spec"]}
+                          if t.suggestion_reason
+                          and (t.payload.get("i18n_suggestion") or {}).get("text") == t.suggestion_reason
+                          else None)}
                 for t in active if t.suggested_assignee
             ],
             "unassignable": [

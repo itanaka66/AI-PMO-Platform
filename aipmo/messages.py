@@ -5,12 +5,15 @@
 キー 1 つにつき 8 言語（ja en zh ko es fr de pt）を並べ、`{名前}` の差し込みは全言語で同じにする
 （`tests/test_messages.py` が確かめる）。
 
-ここに**無い**もの：台帳に保存された文章（警告・診断・提案のタイトル・理由）は、書いた時点の言語のまま
-出る。タスク名や課題管理ツールの文章も同じ。訳すのは、サーバーが毎回組み立てる部分だけ。
+常駐が書く警告・診断・生成タスクの題名・判断の理由・担当の提案の理由は、日本語の文章に加えて
+`{"key", "params"}` の部品（下の `spec` / `render`）を添えて残す。画面はその部品から、選んだ言語で組み立て直す。
+部品の無い古い記録や、タスク名・エラー文などのデータは、書かれたまま出る。保存される日本語の文章は、
+部品を日本語で組み立てたものと必ず同じ（`tests/test_messages.py` が確かめる）ので、CLI・Slack の表示は変わらない。
 
-Wording for the sentences the server builds on each request (inbox, score parts, WBS notes). One key,
-eight languages, identical `{placeholders}`. Text already stored in the ledger (alerts, diagnoses,
-proposal titles) stays in the language it was written in; only what is composed per request is translated.
+Wording for the sentences the server builds (inbox, score parts, WBS notes) and for the structured specs
+the resident process stores next to its Japanese text (alerts, diagnoses, generated titles, rationales).
+One key, eight languages, identical `{placeholders}`. Screens rebuild a sentence from its spec in the chosen
+language; records without a spec, and data such as task names, are shown as written.
 """
 from __future__ import annotations
 
@@ -137,6 +140,48 @@ _M: dict[str, tuple[str, ...]] = {
     "ev_phrase_missing": ("{path} に「{phrase}」が見つかりません", "\"{phrase}\" was not found in {path}", "在 {path} 中找不到“{phrase}”", "{path}에서 '{phrase}'을(를) 찾을 수 없습니다", "No se encontró «{phrase}» en {path}", "« {phrase} » est introuvable dans {path}", "„{phrase}“ wurde in {path} nicht gefunden", "«{phrase}» não foi encontrado em {path}"),
     "ev_outside_root": ("ルート外・絶対パスは使えません: {path}", "Absolute paths and paths outside the root are not allowed: {path}", "不能使用根目录之外的路径或绝对路径：{path}", "루트 밖·절대 경로는 사용할 수 없습니다: {path}", "No se permiten rutas absolutas ni fuera de la raíz: {path}", "Les chemins absolus ou hors racine sont interdits : {path}", "Absolute Pfade und Pfade außerhalb der Wurzel sind nicht erlaubt: {path}", "Caminhos absolutos ou fora da raiz não são permitidos: {path}"),
     "ev_bad_path": ("パスを解釈できません: {path}", "The path cannot be interpreted: {path}", "无法解析路径：{path}", "경로를 해석할 수 없습니다: {path}", "No se puede interpretar la ruta: {path}", "Le chemin est illisible : {path}", "Der Pfad ist nicht interpretierbar: {path}", "Não foi possível interpretar o caminho: {path}"),
+    # ---- 警告（進捗ルール）/ alerts ----
+    "al_overdue": ("期限を {late} 日超過（基準 {base} 日）", "{late} day(s) past the due date (threshold {base})", "已超期 {late} 天（基准 {base} 天）", "기한을 {late}일 초과(기준 {base}일)", "{late} día(s) de retraso (umbral {base})", "{late} jour(s) de retard (seuil {base})", "{late} Tag(e) überfällig (Schwelle {base})", "{late} dia(s) de atraso (limite {base})"),
+    "al_stalled": ("「{status}」のまま {held} 日動きなし（基準 {base} 日）", "No movement for {held} day(s) in \"{status}\" (threshold {base})", "停留在“{status}”已 {held} 天无进展（基准 {base} 天）", "'{status}' 상태로 {held}일간 움직임 없음(기준 {base}일)", "Sin avance durante {held} día(s) en «{status}» (umbral {base})", "Aucun mouvement depuis {held} jour(s) en « {status} » (seuil {base})", "{held} Tag(e) ohne Bewegung in „{status}“ (Schwelle {base})", "Sem movimento há {held} dia(s) em «{status}» (limite {base})"),
+    "al_blocked_long": ("ブロックが {held} 日続いている（基準 {base} 日）", "Blocked for {held} day(s) (threshold {base})", "已阻塞 {held} 天（基准 {base} 天）", "차단이 {held}일째 계속됨(기준 {base}일)", "Bloqueada desde hace {held} día(s) (umbral {base})", "Bloquée depuis {held} jour(s) (seuil {base})", "Seit {held} Tag(en) blockiert (Schwelle {base})", "Bloqueada há {held} dia(s) (limite {base})"),
+    "al_unassigned": ("担当者が {held} 日決まっていない（基準 {base} 日）", "No assignee for {held} day(s) (threshold {base})", "{held} 天未确定负责人（基准 {base} 天）", "담당자가 {held}일째 정해지지 않음(기준 {base}일)", "Sin responsable desde hace {held} día(s) (umbral {base})", "Aucun assigné depuis {held} jour(s) (seuil {base})", "Seit {held} Tag(en) ohne Zuständigen (Schwelle {base})", "Sem responsável há {held} dia(s) (limite {base})"),
+    "al_not_started": ("期限まで残り {remaining} 日だが未着手（基準 {base} 日）", "{remaining} day(s) until the due date but not started (threshold {base})", "距截止还有 {remaining} 天但尚未开始（基准 {base} 天）", "기한까지 {remaining}일 남았지만 미착수(기준 {base}일)", "Quedan {remaining} día(s) para el vencimiento y no ha empezado (umbral {base})", "Plus que {remaining} jour(s) avant l'échéance et pas commencée (seuil {base})", "Noch {remaining} Tag(e) bis zur Fälligkeit, aber nicht begonnen (Schwelle {base})", "Faltam {remaining} dia(s) para o prazo e não foi iniciada (limite {base})"),
+    "al_agent_failed": ("役割AI {agent} の実行が {status} で終わりました{detail}（人が引き取ってください）", "The role AI {agent}'s run ended as {status}{detail} (a person should take over)", "角色 AI {agent} 的执行以 {status} 结束{detail}（请人工接手）", "역할 AI {agent}의 실행이 {status}(으)로 끝났습니다{detail}(사람이 맡아 주세요)", "La ejecución de la IA de rol {agent} terminó en {status}{detail} (una persona debe asumirla)", "L'exécution de l'IA de rôle {agent} s'est terminée en {status}{detail} (une personne doit reprendre)", "Der Lauf der Rollen-KI {agent} endete mit {status}{detail} (bitte von Hand übernehmen)", "A execução da IA de função {agent} terminou em {status}{detail} (uma pessoa deve assumir)"),
+    "al_agent_rejected": ("役割AI {agent} の成果が差し戻されました{detail}（人が引き取るか、aipmo agents run でもう一度任せてください）", "The role AI {agent}'s result was sent back{detail} (take it over, or hand it over again with aipmo agents run)", "角色 AI {agent} 的成果被退回{detail}（请人工接手，或用 aipmo agents run 再次委托）", "역할 AI {agent}의 성과가 반려되었습니다{detail}(사람이 맡거나 aipmo agents run으로 다시 맡기세요)", "El resultado de la IA de rol {agent} fue devuelto{detail} (asúmalo o vuelva a encargarlo con aipmo agents run)", "Le résultat de l'IA de rôle {agent} a été renvoyé{detail} (reprenez-le ou confiez-le à nouveau avec aipmo agents run)", "Das Ergebnis der Rollen-KI {agent} wurde zurückgewiesen{detail} (selbst übernehmen oder mit aipmo agents run neu vergeben)", "O resultado da IA de função {agent} foi devolvido{detail} (assuma ou entregue de novo com aipmo agents run)"),
+
+    # ---- 診断 / diagnoses ----
+    "dg_overload": ("{name} の負荷が上限を超えています（{load}/{cap}）", "{name} is over capacity ({load}/{cap})", "{name} 的负荷超过上限（{load}/{cap}）", "{name}의 부하가 상한을 넘었습니다({load}/{cap})", "{name} supera su capacidad ({load}/{cap})", "{name} dépasse sa capacité ({load}/{cap})", "{name} ist überlastet ({load}/{cap})", "{name} excede a capacidade ({load}/{cap})"),
+    "dg_overload_ev1": ("未完了 {load} 件に対して上限 {cap} 件", "{load} open task(s) against a limit of {cap}", "未完成 {load} 项，上限为 {cap} 项", "미완료 {load}건, 상한 {cap}건", "{load} tarea(s) abiertas frente a un límite de {cap}", "{load} tâche(s) ouvertes pour une limite de {cap}", "{load} offene Aufgabe(n) bei einem Limit von {cap}", "{load} tarefa(s) abertas para um limite de {cap}"),
+    "dg_overload_ev2": ("うち点数 60 以上の高リスクが {n} 件: {titles}", "{n} of them are high-risk (score 60 or more): {titles}", "其中得分 60 以上的高风险任务 {n} 项：{titles}", "그중 점수 60 이상의 고위험이 {n}건: {titles}", "{n} de ellas son de alto riesgo (60 puntos o más): {titles}", "dont {n} à haut risque (score 60 ou plus) : {titles}", "davon {n} mit hohem Risiko (ab 60 Punkten): {titles}", "{n} delas são de alto risco (60 pontos ou mais): {titles}"),
+    "dg_project_risk": ("プロジェクト {project} のリスクが {level}（警告 {n} 件）", "Project {project} is at {level} risk ({n} alert(s))", "项目 {project} 的风险为 {level}（警告 {n} 条）", "프로젝트 {project}의 위험이 {level}입니다(경고 {n}건)", "El proyecto {project} está en riesgo {level} ({n} alerta(s))", "Le projet {project} est à risque {level} ({n} alerte(s))", "Projekt {project} hat Risikostufe {level} ({n} Warnung(en))", "O projeto {project} está em risco {level} ({n} alerta(s))"),
+    "dg_project_ev": ("{title} — {message}", "{title} — {message}", "{title} — {message}", "{title} — {message}", "{title} — {message}", "{title} — {message}", "{title} — {message}", "{title} — {message}"),
+    "dg_agent_failure": ("役割AI {agent} の実行が失敗しています（{n} 件）", "The role AI {agent} has failing runs ({n})", "角色 AI {agent} 的执行失败（{n} 项）", "역할 AI {agent}의 실행이 실패하고 있습니다({n}건)", "La IA de rol {agent} tiene ejecuciones fallidas ({n})", "L'IA de rôle {agent} a des exécutions en échec ({n})", "Die Rollen-KI {agent} hat fehlgeschlagene Läufe ({n})", "A IA de função {agent} tem execuções com falha ({n})"),
+    "dg_agent_ev": ("{title}: {error}", "{title}: {error}", "{title}：{error}", "{title}: {error}", "{title}: {error}", "{title} : {error}", "{title}: {error}", "{title}: {error}"),
+    "dg_collection": ("進捗の自動収集がうまくいっていません", "Automatic progress collection is not working well", "自动进度收集运行不佳", "진행 상황 자동 수집이 잘 되지 않습니다", "La recogida automática de avance no funciona bien", "La collecte automatique de l'avancement ne se passe pas bien", "Die automatische Fortschrittserfassung läuft nicht richtig", "A coleta automática de progresso não está funcionando bem"),
+    "dg_coll_all_failed": ("全ての収集元が失敗: {errors}", "Every source failed: {errors}", "所有收集源均失败：{errors}", "모든 수집원이 실패: {errors}", "Fallaron todas las fuentes: {errors}", "Toutes les sources ont échoué : {errors}", "Alle Quellen sind fehlgeschlagen: {errors}", "Todas as fontes falharam: {errors}"),
+    "dg_coll_failed": ("再読み込みの失敗が {n} 件", "{n} re-read failure(s)", "重新读取失败 {n} 项", "재읽기 실패 {n}건", "{n} fallo(s) al releer", "{n} échec(s) de relecture", "{n} Fehler beim erneuten Lesen", "{n} falha(s) ao reler"),
+    "dg_coll_stale": ("最後の収集から {hours} 時間", "{hours} hour(s) since the last collection", "距上次收集已 {hours} 小时", "마지막 수집 후 {hours}시간", "{hours} hora(s) desde la última recogida", "{hours} heure(s) depuis la dernière collecte", "{hours} Stunde(n) seit der letzten Erfassung", "{hours} hora(s) desde a última coleta"),
+    "dg_capacity": ("割り当て先の空きが無い未完了タスクが {n} 件あります", "{n} open task(s) have nobody with room to take them", "有 {n} 项未完成任务没有可分配的人选", "배정할 여유가 없는 미완료 작업이 {n}건 있습니다", "Hay {n} tarea(s) abiertas sin nadie con hueco para asumirlas", "{n} tâche(s) ouvertes sans personne de disponible", "{n} offene Aufgabe(n) ohne freie Kapazität", "Há {n} tarefa(s) abertas sem ninguém com espaço"),
+    "dg_example": ("例: {titles}", "e.g. {titles}", "例如：{titles}", "예: {titles}", "p. ej.: {titles}", "p. ex. : {titles}", "z. B.: {titles}", "p. ex.: {titles}"),
+    "dg_estimate": ("見積りとペースでは期限に間に合わないタスクが {n} 件あります", "{n} task(s) cannot make their due date at the estimated pace", "按估算与节奏有 {n} 项任务赶不上截止日", "추정과 페이스로는 기한을 맞출 수 없는 작업이 {n}건 있습니다", "{n} tarea(s) no llegan a su vencimiento con el ritmo estimado", "{n} tâche(s) ne tiendront pas l'échéance au rythme estimé", "{n} Aufgabe(n) schaffen die Frist beim geschätzten Tempo nicht", "{n} tarefa(s) não cumprem o prazo no ritmo estimado"),
+
+    # ---- 生成されるタスクの題名 / generated task titles ----
+    "t_followup": ("対応を決める: {title} — {reason}", "Decide how to respond: {title} — {reason}", "决定如何应对：{title} — {reason}", "대응 결정: {title} — {reason}", "Decidir la respuesta: {title} — {reason}", "Décider de la réponse : {title} — {reason}", "Reaktion festlegen: {title} — {reason}", "Decidir a resposta: {title} — {reason}"),
+    "t_decide": ("対応を決める: {title}", "Decide how to respond: {title}", "决定如何应对：{title}", "대응 결정: {title}", "Decidir la respuesta: {title}", "Décider de la réponse : {title}", "Reaktion festlegen: {title}", "Decidir a resposta: {title}"),
+    "t_wbs": ("WBS を確かめる: {id} {name} — {reason}", "Check the WBS: {id} {name} — {reason}", "核对 WBS：{id} {name} — {reason}", "WBS 확인: {id} {name} — {reason}", "Revisar el WBS: {id} {name} — {reason}", "Vérifier le WBS : {id} {name} — {reason}", "WBS prüfen: {id} {name} — {reason}", "Verificar o WBS: {id} {name} — {reason}"),
+    "t_judgment": ("[判断] {title} → {remedy}", "[Judgment] {title} → {remedy}", "[判断] {title} → {remedy}", "[판단] {title} → {remedy}", "[Juicio] {title} → {remedy}", "[Jugement] {title} → {remedy}", "[Beurteilung] {title} → {remedy}", "[Julgamento] {title} → {remedy}"),
+    "t_judgment_n": ("[判断] {title} → {remedy}（{attempt} 回目）", "[Judgment] {title} → {remedy} (attempt {attempt})", "[判断] {title} → {remedy}（第 {attempt} 次）", "[판단] {title} → {remedy}({attempt}회째)", "[Juicio] {title} → {remedy} (intento {attempt})", "[Jugement] {title} → {remedy} (tentative {attempt})", "[Beurteilung] {title} → {remedy} (Versuch {attempt})", "[Julgamento] {title} → {remedy} (tentativa {attempt})"),
+
+    # ---- 判断の理由 / judgment rationale ----
+    "ra_main": ("{title}。{remedy}を選んだ。根拠: {evidence}。{history}。{how}。", "{title}. Chose: {remedy}. Evidence: {evidence}. {history}. {how}.", "{title}。选择了：{remedy}。依据：{evidence}。{history}。{how}。", "{title}. 선택: {remedy}. 근거: {evidence}. {history}. {how}.", "{title}. Se eligió: {remedy}. Base: {evidence}. {history}. {how}.", "{title}. Choix : {remedy}. Éléments : {evidence}. {history}. {how}.", "{title}. Gewählt: {remedy}. Grundlage: {evidence}. {history}. {how}.", "{title}. Escolhida: {remedy}. Base: {evidence}. {history}. {how}."),
+    "ra_history": ("過去の実績: 効いた {ok} 回・効かなかった {bad} 回（効く見込み {rate}）", "Track record: worked {ok} time(s), did not work {bad} time(s) (expected to work: {rate})", "历史实绩：有效 {ok} 次、无效 {bad} 次（预计有效率 {rate}）", "과거 실적: 효과 {ok}회·효과 없음 {bad}회(효과 예상 {rate})", "Historial: funcionó {ok} vez/veces, no funcionó {bad} (probabilidad de funcionar: {rate})", "Historique : a fonctionné {ok} fois, sans effet {bad} fois (chance de réussite : {rate})", "Bisherige Erfahrung: wirkte {ok}-mal, wirkte nicht {bad}-mal (erwartete Wirkung: {rate})", "Histórico: funcionou {ok} vez(es), não funcionou {bad} (chance de funcionar: {rate})"),
+    "ra_no_history": ("過去の実績: まだ無い（見込み 50%）", "Track record: none yet (expected 50%)", "历史实绩：暂无（预计 50%）", "과거 실적: 아직 없음(예상 50%)", "Historial: aún ninguno (previsto 50 %)", "Historique : aucun pour l'instant (50 % attendu)", "Bisherige Erfahrung: noch keine (erwartet 50 %)", "Histórico: ainda nenhum (previsto 50%)"),
+    "ra_auto": ("自律度 auto: 実行する", "Autonomy auto: it runs", "自主程度 auto：直接执行", "자율도 auto: 실행합니다", "Autonomía auto: se ejecuta", "Autonomie auto : exécuté", "Autonomie auto: wird ausgeführt", "Autonomia auto: é executada"),
+    "ra_propose": ("自律度 propose: 提案して人の承認を待つ", "Autonomy propose: proposed and waits for human approval", "自主程度 propose：提议并等待人工批准", "자율도 propose: 제안하고 사람의 승인을 기다립니다", "Autonomía propose: se propone y espera la aprobación humana", "Autonomie propose : proposé, en attente d'approbation humaine", "Autonomie propose: wird vorgeschlagen und wartet auf Freigabe", "Autonomia propose: é proposta e aguarda aprovação humana"),
+
+    # ---- 担当の提案の理由 / assignee suggestion reasons ----
+    "sg_skill": ("スキル一致で選定（現在 {load}/{cap} 件）、一致: {labels}", "Chosen for a skill match (currently {load}/{cap}); matched: {labels}", "因技能匹配而选定（当前 {load}/{cap} 项），匹配：{labels}", "스킬 일치로 선정(현재 {load}/{cap}건), 일치: {labels}", "Elegido por coincidencia de habilidades (ahora {load}/{cap}); coincide: {labels}", "Choisi pour la compétence (actuellement {load}/{cap}) ; correspond : {labels}", "Wegen passender Fähigkeiten gewählt (derzeit {load}/{cap}); Treffer: {labels}", "Escolhido por correspondência de habilidades (agora {load}/{cap}); coincide: {labels}"),
+    "sg_room": ("空き状況で選定（現在 {load}/{cap} 件）", "Chosen for availability (currently {load}/{cap})", "因有空闲而选定（当前 {load}/{cap} 项）", "여유 상황으로 선정(현재 {load}/{cap}건)", "Elegido por disponibilidad (ahora {load}/{cap})", "Choisi pour sa disponibilité (actuellement {load}/{cap})", "Wegen freier Kapazität gewählt (derzeit {load}/{cap})", "Escolhido por disponibilidade (agora {load}/{cap})"),
 }
 
 MESSAGES: dict[str, dict[str, str]] = {key: dict(zip(LANGS, row, strict=True)) for key, row in _M.items()}
@@ -163,4 +208,111 @@ def translator(lang: str | None):
     return t
 
 
-__all__ = ["LANGS", "MESSAGES", "translate", "translator"]
+# -- 構造化された文章 / structured sentences ---------------------------------------------------
+#
+# 常駐が書く警告・診断・題名は、日本語の文章に加えて `{"key", "params"}`（または `{"text"}`）を添えて残す。
+# 画面は、その構造から選んだ言語で組み立て直す。構造の無い古い記録は、書かれたままの文章を出す。
+# The resident process stores alerts, diagnoses and titles as Japanese text plus a `{"key", "params"}`
+# spec; screens rebuild the sentence from the spec in the chosen language. Old records without one keep
+# their stored text.
+
+LIST_SEPARATOR = {"ja": "、", "zh": "、"}
+
+
+def spec(key: str, **params: Any) -> dict[str, Any]:
+    """言語に依らない文章の部品 / a language-neutral sentence spec."""
+    return {"key": key, "params": params}
+
+
+def raw(text: str) -> dict[str, Any]:
+    """訳さない文字列（タスク名・エラー文など、データ）/ untranslated data."""
+    return {"text": text}
+
+
+def render(lang: str | None, node: Any) -> str:
+    """`spec` / `raw` / 文字列 / それらのリストを、`lang` の文章にする。入れ子の差し込みも再帰で解く。"""
+    code = normalize(lang) if lang else DEFAULT_LANG
+    if node is None:
+        return ""
+    if isinstance(node, str):
+        return node
+    if isinstance(node, list):
+        return LIST_SEPARATOR.get(code, ", ").join(render(code, item) for item in node)
+    if isinstance(node, dict):
+        if "items" in node and "key" not in node:               # 区切りを指定した一覧
+            return str(node.get("sep", ", ")).join(render(code, item) for item in node["items"])
+        if "text" in node and "key" not in node:
+            return str(node["text"])
+        params = {k: render(code, v) if isinstance(v, (dict, list)) else v
+                  for k, v in (node.get("params") or {}).items()}
+        return translate(code, str(node.get("key", "")), **params)
+    return str(node)
+
+
+def localized(lang: str | None, stored: str, node: Any) -> str:
+    """構造があればその言語で、無ければ（古い記録は）書かれたままの文章を返す。"""
+    if node and normalize(lang or DEFAULT_LANG) != "ja":
+        return render(lang, node)
+    return stored
+
+
+def is_japanese(lang: str | None) -> bool:
+    return normalize(lang or DEFAULT_LANG) == "ja"
+
+
+def task_title(lang: str | None, title: str, payload: dict[str, Any] | None) -> str:
+    """生成されたタスクの題名。構造（payload.i18n.title）があれば `lang` で、無ければ書かれたまま。"""
+    node = ((payload or {}).get("i18n") or {}).get("title")
+    return localized(lang, title, node)
+
+
+def suggestion_reason(lang: str | None, reason: str | None, payload: dict[str, Any] | None) -> str:
+    """担当の提案の理由。構造の本文が、いまの理由と同じときだけ使う（古い構造を取り違えない）。"""
+    stored = (payload or {}).get("i18n_suggestion") or {}
+    if reason and stored.get("text") == reason:
+        return localized(lang, reason, stored.get("spec"))
+    return reason or ""
+
+
+def localize_alert(lang: str | None, alert: dict[str, Any]) -> dict[str, Any]:
+    if is_japanese(lang) or not alert.get("i18n"):
+        return alert
+    return {**alert, "message": render(lang, alert["i18n"])}
+
+
+def localize_diagnosis(lang: str | None, diagnosis: dict[str, Any]) -> dict[str, Any]:
+    node = diagnosis.get("i18n")
+    if is_japanese(lang) or not node:
+        return diagnosis
+    return {**diagnosis, "title": render(lang, node["title"]),
+            "evidence": [render(lang, e) for e in node.get("evidence") or []]}
+
+
+def localize_briefing(lang: str | None, briefing: dict[str, Any],
+                      reasons: dict[str, list[str]] | None = None) -> dict[str, Any]:
+    """ブリーフィングの文章を `lang` にする（元は変えない）。構造の無い古い項目は書かれたまま。
+
+    `reasons` は、タスク id → その言語の点数の内訳（上位のタスクの理由に使う）。
+    """
+    if is_japanese(lang):
+        return briefing
+    out = dict(briefing)
+    out["alerts"] = [localize_alert(lang, a) for a in briefing.get("alerts") or []]
+    if briefing.get("judgment"):
+        j = dict(briefing["judgment"])
+        j["diagnoses"] = [localize_diagnosis(lang, d) for d in j.get("diagnoses") or []]
+        j["recent"] = [{**r, "title": localized(lang, r.get("title", ""), (r.get("i18n") or {}).get("title"))}
+                       for r in j.get("recent") or []]
+        out["judgment"] = j
+    if reasons is not None:
+        out["top_priorities"] = [{**t, "reasons": reasons.get(t.get("id"), t.get("reasons"))}
+                                 for t in briefing.get("top_priorities") or []]
+    out["assignment_proposals"] = [
+        {**a, "reason": localized(lang, a.get("reason"), (a.get("i18n") or {}).get("spec"))
+         if a.get("i18n") else a.get("reason")} for a in briefing.get("assignment_proposals") or []]
+    return out
+
+
+__all__ = ["LANGS", "MESSAGES", "is_japanese", "localize_alert", "localize_briefing",
+           "localize_diagnosis", "localized", "raw", "render", "spec", "suggestion_reason",
+           "task_title", "translate", "translator"]

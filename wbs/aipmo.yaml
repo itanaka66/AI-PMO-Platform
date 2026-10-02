@@ -608,3 +608,16 @@ wbs:
             - "tests/test_messages.py::test_every_key_has_eight_languages_with_the_same_placeholders"
             - "tests/test_messages.py::test_the_inbox_is_composed_in_the_servers_language"
           notes: "台帳に保存された文章は書いた時点の言語のまま。日本語は従来と同じ文章"
+        - id: "6.27"
+          name: "常駐が書く警告・診断・題名・判断の理由を構造化して多言語にする"
+          status: done
+          effort: 4
+          depends_on: ["6.26"]
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/messages.py::def render"
+            - "aipmo/pmo_core.py::def evaluate_rule"
+            - "aipmo/judgment.py::def rationale_spec"
+            - "tests/test_messages.py::test_structured_text_is_rebuilt_in_the_servers_language"
+            - "tests/test_messages.py::test_the_japanese_text_is_the_structure_rendered_in_japanese"
+          notes: "日本語の文章は従来どおり保存し、部品を添える。部品の無い古い記録は書かれたまま"

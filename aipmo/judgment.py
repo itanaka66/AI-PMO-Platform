@@ -40,6 +40,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .messages import raw, render, spec
 from .side_store import CONTROL, SideStore
 
 AUTONOMY = ("off", "propose", "auto")
@@ -167,6 +168,9 @@ class Diagnosis:
     evidence: tuple[str, ...] = ()
     project: str = ""
     data: dict[str, Any] = field(default_factory=dict)
+    # 言語に依らない文章の部品（aipmo/messages.py）: {"title": spec, "evidence": [spec, ...]}。
+    # title / evidence と同じ内容。画面が選んだ言語で組み立て直す。
+    i18n: dict[str, Any] | None = None
 
     @property
     def fingerprint(self) -> str:
@@ -174,7 +178,8 @@ class Diagnosis:
 
     def as_dict(self) -> dict[str, Any]:
         return {"kind": self.kind, "subject": self.subject, "severity": self.severity,
-                "title": self.title, "evidence": list(self.evidence), "project": self.project}
+                "title": self.title, "evidence": list(self.evidence), "project": self.project,
+                "i18n": self.i18n}
 
 
 def _clamp(value: float, low: int = 0, high: int = 100) -> int:
@@ -183,6 +188,19 @@ def _clamp(value: float, low: int = 0, high: int = 100) -> int:
 
 def _titles(tasks: list[Any], limit: int = 3) -> str:
     return "、".join(t.title[:30] for t in tasks[:limit])
+
+
+def _title_list(tasks: list[Any], limit: int = 3) -> list[dict[str, Any]]:
+    return [raw(t.title[:30]) for t in tasks[:limit]]
+
+
+def _diagnosis(kind: str, subject: str, severity: int, title: dict[str, Any],
+               evidence: list[dict[str, Any]], *, project: str = "",
+               data: dict[str, Any] | None = None) -> Diagnosis:
+    """文章の部品から診断を作る。title / evidence は日本語の文章（従来どおり）、i18n に部品を残す。"""
+    return Diagnosis(kind, subject, severity, render("ja", title),
+                     tuple(render("ja", e) for e in evidence), project, data or {},
+                     {"title": title, "evidence": evidence})
 
 
 def diagnose(briefing: dict[str, Any], active: list[Any], *, now: datetime,
@@ -196,12 +214,11 @@ def diagnose(briefing: dict[str, Any], active: list[Any], *, now: datetime,
         mine = [t for t in active if (t.assignee or "").lower() == name.lower()]
         risky = [t for t in mine if t.score >= 60]
         excess = item["load"] - item["capacity"]
-        found.append(Diagnosis(
-            "overload", name, _clamp(40 + 10 * excess + 5 * len(risky)),
-            f"{name} の負荷が上限を超えています（{item['load']}/{item['capacity']}）",
-            (f"未完了 {item['load']} 件に対して上限 {item['capacity']} 件",
-             *([f"うち点数 60 以上の高リスクが {len(risky)} 件: {_titles(risky)}"] if risky else [])),
-            data={"member": name, "tasks": [t.id for t in risky]}))
+        parts = [spec("dg_overload_ev1", load=item["load"], cap=item["capacity"]),
+                 *([spec("dg_overload_ev2", n=len(risky), titles=_titles(risky))] if risky else [])]
+        title = spec("dg_overload", name=name, load=item["load"], cap=item["capacity"])
+        found.append(_diagnosis("overload", name, _clamp(40 + 10 * excess + 5 * len(risky)),
+                                title, parts, data={"member": name, "tasks": [t.id for t in risky]}))
 
     # 2. リスクの高いプロジェクト / project at risk
     for project in briefing.get("projects", []):
@@ -210,14 +227,14 @@ def diagnose(briefing: dict[str, Any], active: list[Any], *, now: datetime,
         base = 80 if project["level"] == "critical" else 60
         alerts = [a for a in briefing.get("alerts", [])
                   if (a.get("project") or "").lower() == project["project"].lower()]
-        found.append(Diagnosis(
-            "project_risk", project["project"],
-            _clamp(base + min(20, 5 * project["alert_count"])),
-            f"プロジェクト {project['project']} のリスクが {project['level']}"
-            f"（警告 {project['alert_count']} 件）",
-            tuple(f"{a['title'][:30]} — {a['message']}" for a in alerts[:3]),
-            project=project["project"], data={"project": project["project"],
-                                              "level": project["level"]}))
+        parts = [spec("dg_project_ev", title=raw(a["title"][:30]),
+                      message=a.get("i18n") or raw(a["message"])) for a in alerts[:3]]
+        title = spec("dg_project_risk", project=project["project"], level=project["level"],
+                     n=project["alert_count"])
+        found.append(_diagnosis("project_risk", project["project"],
+                                _clamp(base + min(20, 5 * project["alert_count"])), title, parts,
+                                project=project["project"],
+                                data={"project": project["project"], "level": project["level"]}))
 
     # 3. 役割AIの失敗 / role AI failures
     failing: dict[str, list[Any]] = {}
@@ -229,54 +246,54 @@ def diagnose(briefing: dict[str, Any], active: list[Any], *, now: datetime,
                     failing.setdefault(agent, []).append(task)
                 break
     for agent, tasks in failing.items():
-        found.append(Diagnosis(
-            "agent_failure", agent, _clamp(50 + 10 * len(tasks), high=90),
-            f"役割AI {agent} の実行が失敗しています（{len(tasks)} 件）",
-            tuple(f"{t.title[:30]}: {(t.dispatches[-1].get('error') or '')[:60]}" for t in tasks[:3]),
-            data={"agent": agent, "tasks": [t.id for t in tasks]}))
+        parts = [spec("dg_agent_ev", title=raw(t.title[:30]),
+                      error=raw((t.dispatches[-1].get("error") or "")[:60])) for t in tasks[:3]]
+        found.append(_diagnosis("agent_failure", agent, _clamp(50 + 10 * len(tasks), high=90),
+                                spec("dg_agent_failure", agent=agent, n=len(tasks)), parts,
+                                data={"agent": agent, "tasks": [t.id for t in tasks]}))
 
     # 4. 進捗の収集が失敗している／止まっている / collection failing or stalled
     collection = briefing.get("collection")
     if collection:
         sources = collection.get("sources") or []
         all_failed = bool(sources) and all(s.get("error") for s in sources)
-        problems = []
+        problems: list[dict[str, Any]] = []
         if collection.get("error"):
-            problems.append(collection["error"])
+            problems.append(raw(str(collection["error"])))
         elif all_failed:
-            problems.append("全ての収集元が失敗: "
-                            + "; ".join(str(s["error"])[:50] for s in sources[:2]))
+            problems.append(spec("dg_coll_all_failed",
+                                 errors=raw("; ".join(str(s["error"])[:50] for s in sources[:2]))))
         if collection.get("failed", 0) >= 3:
-            problems.append(f"再読み込みの失敗が {collection['failed']} 件")
+            problems.append(spec("dg_coll_failed", n=collection["failed"]))
         stale = False
         if collect_interval_minutes:
             try:
                 age = (now - datetime.fromisoformat(collection["at"])).total_seconds() / 60
                 stale = age > collect_interval_minutes * 3
                 if stale:
-                    problems.append(f"最後の収集から {age / 60:.0f} 時間")
+                    problems.append(spec("dg_coll_stale", hours=f"{age / 60:.0f}"))
             except (KeyError, ValueError):
                 pass
         if problems:
-            found.append(Diagnosis(
+            found.append(_diagnosis(
                 "collection_failing", "collection", 55 if stale or collection.get("error") else 45,
-                "進捗の自動収集がうまくいっていません", tuple(problems)))
+                spec("dg_collection"), problems))
 
     # 5. 容量不足 / capacity shortage
     unassignable = briefing.get("unassignable", [])
     if has_members and len(unassignable) >= 3:
-        found.append(Diagnosis(
+        found.append(_diagnosis(
             "capacity_shortage", "team", _clamp(40 + 5 * len(unassignable), high=80),
-            f"割り当て先の空きが無い未完了タスクが {len(unassignable)} 件あります",
-            (f"例: {'、'.join(u['title'][:30] for u in unassignable[:3])}",)))
+            spec("dg_capacity", n=len(unassignable)),
+            [spec("dg_example", titles=[raw(u["title"][:30]) for u in unassignable[:3]])]))
 
     # 6. 見積りでは間に合わないタスクの増加 / tasks the estimate says cannot make it
     pace_risky = [t for t in active if any("実績ペース" in r for r in t.reasons)]
     if len(pace_risky) >= 3:
-        found.append(Diagnosis(
+        found.append(_diagnosis(
             "estimate_risk", "team", _clamp(40 + 3 * len(pace_risky), high=70),
-            f"見積りとペースでは期限に間に合わないタスクが {len(pace_risky)} 件あります",
-            (f"例: {_titles(pace_risky)}",)))
+            spec("dg_estimate", n=len(pace_risky)),
+            [spec("dg_example", titles=_title_list(pace_risky))]))
     return found
 
 
@@ -330,15 +347,23 @@ def candidates(diagnosis: Diagnosis, available: set[str], episode: dict[str, Any
     return sorted(options, key=lambda r: -remedy_score(diagnosis.kind, r, stats))
 
 
-def rationale(diagnosis: Diagnosis, remedy: str, stats: dict[str, dict[str, int]],
-              level: str) -> str:
+def rationale_spec(diagnosis: Diagnosis, remedy: str, stats: dict[str, dict[str, int]],
+                   level: str) -> dict[str, Any]:
+    """判断の理由を、言語に依らない部品にしたもの（`rationale` と同じ内容）。"""
     rate = success_rate(stats, diagnosis.kind, remedy)
     record = stats.get(f"{diagnosis.kind}|{remedy}") or {}
-    history = (f"過去の実績: 効いた {record.get('ok', 0)} 回・効かなかった {record.get('bad', 0)} 回"
-               f"（効く見込み {rate:.0%}）") if record else "過去の実績: まだ無い（見込み 50%）"
-    how = {"auto": "自律度 auto: 実行する", "propose": "自律度 propose: 提案して人の承認を待つ"}[level]
-    return (f"{diagnosis.title}。{LABEL[remedy]}を選んだ。"
-            f"根拠: {'; '.join(diagnosis.evidence) or '-'}。{history}。{how}。")
+    history = (spec("ra_history", ok=record.get("ok", 0), bad=record.get("bad", 0), rate=f"{rate:.0%}")
+               if record else spec("ra_no_history"))
+    node = diagnosis.i18n or {}
+    return spec("ra_main", title=node.get("title") or raw(diagnosis.title), remedy=spec(f"remedy_{remedy}"),
+                evidence={"items": (node.get("evidence") or [raw(e) for e in diagnosis.evidence]) or [raw("-")],
+                          "sep": "; "},
+                history=history, how=spec(f"ra_{level}"))
+
+
+def rationale(diagnosis: Diagnosis, remedy: str, stats: dict[str, dict[str, int]],
+              level: str) -> str:
+    return render("ja", rationale_spec(diagnosis, remedy, stats, level))
 
 
 # =============================================================================

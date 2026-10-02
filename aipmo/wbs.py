@@ -32,7 +32,8 @@ from typing import Any
 import yaml
 
 from .adapters.risk_forecast import RiskForecastAdapter
-from .messages import translate
+from .messages import raw, render, translate
+from .messages import spec as sentence
 
 STATUSES = ("done", "in_progress", "todo", "blocked")
 _DISPLAY = {"done": "Done", "in_progress": "In Progress", "todo": "To Do",
@@ -608,15 +609,19 @@ def _tree_node(node: Node, root: Path, flags: dict[str, list[str]], critical: se
     return out
 
 
-def _localized(problem: Problem, lang: str | None) -> str:
-    """注意の文章を `lang` で。差し込み値の無いもの（構造の誤りなど）は、書かれたまま。"""
+def problem_spec(problem: Problem) -> dict[str, Any]:
+    """注意の文章を、言語に依らない部品にしたもの。差し込み値の無い誤り（構造の誤りなど）は書かれたまま。"""
     key = f"wp_{problem.code}"
     if problem.code == "evidence_missing" and problem.params:
-        why = translate(lang, problem.params["why_key"], **problem.params["why_params"])
-        return translate(lang, key, why=why)
+        return sentence(key, why=sentence(problem.params["why_key"], **problem.params["why_params"]))
     if problem.params or problem.code in ("done_without_evidence", "maybe_done", "unestimated"):
-        return translate(lang, key, **problem.params)
-    return problem.message
+        return sentence(key, **problem.params)
+    return raw(problem.message)
+
+
+def _localized(problem: Problem, lang: str | None) -> str:
+    """注意の文章を `lang` で。"""
+    return render(lang, problem_spec(problem))
 
 
 def view(wbs: Wbs, root: Path, as_of: date | None = None,

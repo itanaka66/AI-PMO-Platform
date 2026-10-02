@@ -76,7 +76,9 @@ from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
 from ..judgment import read_control, write_control
-from ..messages import translate
+from ..messages import (is_japanese, localize_briefing, suggestion_reason, task_title,
+                        translate)
+from ..messages import localize_alert as localize_alert_text
 from ..pmo_core import Member, PmoCore, scope_briefing
 from ..inbox import build_inbox
 from ..filing import FilingConfig, FilingError, eligible, filing_state, make_filer
@@ -710,6 +712,7 @@ def create_app(
         names: list[str] = []
         filing_view: dict[str, Any] | None = None
         review_view: list[dict[str, Any]] | None = None
+        reasons_by_task: dict[str, list[str]] | None = None
         if present:
             store = _open_store(ledger)                 # 1 回の借り出しで、ブリーフィングも台帳も読む
             try:
@@ -736,6 +739,11 @@ def create_app(
                                      "error": filing_state(t).get("error")}
                                     for t in sorted(waiting, key=lambda t: t.first_seen)]}
                 active = store.ranked(projects=allowed)
+                if not is_japanese(ui_lang):             # 点数の内訳は、構造（parts）から選んだ言語で
+                    learned = _learned_of(store)
+                    reasons_by_task = {
+                        t.id: [f"{p['text']} {p['points']:+d}" for p in _parts_of(store, t, learned)]
+                        for t in active[:50]}
                 pending = [t for t in store.proposals()
                            if allowed is None or t.project.lower() in allowed]
                 names = [n for n in store.projects()
@@ -753,16 +761,18 @@ def create_app(
 
         if briefing is not None and allowed is not None:
             briefing = scope_briefing(briefing, active, allowed, redact_org=confined)
+        if briefing is not None:
+            briefing = localize_briefing(ui_lang, briefing, reasons_by_task)
 
         tasks = [
-            {"id": t.id, "key": t.key, "title": t.title, "score": t.score,
+            {"id": t.id, "key": t.key, "title": task_title(ui_lang, t.title, t.payload), "score": t.score,
              "project": t.project, "tracker": tracker_of(t), "origin": t.origin,
              "dispatches": t.dispatches[-3:],
              "external_id": t.external_id or (t.key if tracker_of(t) == "jira" else None),
              "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
-             "suggestion_reason": t.suggestion_reason, "due_date": t.due_date,
-             "priority": t.priority, "status": t.status, "blocked": t.blocked,
-             "reasons": t.reasons, "templates": t.templates}
+             "suggestion_reason": suggestion_reason(ui_lang, t.suggestion_reason, t.payload),
+             "due_date": t.due_date, "priority": t.priority, "status": t.status, "blocked": t.blocked,
+             "reasons": (reasons_by_task or {}).get(t.id, t.reasons), "templates": t.templates}
             for t in active[:50]
         ]
         proposals = [{"id": t.id, "title": t.title, "project": t.project,
@@ -904,7 +914,8 @@ def create_app(
         return parts
 
     def _task_row(t: Any, parts: list[dict[str, Any]]) -> dict[str, Any]:
-        return {"id": t.id, "key": t.key, "title": t.title, "score": t.score, "parts": parts,
+        return {"id": t.id, "key": t.key, "title": task_title(ui_lang, t.title, t.payload),
+                "score": t.score, "parts": parts,
                 "project": t.project, "tracker": tracker_of(t), "origin": t.origin,
                 "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
                 "due_date": t.due_date, "priority": t.priority, "status": t.status,
@@ -983,13 +994,14 @@ def create_app(
                 "last_seen": task.last_seen, "started_at": task.started_at,
                 "status_since": task.status_since, "blocked_since": task.blocked_since,
                 "external_id": task.external_id or (task.key if tracker_of(task) == "jira" else None),
-                "suggestion_reason": task.suggestion_reason,
+                "suggestion_reason": suggestion_reason(ui_lang, task.suggestion_reason, task.payload),
                 "filing": (task.payload or {}).get("filing") or None})
         finally:
             _release(store)
         alerts: list[Any] = []
         try:
-            alerts = [a for a in json.loads(briefing_text or "{}").get("alerts", [])
+            alerts = [localize_alert_text(ui_lang, a)
+                      for a in json.loads(briefing_text or "{}").get("alerts", [])
                       if a.get("task") == task_id]
         except ValueError:
             pass

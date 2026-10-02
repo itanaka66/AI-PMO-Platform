@@ -32,7 +32,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .filing import eligible, filing_state
-from .messages import MESSAGES, translator
+from .messages import (MESSAGES, is_japanese, localized, render, suggestion_reason, task_title,
+                       translator)
 from .task_engine import Task, TaskEngine, filed_key
 
 KINDS = ("judgment", "followup", "wbs", "assignment", "review", "filing", "replan")
@@ -86,17 +87,23 @@ def _item(kind: str, ref: str, title: str, summary: str, *, project: str, urgenc
 
 # -- 種類ごとの項目 / one builder per kind --------------------------------------------------
 
-def _judgment(t: Translate, task: Task, now: datetime) -> dict[str, Any]:
+def _judgment(t: Translate, lang: str | None, task: Task, now: datetime) -> dict[str, Any]:
     payload = task.payload or {}
     diagnosis = payload.get("diagnosis") or {}
     remedy = str(payload.get("remedy") or "")
     label = t(f"remedy_{remedy}") if f"remedy_{remedy}" in MESSAGES else remedy
     effect = t(f"effect_{remedy}") if f"effect_{remedy}" in MESSAGES else ""
-    title = str(diagnosis.get("title") or task.title)
+    node = diagnosis.get("i18n") or {}
+    title = localized(lang, str(diagnosis.get("title") or task.title), node.get("title"))
+    if node.get("evidence") and not is_japanese(lang):      # 診断の根拠も、構造があれば選んだ言語で
+        evidence = [render(lang, e) for e in node["evidence"]]
+    else:
+        evidence = [str(line) for line in diagnosis.get("evidence") or []]
     sections = [
-        _section(t("j_evidence"), [str(line) for line in diagnosis.get("evidence") or []]),
+        _section(t("j_evidence"), evidence),
         _section(t("j_remedy"), [label, effect]),
-        _section(t("j_why"), [str(payload.get("rationale") or "")]),
+        _section(t("j_why"), [localized(lang, str(payload.get("rationale") or ""),
+                                        (payload.get("i18n") or {}).get("rationale"))]),
         _section(t("j_approve_h"), [t("j_approve_1"), t("j_approve_2")], "do"),
         _section(t("j_dont_h"), [t("j_dont_1"), t("j_dont_2")], "dont"),
         _section(t("j_reject_h"), [t("j_reject_1")], "dont"),
@@ -108,7 +115,7 @@ def _judgment(t: Translate, task: Task, now: datetime) -> dict[str, Any]:
                  extra={"remedy": remedy, "diagnosis_kind": diagnosis.get("kind")})
 
 
-def _proposal(t: Translate, task: Task, now: datetime) -> dict[str, Any]:
+def _proposal(t: Translate, lang: str | None, task: Task, now: datetime) -> dict[str, Any]:
     is_wbs = task.id.startswith("PMO:wb:")
     kind = "wbs" if is_wbs else "followup"
     source = task.generated_from or ""
@@ -130,21 +137,24 @@ def _proposal(t: Translate, task: Task, now: datetime) -> dict[str, Any]:
             _section(t("j_reject_h"), [t("f_reject_1")], "dont"),
         ]
         urgency = URGENCY["followup"]
-    return _item(kind, task.id, task.title, t("p_summary", priority=task.priority or "-"),
+    return _item(kind, task.id, task_title(lang, task.title, task.payload),
+                 t("p_summary", priority=task.priority or "-"),
                  project=task.project, urgency=urgency, created_at=task.first_seen, now=now,
                  sections=sections, actions=_decide_actions(t, task.id))
 
 
-def _assignment(t: Translate, task: Task, now: datetime, writeback: bool, tracker: str) -> dict[str, Any]:
+def _assignment(t: Translate, lang: str | None, task: Task, now: datetime, writeback: bool,
+                tracker: str) -> dict[str, Any]:
     who = task.suggested_assignee or ""
     sections = [
-        _section(t("a_reason"), [task.suggestion_reason or ""]),
+        _section(t("a_reason"), [suggestion_reason(lang, task.suggestion_reason, task.payload)]),
         _section(t("a_task"), [t("a_task_line", key=task.key or task.id, priority=task.priority or "-",
                                  due=task.due_date or "-", score=task.score)]),
         _section(t("a_confirm_h"), [t("a_confirm_1", who=who)]
                  + ([t("a_confirm_2", tracker=tracker)] if writeback else []), "do"),
     ]
-    return _item("assignment", task.id, task.title, t("j_summary", remedy=who), project=task.project,
+    return _item("assignment", task.id, task_title(lang, task.title, task.payload),
+                 t("j_summary", remedy=who), project=task.project,
                  urgency=URGENCY["assignment"] + min(20, task.score // 5),
                  created_at=task.first_seen, now=now, sections=sections,
                  actions=[_action("confirm", t("a_action"), "primary", "/api/pmo/assignments/accept",
@@ -244,9 +254,9 @@ def build_inbox(engine: TaskEngine, *, members: list[Any] | None = None, filing:
     for task in engine.proposals():
         if task.origin == "judgment":
             if not confined and visible(task.project):
-                items.append(_judgment(t, task, now))
+                items.append(_judgment(t, lang, task, now))
         elif visible(task.project):
-            items.append(_proposal(t, task, now))
+            items.append(_proposal(t, lang, task, now))
 
     for task in engine.tasks.values():
         if (task.suggested_assignee and not task.assignee and not task.done and not task.proposed
@@ -254,7 +264,7 @@ def build_inbox(engine: TaskEngine, *, members: list[Any] | None = None, filing:
             tracker = task.tracker or ("jira" if str(task.id).startswith("JIRA:") else "")
             writeback = bool(tracker and tracker in writable
                              and (task.external_id or (task.key if tracker == "jira" else "")))
-            items.append(_assignment(t, task, now, writeback, tracker))
+            items.append(_assignment(t, lang, task, now, writeback, tracker))
 
     if members and any(getattr(m, "is_agent", False) for m in members):
         core = PmoCore(task_engine=engine, members=members)
