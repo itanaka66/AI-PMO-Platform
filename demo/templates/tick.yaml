@@ -1,0 +1,13 @@
+name: tick
+version: "1"
+description: |
+  デモ用の「何もしない」定時テンプレート。常駐(aipmo schedule)を起動するには、定時で動く
+  テンプレートが 1 つ要るため置いてある。PMO Core の周は、これが動くたびに回る。
+  A do-nothing scheduled template so the resident `aipmo schedule` has something to run.
+
+trigger: "schedule:* * * * *"
+
+steps:
+  - id: noop
+    expression: noop
+    inputs: {ok: true}

@@ -1,0 +1,35 @@
+# デモ用の完了実績(学習の材料)。過去に終わった仕事の記録で、PMO Core が次を学ぶ:
+#   - 「bug」ラベルは遅れやすい → 順位に加点
+#   - 佐藤は遅れがち、鈴木は期限どおり → 担当の上限(キャパシティ)を補正
+#   - 見積りと実日数 → 1 ポイントあたりの日数(ペース)
+# 少なくとも 5 件ないと学習は始まらない(min_samples)。
+#
+#   done_days_ago: 何日前に終わったか   late_days: 期限に対する遅れの日数(負は前倒し)
+#   effort: 見積り   duration_days: 着手から完了までの日数
+#
+# Past completions, the material the PMO Core learns from (at least 5 are needed).
+outcomes:
+  # 佐藤: 遅れがち(特に bug)
+  - {assignee: 佐藤, labels: [bug, dev], priority: High, effort: 3, duration_days: 6, late_days: 3, done_days_ago: 40}
+  - {assignee: 佐藤, labels: [dev], priority: Medium, effort: 2, duration_days: 3, late_days: 5, done_days_ago: 33}
+  - {assignee: 佐藤, labels: [bug, dev], priority: High, effort: 5, duration_days: 9, late_days: 2, done_days_ago: 27}
+  - {assignee: 佐藤, labels: [dev], priority: Medium, effort: 3, duration_days: 5, late_days: 4, done_days_ago: 20}
+  - {assignee: 佐藤, labels: [bug, dev], priority: Highest, effort: 2, duration_days: 4, late_days: 6, done_days_ago: 13}
+  - {assignee: 佐藤, labels: [dev], priority: Low, effort: 3, duration_days: 5, late_days: 1, done_days_ago: 8}
+  # 鈴木: 期限どおり
+  - {assignee: 鈴木, labels: [dev], priority: Medium, effort: 3, duration_days: 3, late_days: 0, done_days_ago: 38}
+  - {assignee: 鈴木, labels: [bug, dev], priority: High, effort: 2, duration_days: 2, late_days: -1, done_days_ago: 31}
+  - {assignee: 鈴木, labels: [dev], priority: Medium, effort: 3, duration_days: 4, late_days: 1, done_days_ago: 24}
+  - {assignee: 鈴木, labels: [dev], priority: High, effort: 5, duration_days: 6, late_days: 0, done_days_ago: 17}
+  - {assignee: 鈴木, labels: [dev], priority: Low, effort: 2, duration_days: 2, late_days: 0, done_days_ago: 11}
+  - {assignee: 鈴木, labels: [bug, dev], priority: Medium, effort: 3, duration_days: 3, late_days: -2, done_days_ago: 5}
+  # 田中(QA)
+  - {assignee: 田中, labels: [qa], priority: Medium, effort: 2, duration_days: 3, late_days: 0, done_days_ago: 36}
+  - {assignee: 田中, labels: [qa], priority: High, effort: 3, duration_days: 4, late_days: 1, done_days_ago: 28}
+  - {assignee: 田中, labels: [qa], priority: Medium, effort: 2, duration_days: 2, late_days: 0, done_days_ago: 19}
+  - {assignee: 田中, labels: [qa], priority: Low, effort: 2, duration_days: 3, late_days: 0, done_days_ago: 10}
+  - {assignee: 田中, labels: [qa], priority: Medium, effort: 3, duration_days: 5, late_days: 2, done_days_ago: 4}
+  # 高橋(デザイン)
+  - {assignee: 高橋, labels: [design], priority: Medium, effort: 2, duration_days: 2, late_days: 0, done_days_ago: 30}
+  - {assignee: 高橋, labels: [design], priority: Low, effort: 1, duration_days: 1, late_days: 0, done_days_ago: 15}
+  - {assignee: 高橋, labels: [design], priority: Medium, effort: 3, duration_days: 4, late_days: 1, done_days_ago: 7}

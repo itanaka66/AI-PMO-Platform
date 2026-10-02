@@ -147,6 +147,7 @@ aipmo agents      # 役割AI（開発・テスト・調査…）に任せた仕�
 aipmo collect     # 課題管理ツールの進み具合を、いま台帳へ集める（読むだけ）
 aipmo generated   # PMO Core が作ったタスク（提案・定期）を見る・承認する
 aipmo ledger      # 台帳の保存先を調べる・SQLite と PostgreSQL の間を移す（migrate / migrate-to-sqlite）・隣のファイルを取り込む
+aipmo demo        # デモ用のサンプルデータを台帳（DB）に入れる・消す（--config demo/config.yaml。手順は docs/DEMO.md）
 aipmo members     # メンバーが Plane・OpenProject のどのユーザーに当たるかを確かめる（読むだけ）
 aipmo file        # 承認したタスクを課題管理ツールにも起票する（--apply で作る・--skip で見送る）
 aipmo judgment    # PMO Core の自律的な判断を見る（pause / resume / reset で止める・戻す）

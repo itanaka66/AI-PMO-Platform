@@ -1,0 +1,44 @@
+# デモ用のタスク。日付は「実行した日」からの相対で書く(いつ読み込んでも、期限切れ・間近の状況が再現される)。
+#
+#   due:          期限。今日から何日後か(負の数は期限切れ)
+#   age:          台帳に最初に現れてから何日(省略時は 4)
+#   started_days: 「着手」してから何日(In Progress のとき。省略時は age)
+#   blocked_days: ブロックされてから何日(status が Blocked のとき)
+#   assignee:     省略すると担当未定 → PMO Core が担当を「提案」する(ラベルとスキルが合う人から)
+#   effort:       見積り(ポイント)
+#
+# Sample tasks. Dates are relative to the day you load them, so overdue / due-soon situations
+# are reproduced whenever you run it.
+#
+# 仕込んだ状況 / what is staged:
+#   - 佐藤が 5 件を抱えている(上限 3) ……… 過負荷 → 自律的な判断が「提案」を出す
+#   - WEB-101 / MOB-201 / INF-330 が期限切れ ……… 警告 → 続くと対応タスクの「提案」になる
+#   - INF-301 が 6 日ブロック ……… 長期ブロックの警告
+#   - 担当未定が 4 件 ……… 担当の「提案」(確定は人)
+#   - 開発AI に 3 件 ……… 役割AIの成果が、人のレビュー待ちになる
+tasks:
+  # --- web-renewal ---------------------------------------------------------------------
+  - {key: WEB-101, title: "ログイン画面の表示が遅い", project: web-renewal, assignee: 佐藤, priority: High, due: -5, status: In Progress, started_days: 8, age: 9, effort: 3, labels: [bug, dev]}
+  - {key: WEB-102, title: "パスワード再設定メールの文面を直す", project: web-renewal, assignee: 佐藤, priority: Medium, due: 2, status: In Progress, started_days: 3, effort: 2, labels: [dev]}
+  - {key: WEB-103, title: "検索 API のタイムアウトを調べる", project: web-renewal, assignee: 佐藤, priority: High, due: 1, status: To Do, effort: 5, labels: [bug, dev]}
+  - {key: WEB-104, title: "商品一覧のページングに対応する", project: web-renewal, assignee: 佐藤, priority: Medium, due: 6, status: To Do, effort: 3, labels: [dev]}
+  - {key: WEB-105, title: "画像の配信を CDN に切り替える", project: web-renewal, assignee: 佐藤, priority: Low, due: 10, status: To Do, effort: 2, labels: [dev]}
+  - {key: WEB-106, title: "決済画面の E2E テストを作る", project: web-renewal, assignee: 田中, priority: High, due: 3, status: In Progress, started_days: 2, effort: 3, labels: [qa]}
+  - {key: WEB-107, title: "デザインシステムのボタン仕様をまとめる", project: web-renewal, assignee: 高橋, priority: Medium, due: 4, status: In Progress, started_days: 2, effort: 2, labels: [design]}
+  - {key: WEB-120, title: "会員登録フォームの入力チェックを足す", project: web-renewal, priority: Medium, due: 5, status: To Do, effort: 3, labels: [dev]}
+  - {key: WEB-125, title: "トップページのバナーを差し替える", project: web-renewal, priority: Low, due: 8, status: To Do, effort: 1, labels: [design]}
+  - {key: WEB-130, title: "ログイン仕様書の下書きを作る", project: web-renewal, assignee: 開発AI, priority: Medium, due: 4, status: To Do, effort: 2, labels: [dev]}
+  # --- mobile-app ----------------------------------------------------------------------
+  - {key: MOB-201, title: "プッシュ通知が届かない", project: mobile-app, assignee: 鈴木, priority: Highest, due: -9, status: In Progress, started_days: 12, age: 14, effort: 5, labels: [bug, dev]}
+  - {key: MOB-202, title: "アプリ起動時のクラッシュを直す", project: mobile-app, assignee: 鈴木, priority: High, due: 2, status: In Progress, started_days: 2, effort: 3, labels: [bug, dev]}
+  - {key: MOB-203, title: "設定画面にダークモードを足す", project: mobile-app, assignee: 鈴木, priority: Low, due: 12, status: To Do, effort: 3, labels: [dev]}
+  - {key: MOB-204, title: "iOS 17 での表示崩れを確認する", project: mobile-app, assignee: 田中, priority: Medium, due: 3, status: To Do, effort: 2, labels: [qa]}
+  - {key: MOB-210, title: "ストア審査用のスクリーンショットを用意する", project: mobile-app, priority: Medium, due: 7, status: To Do, effort: 2, labels: [design]}
+  - {key: MOB-220, title: "リリースノートの案を作る", project: mobile-app, assignee: 開発AI, priority: Low, due: 5, status: To Do, effort: 1, labels: [dev]}
+  # --- infra ---------------------------------------------------------------------------
+  - {key: INF-301, title: "DB バックアップの復元手順を検証する", project: infra, assignee: 鈴木, priority: High, due: 4, status: Blocked, blocked_days: 6, age: 7, effort: 3, labels: [dev]}
+  - {key: INF-310, title: "監視アラートのしきい値を見直す", project: infra, assignee: 田中, priority: Medium, due: 5, status: In Progress, started_days: 2, effort: 2, labels: [qa]}
+  - {key: INF-315, title: "サーバー証明書を更新する", project: infra, priority: High, due: 2, status: To Do, effort: 2, labels: [dev]}
+  - {key: INF-320, title: "運用手順書を見直す", project: infra, assignee: 開発AI, priority: Low, due: 9, status: To Do, effort: 2, labels: [dev]}
+  - {key: INF-325, title: "ログの保管期間の方針を確認する", project: infra, assignee: 高橋, priority: Low, due: 14, status: To Do, effort: 1, labels: [design]}
+  - {key: INF-330, title: "コスト削減案をレビューする", project: infra, assignee: 鈴木, priority: Medium, due: -2, status: To Do, age: 6, effort: 2, labels: [dev]}

@@ -1,0 +1,52 @@
+# デモ用の設定(PostgreSQL)。config.yaml との違いは、台帳の保存先だけ。
+# 1) PostgreSQL を用意する(例: docker run -d --name aipmo-demo-pg -e POSTGRES_PASSWORD=demo
+#      -e POSTGRES_DB=aipmo -p 5432:5432 postgres:16)
+# 2) 接続先を環境変数で渡す: export AIPMO_DEMO_DSN=postgresql://postgres:demo@localhost:5432/aipmo
+# 3) aipmo --config demo/config.postgres.yaml demo load
+# 台帳のテーブルは初回に自動で作られる(sql/schema.sql を流す必要はない)。tenant は demo の行だけを使う。
+#
+# Demo configuration on PostgreSQL: identical to config.yaml except where the ledger lives.
+tenant: demo
+lang: ja
+
+llm:
+  default: {provider: echo}
+
+web:
+  templates_dir: templates
+
+adapters:
+  mode: mock
+
+task_engine:
+  backend: postgres
+  dsn: ${AIPMO_DEMO_DSN}
+  # side_storage は auto(PostgreSQL ではブリーフィング・判断ログ・状態も同じデータベースに入る)
+
+pmo_core:
+  members:
+    - {name: 佐藤, skills: [dev], capacity: 3}
+    - {name: 鈴木, skills: [dev], capacity: 7}
+    - {name: 田中, skills: [qa], capacity: 3}
+    - {name: 高橋, skills: [design], capacity: 4}
+    - name: 開発AI
+      kind: agent
+      template: demo_role_ai
+      skills: [dev]
+      capacity: 2
+      auto_confirm: true
+      params: {title: "{title}"}
+  generate:
+    recurring:
+      - {id: weekly-review, title: "週次レビュー: 進捗と警告を確認する", every: week,
+         weekday: MON, assignee: 佐藤, priority: Medium, project: web-renewal}
+    followups: true
+    wbs:
+      file: wbs-demo.yaml
+      root: .
+      interval_minutes: 1
+  judgment: {}
+  filing:
+    tracker: jira
+    params: {project: DEMO}
+    labels: [pmo-ai]

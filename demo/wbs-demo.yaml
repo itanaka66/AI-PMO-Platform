@@ -1,0 +1,43 @@
+# デモ用の WBS。わざと 2 か所、現実とずれている(PMO Core がそれを見つけて、対応の「提案」にする)。
+#   2.1 ログイン機能 … 「完了」だが、証拠のファイル(evidence/login.py)が無い  → evidence_missing
+#   1.2 画面設計     … 未完了だが、証拠(evidence/screens.md)がもう揃っている → maybe_done
+wbs:
+  id: demo-product
+  name: デモ製品のリリース計画
+  deadline: null
+  nodes:
+    - id: "1"
+      name: "企画"
+      children:
+        - id: "1.1"
+          name: "要件定義"
+          status: done
+          effort: 3
+          done_on: 2026-09-10
+          evidence:
+            - "evidence/requirements.md::要件"
+        - id: "1.2"
+          name: "画面設計"
+          status: todo
+          effort: 3
+          evidence:
+            - "evidence/screens.md::画面一覧"
+    - id: "2"
+      name: "実装"
+      children:
+        - id: "2.1"
+          name: "ログイン機能"
+          status: done
+          effort: 5
+          done_on: 2026-09-20
+          evidence:
+            - "evidence/login.py::def login"
+        - id: "2.2"
+          name: "検索機能"
+          status: in_progress
+          effort: 5
+        - id: "2.3"
+          name: "決済機能"
+          status: todo
+          effort: 8
+          depends_on: ["2.1"]

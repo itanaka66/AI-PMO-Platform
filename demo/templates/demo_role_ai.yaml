@@ -1,0 +1,12 @@
+name: demo_role_ai
+version: "1"
+description: |
+  デモ用の役割AI。実際の AI は呼ばず、タスクの題名を埋め込んだ固定の文を「成果」として返す。
+  役割AIの成果を人がレビューする流れ(aipmo agents review)を、外部サービス無しで見せるためのもの。
+  A stand-in role AI for the demo: returns a fixed sentence built from the task title.
+
+steps:
+  - id: draft
+    expression: noop
+    inputs:
+      answer: "【デモの下書き】「{{ params.title }}」について、手順案と確認項目を 3 点にまとめました。(デモ用の固定文です。本物の役割AIは templates/roles/ のテンプレートを使います)"

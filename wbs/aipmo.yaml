@@ -497,3 +497,14 @@ wbs:
           effort: 3
           priority: Medium
           depends_on: ["3.12"]
+        - id: "6.17"
+          name: "デモ用のサンプルデータと、デモの操作手順"
+          status: done
+          effort: 3
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/demo.py"
+            - "demo/data/tasks.yaml"
+            - "tests/test_demo.py::test_the_guides_scenario_end_to_end"
+            - "docs/DEMO.md"
+          notes: "SQLite と PostgreSQL に入れられる。外部サービスは mock。履歴は模擬の時計で周を回して作る"

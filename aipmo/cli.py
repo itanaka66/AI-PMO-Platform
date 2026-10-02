@@ -505,7 +505,7 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
               | {e.template for e in (judgment.launches if judgment else ())})
     if wanted:
         root = Path((config.get("web") or {}).get("templates_dir", "templates"))
-        root = root if root.is_absolute() else (launch_base or Path.cwd()) / root
+        root = root if root.is_absolute() else (launch_base or base or Path.cwd()) / root
         index = _template_index(root)
         # 3時に初めて気づくより、起動時に落とす。
         # Fail at startup rather than discover a typo at 3am.
@@ -1417,6 +1417,57 @@ def cmd_wbs_proposals(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_demo(args: argparse.Namespace) -> int:
+    """デモ用のサンプルデータを台帳（DB）に入れる／消す／確かめる（docs/DEMO.md）。
+
+    `aipmo --config demo/config.yaml demo load`            … 入れる（台帳が空のとき）
+    `aipmo --config demo/config.yaml demo load --reset`    … デモのテナントの行を消して入れ直す
+    `aipmo --config demo/config.yaml demo reset`           … デモのテナントの行を消す
+    `aipmo --config demo/config.yaml demo status`          … いまの台帳の状況
+    `tenant: demo` の設定でだけ動く（別のテナントには触れない）。
+    """
+    from . import demo
+
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    try:
+        if args.demo_command == "reset":
+            result = demo.reset(config, base)
+            print(f"デモのテナントの台帳を消しました / reset ({result['backend']}): "
+                  + (", ".join(result["removed"]) or "（もともと空）"))
+            return 0
+        if args.demo_command == "status":
+            demo._require_demo(config)
+            ledger = open_ledger(config, base)
+            try:
+                core = build_pmo_core(config, ledger, base=base)
+                summary = demo.summarize(core, core.cycle())
+            finally:
+                ledger.close()
+        else:
+            summary = demo.load(config, base, do_reset=args.reset)
+    except (demo.DemoError, ConfigError) as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+    _print_demo_summary(summary, loaded=args.demo_command == "load")
+    return 0
+
+
+def _print_demo_summary(s: dict[str, Any], *, loaded: bool) -> None:
+    print(("デモのデータを入れました / demo data loaded" if loaded else "デモの台帳の状況 / demo status")
+          + f"  [{s['store']}]")
+    print(f"  タスク {s['tasks']} 件（未完了 {s['open_tasks']}）・完了実績 {s['outcomes']} 件"
+          f"（学習 {s['learned_samples']} 件）")
+    print(f"  警告 {s['alerts']} 件（全体のレベル: {s['level']}）")
+    print(f"  承認待ちの提案 {s['proposals']} 件（警告からの対応 {s['followup_proposals']}・"
+          f"WBS のずれ {s['wbs_proposals']}）・担当の提案 {s['assignment_proposals']} 件")
+    print(f"  自律的な判断 {s['judgments']} 件（承認待ち {s['judgments_pending']}）")
+    print(f"  役割AIの成果のレビュー待ち {s['reviews_pending']} 件・起票待ち {s['filing_pending']} 件")
+    if loaded:
+        print("\n次: aipmo --config demo/config.yaml pmo   /   aipmo --config demo/config.yaml serve"
+              "   （操作の手順は docs/DEMO.md）")
+
+
 def cmd_ledger(args: argparse.Namespace) -> int:
     """台帳の保存先を調べる／SQLite から PostgreSQL へ移す。"""
     from .ledger_store import (LedgerConfigError, LedgerTenantError, SqliteStore,
@@ -1692,7 +1743,10 @@ def cmd_serve(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
-    template_root = Path(web.get("templates_dir", "templates")).resolve()
+    # 相対パスは設定ファイルのあるディレクトリから見る（schedule・PMO Core と同じ）。
+    # Relative paths are taken from the config's directory, like schedule and the PMO Core.
+    template_root = Path(web.get("templates_dir", "templates"))
+    template_root = (template_root if template_root.is_absolute() else base / template_root).resolve()
     try:
         pool_settings = web_pool_settings(web)
     except ConfigError as exc:
@@ -1976,6 +2030,17 @@ def main(argv: list[str] | None = None) -> int:
                                "/ also update the assignee in the task's own tracker "
                                "(--jira is the old name)")
     p_assign.set_defaults(func=cmd_assign)
+
+    p_demo = sub.add_parser(
+        "demo", help="デモ用のサンプルデータを台帳に入れる・消す（tenant: demo の設定でだけ動く）"
+                     " / load or clear the demo sample data (tenant: demo only)")
+    demo_actions = p_demo.add_subparsers(dest="demo_command", required=True)
+    p_demo_load = demo_actions.add_parser("load", help="サンプルデータを入れる")
+    p_demo_load.add_argument("--reset", action="store_true",
+                             help="デモのテナントの行を消してから入れ直す")
+    demo_actions.add_parser("reset", help="デモのテナントの行を消す")
+    demo_actions.add_parser("status", help="いまの台帳の状況を表示")
+    p_demo.set_defaults(func=cmd_demo)
 
     p_ledger = sub.add_parser(
         "ledger", help="台帳の保存先 / the ledger's storage (info, migrate)")

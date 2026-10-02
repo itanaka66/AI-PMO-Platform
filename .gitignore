@@ -44,3 +44,9 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+
+# デモ(docs/DEMO.md)が実行時に作るもの。サンプルデータと設定は追跡する。
+# What the demo creates at run time; its sample data and configs are tracked.
+demo/pmo-*.json
+demo/pmo-*.jsonl
+demo/scheduler-state.json

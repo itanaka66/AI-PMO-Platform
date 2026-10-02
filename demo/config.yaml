@@ -1,0 +1,51 @@
+# デモ用の設定(SQLite)。外部サービスには一切つながない。
+#   - アダプタは mock(Jira への起票は、画面上だけで完結するダミー)
+#   - LLM は echo(固定の応答)。役割AIの「成果」は demo/templates/demo_role_ai.yaml の固定文
+# 使い方は docs/DEMO.md。リポジトリのルートで:
+#   aipmo --config demo/config.yaml demo load
+#
+# Demo configuration (SQLite). No external service is touched: mock adapters, the echo LLM.
+tenant: demo
+lang: ja
+
+llm:
+  default: {provider: echo}
+
+# テンプレートの場所は、この設定ファイルのあるディレクトリから見る(demo/templates)。
+web:
+  templates_dir: templates
+
+adapters:
+  mode: mock
+
+task_engine:
+  backend: sqlite            # PostgreSQL で試すなら demo/config.postgres.yaml
+  # 台帳は demo/task-ledger.db(この設定ファイルの隣)に作られる。
+
+pmo_core:
+  members:
+    - {name: 佐藤, skills: [dev], capacity: 3}
+    - {name: 鈴木, skills: [dev], capacity: 7}
+    - {name: 田中, skills: [qa], capacity: 3}
+    - {name: 高橋, skills: [design], capacity: 4}
+    - name: 開発AI                       # 役割AI(人の確定なしで任せる設定。ふつうは人が確定する)
+      kind: agent
+      template: demo_role_ai
+      skills: [dev]
+      capacity: 2
+      auto_confirm: true
+      params: {title: "{title}"}
+  generate:
+    recurring:                           # 設定に書いた定期タスク(承認なしで作られる)
+      - {id: weekly-review, title: "週次レビュー: 進捗と警告を確認する", every: week,
+         weekday: MON, assignee: 佐藤, priority: Medium, project: web-renewal}
+    followups: true                      # 続く重大な警告から、対応タスクを「提案」する(承認待ち)
+    wbs:                                 # WBS の更新漏れ・証拠の欠けを「提案」にする
+      file: wbs-demo.yaml
+      root: .
+      interval_minutes: 1
+  judgment: {}                           # 自律的な判断(既定は提案だけ。人が承認するまで何も実行しない)
+  filing:                                # 承認したタスクを課題管理ツールにも起票(ここでは mock の Jira)
+    tracker: jira
+    params: {project: DEMO}
+    labels: [pmo-ai]
