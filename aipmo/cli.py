@@ -363,6 +363,24 @@ def ledger_store_factory(config: dict[str, Any]):
     return lambda: PostgresStore(str(dsn), tenant)
 
 
+def side_storage_mode(config: dict[str, Any]) -> str:
+    """`task_engine.side_storage`（auto / file / database）。台帳の隣に置くものの置き場。
+
+    auto は、PostgreSQL なら同じデータベース、SQLite なら隣のファイル。
+    Where the briefing, decision log and state live (auto: the database for PostgreSQL, files
+    beside the ledger for SQLite).
+    """
+    from .side_store import STORAGE_MODES
+
+    section = config.get("task_engine")
+    section = section if isinstance(section, dict) else {}
+    mode = str(section.get("side_storage") or "auto").lower()
+    if mode not in STORAGE_MODES:
+        raise ConfigError(f"task_engine.side_storage が不正です: {mode!r}（auto / file / database）"
+                          f" / unknown task_engine.side_storage {mode!r}")
+    return mode
+
+
 def open_ledger(config: dict[str, Any], base: Path, **kwargs: Any):
     """台帳を開く。設定の誤り・別テナントの台帳・接続失敗は設定エラーにする。
 
@@ -376,7 +394,8 @@ def open_ledger(config: dict[str, Any], base: Path, **kwargs: Any):
     try:
         return TaskEngine(ledger_path(config, base),
                           tenant=config.get("tenant") or None,
-                          store=factory() if factory else None, **kwargs)
+                          store=factory() if factory else None,
+                          side_storage=side_storage_mode(config), **kwargs)
     except (LedgerTenantError, LedgerConfigError) as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -550,17 +569,20 @@ def build_pmo_core(config: dict[str, Any], task_engine: Any,
 
 def _wbs_target(config: dict[str, Any], base: Path):
     """Web で承認した WBS 変更提案を反映する先。`adapters.wbs_replan.file` があるときだけ。"""
-    from .task_engine import side_path
     from .wbs_proposals import Target
 
     spec = (config.get("adapters") or {}).get("wbs_replan") or {}
     if not spec.get("file"):
         return None
+    try:
+        decisions = open_ledger(config, base).side
+    except ConfigError:
+        return None
     file = Path(str(spec["file"]))
     root = Path(str(spec.get("root", ".")))
     return Target(file=(file if file.is_absolute() else base / file).resolve(),
                   root=(root if root.is_absolute() else base / root).resolve(),
-                  decisions=side_path(ledger_path(config, base), "pmo-decisions.jsonl"))
+                  decisions=decisions)
 
 
 def _web_filing(config: dict[str, Any]):
@@ -844,9 +866,11 @@ def cmd_judgment(args: argparse.Namespace) -> int:
     base = Path(args.config).resolve().parent
     command = args.judgment_command or "status"
     if command in ("pause", "resume", "reset"):
-        from .task_engine import side_path
-
-        path = side_path(ledger_path(config, base), "pmo-judgment-control.json")
+        try:
+            path = open_ledger(config, base).side      # 台帳の設定どおりの置き場に書く
+        except ConfigError as exc:
+            print(f"設定エラー / config error: {exc}", file=sys.stderr)
+            return 1
         stamp = datetime.now(timezone.utc).isoformat()
         if command == "pause":
             write_control(path, paused=True, paused_at=stamp)
@@ -1262,7 +1286,6 @@ def cmd_wbs_proposals(args: argparse.Namespace) -> int:
     `aipmo wbs proposals reject ID`        … 却下する（ファイルは変えない）
     `aipmo wbs proposals apply ID`         … 承認済みの提案を反映し直す（反映に失敗したとき）
     """
-    from .task_engine import side_path
     from .wbs_edit import WbsEditError
     from .wbs_proposals import (ProposalError, Target, apply_approved, approve, changes_of,
                                 decide, fetch, plan_for)
@@ -1285,7 +1308,11 @@ def cmd_wbs_proposals(args: argparse.Namespace) -> int:
     root = Path(args.root or spec.get("root") or ".")
     file = file if file.is_absolute() else base / file
     root = root if root.is_absolute() else base / root
-    decisions = side_path(ledger_path(config, base), "pmo-decisions.jsonl")
+    try:
+        decisions = open_ledger(config, base).side
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
     target = Target(file=file.resolve(), root=root.resolve(), decisions=decisions)
     by = args.by or __import__("getpass").getuser()
     command = args.proposals_command or "list"
@@ -1389,7 +1416,12 @@ def cmd_ledger(args: argparse.Namespace) -> int:
         print(f"タスク / tasks:      {len(target.tasks)}（未完了 {len(open_tasks)}）")
         print(f"完了実績 / outcomes: {len(target.outcomes)}")
         print(f"プロジェクト / projects: {', '.join(target.projects()) or '-'}")
+        print(f"ブリーフィング・判断ログ・状態 / side data: {target.side.describe()}")
         return 0
+
+    if args.ledger_command == "side-import":
+        return _import_side_files(target, ledger_path(config, base), args.from_dir,
+                                  overwrite=args.force)
 
     # migrate
     if target.backend != "postgres":
@@ -1427,6 +1459,33 @@ def cmd_ledger(args: argparse.Namespace) -> int:
           f"{len(moved.outcomes)} outcomes  {source_path} -> {target.describe()}")
     print("移行元のファイルは残してあります（確認後に削除してください）"
           " / the source file is left in place; delete it once you have checked")
+    # 台帳の隣のファイル（ブリーフィング・判断ログ・状態）も、置き場がデータベースなら一緒に移す。
+    # The files beside the ledger go too, when they live in the database.
+    if target.side.kind == "database":
+        _import_side_files(target, source_path, None, overwrite=False)
+    return 0
+
+
+def _import_side_files(target: Any, ledger_file: Path, from_dir: str | None, *,
+                       overwrite: bool) -> int:
+    """ローカルのファイル（台帳の隣）を、台帳の置き場（データベース）へ取り込む。移行元は消さない。"""
+    from .side_store import FileSide, import_files
+
+    if target.side.kind != "database":
+        print("取り込み先が データベース ではありません。config.yaml の task_engine.side_storage を "
+              "database にするか、PostgreSQL の台帳を使ってください "
+              "/ the target is not the database: set task_engine.side_storage: database",
+              file=sys.stderr)
+        return 1
+    source = FileSide(Path(from_dir) / Path(ledger_file).name if from_dir else ledger_file)
+    report = import_files(source, target.side, overwrite=overwrite)
+    words = {"imported": "取り込みました", "kept": "移行先にあるので残しました（上書きは --force）",
+             "absent": "移行元にありません"}
+    print(f"台帳の隣のファイル / files beside the ledger: {source.describe()} -> "
+          f"{target.side.describe()}")
+    for name, state in report.items():
+        print(f"  {name:<28} {words[state]}")
+    print("移行元のファイルは残してあります（確認後に削除してください）")
     return 0
 
 
@@ -1514,7 +1573,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
                      members=load_members((config.get("pmo_core") or {}).get("members")),
                      filing=_web_filing(config),
                      lookup_assignees=_lookup_assignees(config),
-                     wbs_target=_wbs_target(config, base))
+                     wbs_target=_wbs_target(config, base),
+                     side_storage=side_storage_mode(config))
 
     t = translator(config.get("lang"))
     shown = host if host not in ("0.0.0.0", "::") else _lan_address()
@@ -1786,6 +1846,13 @@ def main(argv: list[str] | None = None) -> int:
         "ledger", help="台帳の保存先 / the ledger's storage (info, migrate)")
     ledger_actions = p_ledger.add_subparsers(dest="ledger_command", required=True)
     ledger_actions.add_parser("info", help="保存先・件数を表示 / show store and counts")
+    p_side = ledger_actions.add_parser(
+        "side-import", help="台帳の隣のファイル（ブリーフィング・判断ログ・状態）を、"
+                            "データベースへ取り込む / import the files beside the ledger")
+    p_side.add_argument("--from-dir", metavar="DIR",
+                        help="取り込み元のディレクトリ（既定は台帳のあるディレクトリ）")
+    p_side.add_argument("--force", action="store_true",
+                        help="移行先に文書があっても上書きする（ログは足さない）")
     p_migrate = ledger_actions.add_parser(
         "migrate", help="SQLite の台帳を PostgreSQL へ移す / copy a SQLite ledger to PostgreSQL")
     p_migrate.add_argument("--from-sqlite", metavar="PATH",

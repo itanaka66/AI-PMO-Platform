@@ -350,11 +350,16 @@ wbs:
       children:
         - id: "6.1"
           name: "台帳の隣のファイル（ブリーフィング・判断ログ・状態）を DB へ"
-          status: todo
+          status: done
           effort: 5
-          priority: High
           depends_on: ["4.1"]
-          notes: "schedule と serve を別ホストに分けるために必要"
+          done_on: 2026-10-02
+          evidence:
+            - "aipmo/side_store.py"
+            - "aipmo/ledger_store.py::def side_write_doc"
+            - "tests/test_side_store.py::test_serve_on_another_host_has_no_briefing_with_files_but_has_it_with_the_database"
+            - "docs/LEDGER-STORAGE.md"
+          notes: "実 PostgreSQL 16 で契約テストと、別ディレクトリの schedule / serve の通しを確認。scheduler-state.json はホストごとのまま"
         - id: "6.2"
           name: "役割AIを Task Engine の割当に結び付ける"
           status: done

@@ -35,6 +35,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .side_store import DECISIONS, FileSide, SideStore
 from .wbs_edit import Plan, WbsEditError, plan_changes, validate_changes, write_plan
 
 APPLIED_KIND = "wbs_proposal_applied"
@@ -54,7 +55,8 @@ class Target:
     """反映先。`decisions` は反映の記録（判断ログ）。無ければ記録しない。"""
     file: Path
     root: Path
-    decisions: Path | None = None
+    # 反映の記録の置き場。ファイルの場所（Path）か、台帳の隣の置き場（SideStore）。
+    decisions: Path | SideStore | None = None
 
 
 def changes_of(row: dict[str, Any]) -> Any | None:
@@ -90,12 +92,19 @@ def plan_for(row: dict[str, Any], target: Target, *, as_of: date | None = None) 
                             "invalid", exc.problems) from exc
 
 
-def applied_before(decisions: Path | None, proposal_id: str) -> bool:
+def _log_of(decisions: Path | SideStore | None) -> SideStore | None:
+    if decisions is None or isinstance(decisions, SideStore):
+        return decisions
+    return FileSide(decisions, {DECISIONS: decisions})
+
+
+def applied_before(decisions: Path | SideStore | None, proposal_id: str) -> bool:
     """この提案を、すでに反映したか（判断ログから）。"""
-    if decisions is None or not decisions.exists():
+    log = _log_of(decisions)
+    if log is None:
         return False
     needle = f'"{APPLIED_KIND}"'
-    for line in decisions.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in log.read_log(DECISIONS, 0)[0]:
         if needle in line:
             try:
                 entry = json.loads(line)
@@ -107,14 +116,13 @@ def applied_before(decisions: Path | None, proposal_id: str) -> bool:
 
 
 def _record(target: Target, proposal_id: str, by: str, plan: Plan) -> None:
-    if target.decisions is None:
+    log = _log_of(target.decisions)
+    if log is None:
         return
     entry = {"at": datetime.now(timezone.utc).isoformat(), "kind": APPLIED_KIND,
              "proposal": proposal_id, "file": str(target.file), "by": by,
              "changes": plan.report}
-    target.decisions.parent.mkdir(parents=True, exist_ok=True)
-    with target.decisions.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    log.append(DECISIONS, json.dumps(entry, ensure_ascii=False))
 
 
 def decide(pg: Any, tenant: str, proposal_id: str, status: str, by: str,

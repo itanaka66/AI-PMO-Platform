@@ -52,6 +52,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from .side_store import SideStore, make_side
 from .trackers import TRACKERS, key_id
 from .ledger_store import (  # noqa: F401  (LedgerTenantError は従来の場所からも使える)
     LedgerConfigError,
@@ -448,6 +449,7 @@ class TaskEngine:
         stale_days: int = 30,
         tenant: str | None = None,
         store: LedgerStore | None = None,
+        side_storage: str = "auto",
     ) -> None:
         # `path` は SQLite の台帳ファイルであり、台帳の隣のファイル
         # （ブリーフィング・判断ログ）の置き場所でもある。PostgreSQL では
@@ -464,6 +466,11 @@ class TaskEngine:
         self.stale_days = stale_days
         self._lock = threading.RLock()
         self._store: LedgerStore = store if store is not None else SqliteStore(self.path)
+        # 台帳の隣に置くもの（ブリーフィング・判断ログ・状態）の置き場。PostgreSQL なら
+        # 同じデータベース、SQLite なら隣のファイル（`side_storage` で変えられる）。
+        # Where the briefing, decision log and state live: the same database for PostgreSQL,
+        # files beside the ledger for SQLite (changeable with `side_storage`).
+        self.side: SideStore = make_side(side_storage, self.path, self._store)
         self._depth = 0
         self._persisted: dict[str, str] = {}
         self._n_outcomes = 0

@@ -79,7 +79,8 @@ from ..wbs_proposals import ProposalError, approve_and_apply
 from ..wbs_proposals import Target as WbsTarget
 from ..writeback import WritebackError, make_writer, tracker_of, writable_trackers
 from ..ledger_store import LedgerConfigError, LedgerStore, LedgerTenantError
-from ..task_engine import TaskEngine, side_path
+from ..side_store import BRIEFING, DECISIONS, FileSide
+from ..task_engine import TaskEngine
 
 logger = logging.getLogger("aipmo.web")
 
@@ -178,6 +179,7 @@ def create_app(
     filing: FilingConfig | None = None,
     lookup_assignees: bool = True,
     wbs_target: WbsTarget | None = None,
+    side_storage: str = "auto",
 ):
     runs = store or RunStore()
     # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
@@ -536,11 +538,34 @@ def create_app(
     # launches templates from here. The one write is confirming an assignment,
     # and that needs operator.
 
-    def _pmo_files() -> tuple[Path, Path, Path]:
+    def _pmo_ledger() -> Path:
         if pmo_ledger is None:
             raise HTTPException(status_code=404, detail="PMO Core is not configured")
-        return (pmo_ledger, side_path(pmo_ledger, "pmo-briefing.json"),
-                side_path(pmo_ledger, "pmo-decisions.jsonl"))
+        return pmo_ledger
+
+    def _side_doc(ledger: Path, name: str) -> str | None:
+        """台帳の隣に置かれた文書（ブリーフィングなど）を読む。
+
+        台帳の設定どおりの置き場から読む：PostgreSQL なら、schedule が別のホストで書いた
+        ものも同じデータベースにある。台帳がまだ無い（schedule が一度も動いていない）ときは、
+        隣のファイルだけを見る（台帳を作らない）。
+        """
+        if _ledger_present(ledger):
+            store = _open_store(ledger)
+            try:
+                return store.side.read_doc(name)
+            finally:
+                store.close()
+        return FileSide(ledger).read_doc(name)
+
+    def _side_tail(ledger: Path, name: str, limit: int) -> list[str]:
+        if _ledger_present(ledger):
+            store = _open_store(ledger)
+            try:
+                return store.side.tail(name, limit)
+            finally:
+                store.close()
+        return FileSide(ledger).tail(name, limit)
 
     def _ledger_present(ledger: Path) -> bool:
         # PostgreSQL の台帳は、ファイルの有無では分からない（接続できれば有る）。
@@ -550,7 +575,8 @@ def create_app(
     def _open_store(ledger: Path) -> TaskEngine:
         try:
             return TaskEngine(ledger, tenant=tenant or None,
-                              store=ledger_store_factory() if ledger_store_factory else None)
+                              store=ledger_store_factory() if ledger_store_factory else None,
+                              side_storage=side_storage)
         except LedgerTenantError as exc:
             # 別テナントの台帳を指している。データには一切触れずに断る。
             # Pointed at another tenant's ledger: refuse without touching data.
@@ -585,8 +611,9 @@ def create_app(
 
     @app.get("/api/pmo", dependencies=[guard])
     def pmo_view(project: str | None = None, role: str = guard) -> dict[str, Any]:
-        ledger, briefing_file, _ = _pmo_files()
-        if not _ledger_present(ledger) and not briefing_file.exists():
+        ledger = _pmo_ledger()
+        briefing_text = _side_doc(ledger, BRIEFING)
+        if not _ledger_present(ledger) and briefing_text is None:
             raise HTTPException(status_code=404, detail="no PMO data yet")
         allowed = _allowed_projects(role, project)
         confined = role == "viewer" and scoped_projects is not None
@@ -594,7 +621,7 @@ def create_app(
         briefing = None
         age = None
         try:
-            briefing = json.loads(briefing_file.read_text(encoding="utf-8"))
+            briefing = json.loads(briefing_text or "")
             generated = datetime.fromisoformat(briefing["generated_at"])
             age = int((datetime.now(timezone.utc) - generated).total_seconds())
         except (OSError, ValueError, KeyError):
@@ -662,12 +689,12 @@ def create_app(
     @app.get("/api/pmo/decisions", dependencies=[guard])
     def pmo_decisions(limit: int = 50, project: str | None = None,
                       role: str = guard) -> dict[str, Any]:
-        ledger, _, decisions = _pmo_files()
+        ledger = _pmo_ledger()
         limit = max(1, min(limit, 200))
         allowed = _allowed_projects(role, project)
         try:
-            lines = decisions.read_text(encoding="utf-8").splitlines()
-        except OSError:
+            lines = _side_tail(ledger, DECISIONS, 2000 if allowed is not None else limit)
+        except Exception:                                # noqa: BLE001
             return {"items": []}
 
         visible: set[str] | None = None
@@ -706,7 +733,7 @@ def create_app(
     def pmo_decide(request: Request, payload: dict[str, Any],
                    role: str = operator_guard) -> dict[str, Any]:
         """PMO Core が起こした対応タスクの提案を、承認する／却下する(operator のみ)。"""
-        ledger, _, _ = _pmo_files()
+        ledger = _pmo_ledger()
         ref = str(payload.get("ref") or "")
         decision = str(payload.get("decision") or "")
         if not ref or decision not in ("approve", "reject"):
@@ -732,7 +759,7 @@ def create_app(
 
         decision は accept か reject(reject には note が要る)。役割AIはレビューできない。
         """
-        ledger, _, _ = _pmo_files()
+        ledger = _pmo_ledger()
         ref = str(payload.get("ref") or "")
         decision = str(payload.get("decision") or "")
         if not ref or decision not in ("accept", "reject"):
@@ -761,7 +788,7 @@ def create_app(
 
         課題を作るのは外の世界を変える操作なので、閲覧者には許さない。
         """
-        ledger, _, _ = _pmo_files()
+        ledger = _pmo_ledger()
         ref = str(payload.get("ref") or "")
         decision = str(payload.get("decision") or "file")
         if not ref or decision not in ("file", "skip"):
@@ -794,7 +821,7 @@ def create_app(
     @app.post("/api/pmo/assignments/accept")
     def pmo_accept(request: Request, payload: dict[str, Any],
                    role: str = operator_guard) -> dict[str, Any]:
-        ledger, _, _ = _pmo_files()
+        ledger = _pmo_ledger()
         ref = str(payload.get("ref") or "")
         if not ref:
             raise HTTPException(status_code=422, detail="ref is required")

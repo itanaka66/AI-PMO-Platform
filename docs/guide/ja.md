@@ -146,6 +146,7 @@ aipmo wbs proposals  # WBS 変更提案を見る・承認して WBS ファイル
 aipmo agents      # 役割AI（開発・テスト・調査…）に任せた仕事と、その結果（review で成果を人が確かめた記録を残す）
 aipmo collect     # 課題管理ツールの進み具合を、いま台帳へ集める（読むだけ）
 aipmo generated   # PMO Core が作ったタスク（提案・定期）を見る・承認する
+aipmo ledger      # 台帳の保存先を調べる・SQLite から PostgreSQL へ移す・隣のファイルをデータベースへ取り込む
 aipmo members     # メンバーが Plane・OpenProject のどのユーザーに当たるかを確かめる（読むだけ）
 aipmo file        # 承認したタスクを課題管理ツールにも起票する（--apply で作る・--skip で見送る）
 aipmo judgment    # PMO Core の自律的な判断を見る（pause / resume / reset で止める・戻す）

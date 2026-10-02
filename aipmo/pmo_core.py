@@ -32,9 +32,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
-import time
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -50,7 +48,8 @@ from .judgment import (LABEL, MAX_RETRIES_PER_TASK, REMEDIES, Diagnosis, Judgmen
                        candidates, diagnose, judgment_id, rationale, read_control)
 from .pmo_learning import (DEFAULT_MAX_ESTIMATE_ERROR, DEFAULT_MIN_SAMPLES, LearnedModel,
                            learn)
-from .task_engine import IN_PROGRESS_STATUSES, Task, TaskEngine, _parse_date, side_path
+from .side_store import BRIEFING, CONTROL, DECISIONS, LEARNED, STATE, FileSide, SideStore
+from .task_engine import IN_PROGRESS_STATUSES, Task, TaskEngine, _parse_date
 
 logger = logging.getLogger("aipmo.pmo_core")
 
@@ -534,6 +533,14 @@ class PmoCore:
     task_engine: TaskEngine
     rules: list[Rule] = field(default_factory=lambda: list(DEFAULT_RULES))
     members: list[Member] = field(default_factory=list)
+    # 台帳の隣に置くもの（状態・判断ログ・ブリーフィング・学習）の置き場。省略すると台帳の
+    # 設定どおり（PostgreSQL なら同じデータベース、SQLite なら隣のファイル）。下の 4 つの
+    # パスを明示すると、その場所のファイルを使う（主にテスト用）。ファイルのとき、これらの
+    # パスには実際の場所が入る。データベースのときは None。
+    # Home of the state, decision log, briefing and learned model. Default: whatever the ledger is
+    # configured with. Passing any path forces files at those places (mostly tests). With files
+    # the four paths hold the real locations; with the database they are None.
+    side: SideStore | None = None
     state_path: Path | None = None
     decisions_path: Path | None = None
     briefing_path: Path | None = None
@@ -591,11 +598,19 @@ class PmoCore:
     filer: Callable[[Task], dict[str, Any]] | None = None
 
     def __post_init__(self) -> None:
-        ledger = self.task_engine.path
-        self.state_path = self.state_path or side_path(ledger, "pmo-core-state.json")
-        self.decisions_path = self.decisions_path or side_path(ledger, "pmo-decisions.jsonl")
-        self.briefing_path = self.briefing_path or side_path(ledger, "pmo-briefing.json")
-        self.learned_path = self.learned_path or side_path(ledger, "pmo-learned.json")
+        if self.side is None:
+            explicit = {STATE: self.state_path, DECISIONS: self.decisions_path,
+                        BRIEFING: self.briefing_path, LEARNED: self.learned_path}
+            overrides = {name: path for name, path in explicit.items() if path is not None}
+            self.side = (FileSide(self.task_engine.path, overrides) if overrides
+                         else self.task_engine.side)
+        if isinstance(self.side, FileSide):
+            self.state_path = self.side.path_of(STATE)
+            self.decisions_path = self.side.path_of(DECISIONS)
+            self.briefing_path = self.side.path_of(BRIEFING)
+            self.learned_path = self.side.path_of(LEARNED)
+        else:
+            self.state_path = self.decisions_path = self.briefing_path = self.learned_path = None
         self._state = self._load_state()
         self._running: set[str] = set()
         self._workers: list[threading.Thread] = []
@@ -608,58 +623,35 @@ class PmoCore:
     # -- 状態と判断ログ / state and decision log --------------------------
 
     def _load_state(self) -> dict[str, Any]:
-        assert self.state_path is not None
+        assert self.side is not None
         try:
-            data = json.loads(self.state_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            data = json.loads(self.side.read_doc(STATE) or "{}")
+        except (ValueError, OSError):
+            data = {}
+        if not isinstance(data, dict):
             data = {}
         data.setdefault("open_alerts", {})
         return data
 
     def _save_state(self) -> None:
-        self._write_json(self.state_path, self._state)
+        self._write_doc(STATE, self._state)
 
-    def _write_json(self, path: Path | None, payload: Any) -> None:
-        assert path is not None
-        # 常駐の `aipmo schedule` と、`aipmo assign|agents|pmo` のような CLI は、
-        # 別プロセスで同じファイルを書く。一時ファイル名を共有すると、Windows では
-        # 互いの置き換えが「別のプロセスが使用中」で失敗する（実測）。名前をプロセスごとに
-        # 分け、読まれている最中の置き換えは短く再試行する。
-        # The resident scheduler and CLIs such as `aipmo assign|agents|pmo` write the
-        # same files from separate processes. A shared temp name made their
-        # replacements collide on Windows ("in use by another process", seen in
-        # practice), so the name is per process and a replace that races a reader is
-        # retried briefly.
-        temporary = path.with_name(f"{path.stem}.{os.getpid()}.{uuid.uuid4().hex[:6]}.tmp")
+    def _write_doc(self, name: str, payload: Any) -> None:
+        """文書を置き換える。保存できなくても周は止めない（警告だけ）。"""
+        assert self.side is not None
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
-                                 encoding="utf-8")
-            for attempt in range(5):
-                try:
-                    temporary.replace(path)
-                    return
-                except PermissionError:
-                    if attempt == 4:
-                        raise
-                    time.sleep(0.05 * (attempt + 1))
-        except OSError as exc:
-            logger.warning("保存できません / cannot save %s: %s", path, exc)
-            try:
-                temporary.unlink()
-            except OSError:
-                pass
+            self.side.write_doc(name, json.dumps(payload, ensure_ascii=False, indent=2))
+        except Exception as exc:                         # noqa: BLE001 — ファイルもDBも
+            logger.warning("保存できません / cannot save %s: %s", name, exc)
 
     def _log(self, kind: str, at: datetime, **detail: Any) -> None:
         """判断を1行ずつ追記する。過去は書き換えない / append-only."""
-        assert self.decisions_path is not None
+        assert self.side is not None
         line = json.dumps({"at": at.isoformat(), "kind": kind, **detail},
                           ensure_ascii=False)
         try:
-            self.decisions_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.decisions_path.open("a", encoding="utf-8") as handle:
-                handle.write(line + "\n")
-        except OSError as exc:
+            self.side.append(DECISIONS, line)
+        except Exception as exc:                         # noqa: BLE001
             logger.warning("判断ログを書けません / cannot write decision log: %s", exc)
 
     # -- 1周 / one cycle -------------------------------------------------
@@ -712,7 +704,7 @@ class PmoCore:
         briefing["judgment"] = self._judge(briefing, fresh, now)
         briefing["responses"] = self._respond(briefing, now)
         briefing["learning"] = self._model.as_dict() if self.learning else None
-        self._write_json(self.briefing_path, briefing)
+        self._write_doc(BRIEFING, briefing)
         return briefing
 
     # -- 学習 / learning ---------------------------------------------------
@@ -756,8 +748,7 @@ class PmoCore:
                       pace_reliable=model.pace.get("reliable"),
                       estimate_error=model.pace.get("median_error"),
                       baseline_late_rate=model.baseline_late_rate)
-            self._write_json(self.learned_path, {"generated_at": now.isoformat(),
-                                                 **model.as_dict()})
+            self._write_doc(LEARNED, {"generated_at": now.isoformat(), **model.as_dict()})
         self._model = model
         self.task_engine.label_bonus = model.label_bonus
         self.task_engine.priority_delta = model.priority_delta
@@ -886,8 +877,10 @@ class PmoCore:
 
     # -- 自律的な判断 / autonomous judgment -----------------------------------------
 
-    def _control_path(self) -> Path:
-        return side_path(self.task_engine.path, "pmo-judgment-control.json")
+    def _control_path(self) -> Any:
+        """制御の置き場。ファイルならその場所、データベースなら置き場そのもの。"""
+        assert self.side is not None
+        return (self.side.path_of(CONTROL) if isinstance(self.side, FileSide) else self.side)
 
     def _jstate(self) -> dict[str, Any]:
         j = self._state.setdefault("judgment", {})
@@ -1849,29 +1842,25 @@ class PmoCore:
         erased what the CLI added (observed). The log is append-only, and a re-reviewed run
         counts once, by its last decision. Only the appended part is read each time.
         """
-        path = self.decisions_path
+        assert self.side is not None
         cache = self._review_cache
-        if path is None or not path.exists():
-            return {}
-        size = path.stat().st_size
-        if size < cache["offset"]:                      # 切り詰め・入れ替え: 最初から
-            cache["offset"], cache["last"] = 0, {}
-        if size > cache["offset"]:
-            with path.open("rb") as handle:
-                handle.seek(cache["offset"])
-                data = handle.read()
-            end = data.rfind(b"\n") + 1                  # 書きかけの最後の行は次回に回す
-            for raw in data[:end].splitlines():
-                if b'"agent_reviewed"' not in raw:
-                    continue
-                try:
-                    entry = json.loads(raw.decode("utf-8"))
-                except ValueError:
-                    continue
-                if entry.get("kind") == "agent_reviewed":
-                    cache["last"][(entry.get("task"), entry.get("dispatch"))] = (
-                        str(entry.get("agent", "")), entry.get("decision"))
-            cache["offset"] += end
+        try:
+            lines, cursor = self.side.read_log(DECISIONS, cache["offset"])
+        except Exception:                                # noqa: BLE001 — 読めなければ前回のまま
+            lines, cursor = [], cache["offset"]
+        if cursor < cache["offset"]:                     # 切り詰め・入れ替え: 最初から
+            cache["last"] = {}
+        cache["offset"] = cursor
+        for raw in lines:
+            if '"agent_reviewed"' not in raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                continue
+            if entry.get("kind") == "agent_reviewed":
+                cache["last"][(entry.get("task"), entry.get("dispatch"))] = (
+                    str(entry.get("agent", "")), entry.get("decision"))
         tally: dict[str, dict[str, int]] = {}
         for agent, decision in cache["last"].values():
             counts = tally.setdefault(agent, {"accepted": 0, "rejected": 0})

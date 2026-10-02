@@ -40,6 +40,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .side_store import CONTROL, SideStore
+
 AUTONOMY = ("off", "propose", "auto")
 REMEDIES = ("notify", "recollect", "retry_agent", "launch", "followup")
 DIAGNOSES = ("overload", "project_risk", "agent_failure", "collection_failing",
@@ -343,20 +345,27 @@ def rationale(diagnosis: Diagnosis, remedy: str, stats: dict[str, dict[str, int]
 # 制御（止める・戻す）/ control: pause and reset
 # =============================================================================
 
-def read_control(path: Path) -> dict[str, Any]:
+def read_control(target: Path | SideStore) -> dict[str, Any]:
+    """制御の内容を読む。`target` はファイルの場所、または台帳の隣の置き場（SideStore）。"""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        text = (target.read_doc(CONTROL) if isinstance(target, SideStore)
+                else target.read_text(encoding="utf-8"))
+        data = json.loads(text) if text else {}
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
-def write_control(path: Path, **changes: Any) -> dict[str, Any]:
-    """制御ファイルを更新する。書くのは CLI だけ、読むのは常駐だけ（衝突しない）。"""
-    state = read_control(path)
+def write_control(target: Path | SideStore, **changes: Any) -> dict[str, Any]:
+    """制御を更新する。書くのは CLI だけ、読むのは常駐だけ（衝突しない）。"""
+    state = read_control(target)
     state.update(changes)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f"{path.stem}.{os.getpid()}.tmp")
-    temporary.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    text = json.dumps(state, ensure_ascii=False, indent=2)
+    if isinstance(target, SideStore):
+        target.write_doc(CONTROL, text)
+        return state
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f"{target.stem}.{os.getpid()}.tmp")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(target)
     return state

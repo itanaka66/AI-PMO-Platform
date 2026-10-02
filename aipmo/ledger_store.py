@@ -91,6 +91,27 @@ class LedgerStore(ABC):
     def describe(self) -> str:
         return self.kind
 
+    # -- 台帳の隣に置くもの（ブリーフィング・判断ログ・状態）/ what lives beside the ledger ----
+    # aipmo/side_store.py の `DbSide` がここを呼ぶ。台帳のタスクとは別の短い書き込みで、
+    # 台帳の書き込み取引の中から呼ばれたときは、その取引に加わる。
+    # Called by side_store.DbSide. Short writes of their own; inside a ledger write transaction
+    # they join it.
+
+    def side_read_doc(self, name: str) -> str | None:
+        raise NotImplementedError
+
+    def side_write_doc(self, name: str, text: str) -> None:
+        raise NotImplementedError
+
+    def side_append(self, name: str, line: str) -> None:
+        raise NotImplementedError
+
+    def side_read_log(self, name: str, after: int) -> tuple[list[str], int]:
+        raise NotImplementedError
+
+    def side_tail(self, name: str, limit: int) -> list[str]:
+        raise NotImplementedError
+
 
 # =============================================================================
 # SQLite
@@ -101,6 +122,11 @@ CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS outcomes (
     seq INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS side_docs (
+    name TEXT PRIMARY KEY, body TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS side_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, line TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS side_log_name ON side_log (name, id);
 """
 
 
@@ -270,6 +296,42 @@ class SqliteStore(LedgerStore):
             finally:
                 conn.execute("COMMIT")
 
+    # -- 台帳の隣に置くもの / beside the ledger ---------------------------
+
+    def side_read_doc(self, name: str) -> str | None:
+        with self._lock:
+            row = self._db().execute("SELECT body FROM side_docs WHERE name = ?",
+                                     (name,)).fetchone()
+        return row[0] if row else None
+
+    def side_write_doc(self, name: str, text: str) -> None:
+        from datetime import datetime, timezone
+
+        with self._lock:
+            self._db().execute(
+                "INSERT INTO side_docs (name, body, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(name) DO UPDATE SET body = excluded.body, "
+                "updated_at = excluded.updated_at",
+                (name, text, datetime.now(timezone.utc).isoformat()))
+
+    def side_append(self, name: str, line: str) -> None:
+        with self._lock:
+            self._db().execute("INSERT INTO side_log (name, line) VALUES (?, ?)", (name, line))
+
+    def side_read_log(self, name: str, after: int) -> tuple[list[str], int]:
+        with self._lock:
+            rows = self._db().execute(
+                "SELECT id, line FROM side_log WHERE name = ? AND id > ? ORDER BY id",
+                (name, after)).fetchall()
+        return [line for _, line in rows], (rows[-1][0] if rows else after)
+
+    def side_tail(self, name: str, limit: int) -> list[str]:
+        with self._lock:
+            rows = self._db().execute(
+                "SELECT line FROM (SELECT id, line FROM side_log WHERE name = ? "
+                "ORDER BY id DESC LIMIT ?) ORDER BY id", (name, limit or -1)).fetchall()
+        return [line for (line,) in rows]
+
     @contextmanager
     def write(self) -> Iterator[WriteTx]:
         with self._lock:
@@ -309,6 +371,21 @@ CREATE TABLE IF NOT EXISTS ledger_meta (
     value  TEXT NOT NULL,
     PRIMARY KEY (tenant, key)
 );
+CREATE TABLE IF NOT EXISTS ledger_side_docs (
+    tenant     TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    body       TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant, name)
+);
+CREATE TABLE IF NOT EXISTS ledger_side_log (
+    id     BIGSERIAL PRIMARY KEY,
+    tenant TEXT NOT NULL,
+    name   TEXT NOT NULL,
+    line   TEXT NOT NULL,
+    at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ledger_side_log_name ON ledger_side_log (tenant, name, id);
 """
 
 
@@ -449,6 +526,43 @@ class PostgresStore(LedgerStore):
             with conn.transaction():
                 conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
                 return self._load(conn)
+
+    # -- 台帳の隣に置くもの / beside the ledger ---------------------------
+
+    def side_read_doc(self, name: str) -> str | None:
+        with self._lock:
+            row = self._live().execute(
+                "SELECT body FROM ledger_side_docs WHERE tenant = %s AND name = %s",
+                (self.tenant, name)).fetchone()
+        return row[0] if row else None
+
+    def side_write_doc(self, name: str, text: str) -> None:
+        with self._lock:
+            self._live().execute(
+                "INSERT INTO ledger_side_docs (tenant, name, body) VALUES (%s, %s, %s) "
+                "ON CONFLICT (tenant, name) DO UPDATE SET body = EXCLUDED.body, "
+                "updated_at = now()", (self.tenant, name, text))
+
+    def side_append(self, name: str, line: str) -> None:
+        with self._lock:
+            self._live().execute(
+                "INSERT INTO ledger_side_log (tenant, name, line) VALUES (%s, %s, %s)",
+                (self.tenant, name, line))
+
+    def side_read_log(self, name: str, after: int) -> tuple[list[str], int]:
+        with self._lock:
+            rows = self._live().execute(
+                "SELECT id, line FROM ledger_side_log WHERE tenant = %s AND name = %s "
+                "AND id > %s ORDER BY id", (self.tenant, name, after)).fetchall()
+        return [line for _, line in rows], (rows[-1][0] if rows else after)
+
+    def side_tail(self, name: str, limit: int) -> list[str]:
+        with self._lock:
+            rows = self._live().execute(
+                "SELECT line FROM (SELECT id, line FROM ledger_side_log WHERE tenant = %s "
+                "AND name = %s ORDER BY id DESC LIMIT %s) t ORDER BY id",
+                (self.tenant, name, limit or None)).fetchall()
+        return [line for (line,) in rows]
 
     @contextmanager
     def write(self) -> Iterator[WriteTx]:
