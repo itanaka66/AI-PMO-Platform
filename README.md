@@ -683,6 +683,7 @@ statically analyzed for vulnerabilities by CodeQL on push, PR, and weekly
 | [docs/SCHEDULER.md](docs/SCHEDULER.md) | 定時実行 / scheduling |
 | [docs/TEAMS.md](docs/TEAMS.md) | Teams 連携 / Teams |
 | [docs/JIRA-SLACK.md](docs/JIRA-SLACK.md) | Jira と Slack |
+| [docs/JIRA-WBS.md](docs/JIRA-WBS.md) | **Jira と WBS の設定・運用ガイド**（つなぎ方・日次/週次の運用・併用のしかた） |
 | [docs/TICKET-TRACKERS.md](docs/TICKET-TRACKERS.md) | GitHub Projects・Plane・OpenProject・Azure DevOps |
 | [docs/CRAWLER.md](docs/CRAWLER.md) | Web クローラアダプタ / web crawler adapter |
 | [docs/AGILE.md](docs/AGILE.md) | スプリント / sprints |
