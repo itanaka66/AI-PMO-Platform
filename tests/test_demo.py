@@ -447,3 +447,17 @@ def test_dates_in_the_sample_data_are_relative_so_overdue_stays_overdue():
     assert len(overdue) >= 3 and len(soon) >= 4
     assert all(isinstance(t["due"], int) for t in samples.tasks)
     assert date.today().year >= 2026                                       # 絶対日付に依存しない
+
+
+def test_the_demo_role_ai_template_also_runs_by_hand_without_parameters(demo_dir):
+    """画面から手で実行しても失敗しない（params.title の既定がある）。役割AIとしては題名が渡される。"""
+    from aipmo.dsl import loader
+
+    config = cli.load_config(config_of(demo_dir))
+    engine = cli.build_engine(config, base_dir=demo_dir)
+    template = loader.load_file(demo_dir / "templates" / "demo_role_ai.yaml")
+    bare = engine.run(template, params={})
+    assert bare.results["draft"].status == "success"
+    assert "題名の指定なし" in bare.results["draft"].output["answer"]
+    named = engine.run(template, params={"title": "ログイン仕様書"})
+    assert "ログイン仕様書" in named.results["draft"].output["answer"]

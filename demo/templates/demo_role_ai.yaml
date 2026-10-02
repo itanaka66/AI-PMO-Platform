@@ -5,6 +5,12 @@ description: |
   役割AIの成果を人がレビューする流れ(aipmo agents review)を、外部サービス無しで見せるためのもの。
   A stand-in role AI for the demo: returns a fixed sentence built from the task title.
 
+# 役割AIとして呼ばれるときは、PMO Core がタスクの題名を title に渡す。画面から手で実行したときのために、
+# 既定の題名を持たせてある(無いと params.title を解決できずに失敗する)。
+# When run as a role AI the PMO Core passes the task title; the default is for a manual run from the screen.
+params:
+  title: "(題名の指定なし)"
+
 steps:
   - id: draft
     expression: noop
