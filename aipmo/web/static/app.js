@@ -611,9 +611,10 @@ function reviewRow(item) {
   row.append(el("div", "pmo-meta", `${t("web_pmo_agent", "Role AI")} ${item.agent} · ${item.task}`));
   if (item.excerpt) row.append(el("div", "pmo-meta pmo-agent-result", item.excerpt));
   if (canRun) {
-    const note = el("input");
+    const note = el("input", "note-input");
     note.type = "text";
     note.placeholder = t("web_pmo_review_note", "Reason (required to send back)");
+    note.setAttribute("aria-label", note.placeholder);
     row.append(note);
     const actions = el("div", "pmo-actions");
     for (const [decision, label, kind] of [

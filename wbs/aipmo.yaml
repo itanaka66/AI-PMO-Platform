@@ -633,12 +633,15 @@ wbs:
             - "aipmo/web/static/app.js::tabs-more-button"
           notes: "通知とCLI は設定の lang。無ければ日本語"
         - id: "6.29"
-          name: "再計画案の受信箱・プレビューを実 PostgreSQL で確かめる"
-          status: todo
+          name: "再計画案の受信箱・プレビュー・承認を実 PostgreSQL で確かめる"
+          status: done
           effort: 1
-          priority: Medium
           depends_on: ["6.21"]
-          notes: "Docker Desktop が起動できず未実施"
+          done_on: 2026-10-03
+          evidence:
+            - "tests/test_replan_postgres.py::test_approving_applies_once_and_leaves_the_inbox"
+            - "tests/test_replan_postgres.py::test_the_real_queries_list_only_this_tenants_pending_proposals_in_the_inbox"
+          notes: "PostgreSQL 16.4（公式 zip）で確認。Docker は使えなかった"
         - id: "6.30"
           name: "WBS の依存の矢印・WBS の画面編集・自律度の画面変更・自動更新"
           status: done
@@ -652,4 +655,14 @@ wbs:
             - "tests/test_autonomy_edit_pulse.py::test_the_resident_ignores_a_raise_the_config_does_not_allow"
             - "tests/test_autonomy_edit_pulse.py::test_preview_writes_nothing_and_apply_writes_a_minimal_diff"
           notes: "自律度を基準より上げるのは ui_can_raise が必要。WBS 編集は差分確認のあと反映"
+        - id: "6.31"
+          name: "ダークモードとアクセシビリティの自動点検と修正"
+          status: done
+          effort: 2
+          depends_on: ["6.30"]
+          done_on: 2026-10-03
+          evidence:
+            - "tests/test_ui_accessibility.py::test_contrast_names_landmarks_and_keyboard"
+            - "aipmo/web/static/app.css::--on-fill"
+          notes: "実際のスクリーンリーダーでの読み上げは未確認"
 

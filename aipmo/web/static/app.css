@@ -17,6 +17,7 @@
   --muted: #5b6c79;
   --rule: #c7d2da;
   --accent: #1f5f8b;
+  --on-fill: #ffffff;   /* 塗り（アクセント・警告）の上の文字 / text on filled accent, fail and warn */
 
   --ok: #2e6b4f;
   --fail: #a8322a;
@@ -418,6 +419,7 @@ h2:first-of-type { margin-top: 4px; }
     --muted: #93a4b1;
     --rule: #2f3f4c;
     --accent: #6aa9d4;
+    --on-fill: #0b1219;
     --ok: #5fa87f;
     --fail: #d97066;
     --warn: #c79a4a;
@@ -485,7 +487,7 @@ h2:first-of-type { margin-top: 4px; }
 }
 .tabs button[aria-pressed="true"] { color: var(--accent); border-bottom-color: var(--accent); }
 .tabs .count {
-  background: var(--fail); color: #fff; border-radius: 10px; padding: 0 7px;
+  background: var(--fail); color: var(--on-fill); border-radius: 10px; padding: 0 7px;
   font-size: 11px; font-variant-numeric: tabular-nums; line-height: 18px;
 }
 main.wide { max-width: 1240px; }
@@ -498,10 +500,10 @@ main.wide { max-width: 1240px; }
 }
 .inbox-filters { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .inbox-filters button {
-  min-height: 36px; padding: 0 12px; border: 1px solid var(--rule); border-radius: 4px;
+  min-height: var(--tap); padding: 0 12px; border: 1px solid var(--rule); border-radius: 4px;
   background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
 }
-.inbox-filters button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.inbox-filters button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-fill); }
 .inbox-filters .n { opacity: .75; margin-left: 4px; font-variant-numeric: tabular-nums; }
 .inbox-items { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .inbox-item {
@@ -538,7 +540,7 @@ main.wide { max-width: 1240px; }
 .inbox-section[data-tone="do"] h4 { color: var(--ok); }
 .inbox-section[data-tone="dont"] h4 { color: var(--muted); }
 .inbox-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; align-items: center; }
-.inbox-actions .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.inbox-actions .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-fill); }
 .inbox-note { width: 100%; margin-top: 14px; }
 .inbox-note label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 4px; }
 .inbox-note textarea {
@@ -638,7 +640,7 @@ main.wide { max-width: 1240px; }
 .wbs-id { font-family: var(--mono); font-size: 12px; color: var(--muted); }
 .wbs-caret { border: 0; background: transparent; cursor: pointer; padding: 0 4px; min-width: 24px; min-height: 24px;
   color: var(--muted); font: inherit; }
-.wbs-flag { background: var(--warn); color: #fff; border-radius: 50%; width: 16px; height: 16px; font-size: 11px;
+.wbs-flag { background: var(--warn); color: var(--on-fill); border-radius: 50%; width: 16px; height: 16px; font-size: 11px;
   line-height: 16px; text-align: center; flex: none; }
 .wbs-status { justify-self: start; }
 .wbs-status[data-status="done"] { color: var(--ok); border-color: var(--ok); }
