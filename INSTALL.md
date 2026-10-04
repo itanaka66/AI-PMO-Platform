@@ -381,6 +381,20 @@ launches the script with the policy bypass already applied.
 sudo apt install python3-venv
 ```
 
+**`No module named pip`（venv 作成は成功しているのに）/ venv created but pip is missing**
+一部の Debian/Ubuntu の Python パッケージは、venv を作っても pip を自動では
+入れません（ビルドが ensurepip を意図的に外しているため）。インストーラは
+これを検知して自動で ensurepip を試みますが、それでも入らない場合は
+`python3-pip` を導入してからもう一度実行してください:
+```bash
+sudo apt install python3-pip
+```
+
+Some Debian/Ubuntu Python packages don't bootstrap pip into a new venv
+(their build deliberately strips ensurepip). The installer detects this and
+tries `ensurepip` automatically; if that still fails, install `python3-pip`
+and run the installer again (same command as above).
+
 **Docker が起動していないと言われる / Docker is not running**
 Docker Desktop を起動してから、もう一度実行してください。
 Start Docker Desktop, then run the script again.
