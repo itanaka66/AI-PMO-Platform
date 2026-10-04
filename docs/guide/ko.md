@@ -153,6 +153,7 @@ aipmo demo        # 데모용 샘플 데이터를 대장(DB)에 넣거나 지우
 aipmo members     # 멤버가 Plane・OpenProject의 어느 사용자에 해당하는지 확인 (읽기 전용)
 aipmo file        # 승인된 작업을 이슈 관리 도구에도 등록 (--apply로 생성・--skip으로 건너뛰기)
 aipmo judgment    # PMO Core의 자율적 판단 보기 (pause / resume / reset으로 중지・되돌리기)
+aipmo integrations  # 이슈 관리 도구와의 연결을 읽기 전용으로 진단 (연결 확인부터 담당 후보까지; 이름을 지정하면 하나만 확인)
 ```
 
 ---

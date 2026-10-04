@@ -155,6 +155,7 @@ aipmo demo        # carregar ou apagar dados de exemplo de demonstração no liv
 aipmo members     # conferir a qual usuário do Plane/OpenProject cada membro corresponde (somente leitura)
 aipmo file        # registrar também as tarefas aprovadas na ferramenta de tickets (--apply para criar, --skip para pular)
 aipmo judgment    # ver as decisões autônomas do PMO Core (pause / resume / reset para pausar/reverter)
+aipmo integrations  # diagnosticar a conexão com as ferramentas de tickets, somente leitura (da conectividade aos candidatos de atribuição; informe um nome para checar só um adaptador)
 ```
 
 ---

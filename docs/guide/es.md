@@ -155,6 +155,7 @@ aipmo demo        # cargar o borrar datos de ejemplo de demostración en el libr
 aipmo members     # comprobar a qué usuario de Plane/OpenProject corresponde cada miembro (solo lectura)
 aipmo file        # registrar también en la herramienta de incidencias las tareas aprobadas (--apply para crear, --skip para omitir)
 aipmo judgment    # ver las decisiones autónomas de PMO Core (pause / resume / reset para detener o revertir)
+aipmo integrations  # diagnosticar la conexión con las herramientas de incidencias, solo lectura (desde la conectividad hasta los candidatos de asignación; indica un nombre para comprobar solo ese adaptador)
 ```
 
 ---

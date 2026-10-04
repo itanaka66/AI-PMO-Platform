@@ -154,6 +154,7 @@ aipmo demo        # load or clear sample demo data in the ledger (DB) (--config 
 aipmo members     # check which Plane/OpenProject user a member maps to (read-only)
 aipmo file        # file approved tasks into the ticket tracker too (--apply to create, --skip to pass)
 aipmo judgment    # view PMO Core's autonomous decisions (pause / resume / reset to stop or roll back)
+aipmo integrations  # diagnose ticket-tracker connections, read-only (connectivity through suggested assignees; name one adapter to check just it)
 ```
 
 ---
