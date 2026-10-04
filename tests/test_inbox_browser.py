@@ -244,6 +244,9 @@ async def drive(base: str) -> dict:
             await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'integrations').click()")
             await b.until("document.querySelectorAll('.integ-card').length >= 1")
             out["integ_cards"] = await b.js("document.querySelectorAll('.integ-card').length")
+            await b.js("document.getElementById('integ-check').click()")
+            await b.until("document.querySelectorAll('#integ-results .probe').length >= 1")
+            out["probe_ok"] = await b.js("[...document.querySelectorAll('#integ-results .probe')].every(p => p.dataset.ok === 'true')")
 
             # WBS：木が出て、作業を選ぶと証拠の確認結果が出る
             await b.js("[...document.querySelectorAll('#tabs button')].find(b => b.dataset.target === 'wbs').click()")
@@ -298,7 +301,7 @@ def test_the_inbox_works_in_a_real_browser(served):
     assert 0 <= result["task_search"] < 5
     assert "一時停止を依頼済み" in result["judgment_paused"]
     assert "×0.73" in result["member_factors"] and "×1.18" in result["member_factors"]
-    assert result["integ_cards"] >= 1
+    assert result["integ_cards"] >= 1 and result["probe_ok"] is True
     assert result["wbs_arrows"] >= 3 and "2026-10-20" in result["wbs_diff"] and result["raise_disabled"] is True
     assert result["wbs_label"] == "WBS" and result["wbs_bars"] >= 4
     assert result["viewer_buttons"] == 0 and result["viewer_items"] > 0   # 閲覧用は見えるが、決められない

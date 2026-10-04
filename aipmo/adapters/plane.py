@@ -315,6 +315,7 @@ def _flatten(issue: dict[str, Any]) -> dict[str, Any]:
         "target_date": issue.get("target_date"),
         "completed": bool(issue.get("completed_at")),
         "priority": issue.get("priority"),
+        "assignees": list(issue.get("assignees") or []),     # ユーザー id の一覧（書き戻しの確認に使う）
     }
 
 

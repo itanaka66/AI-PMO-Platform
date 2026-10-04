@@ -831,6 +831,35 @@ def _lookup_assignees(config: dict[str, Any]) -> bool:
     return bool((config.get("pmo_core") or {}).get("lookup_assignees", True))
 
 
+def cmd_integrations(args: argparse.Namespace) -> int:
+    """課題管理ツールとの接続を、読み取りだけで診断する(何も書かない)。
+
+    `aipmo integrations`            … 設定したアダプタ全部
+    `aipmo integrations jira`       … 1 つだけ
+
+    実サービスにつなぐ前後に「どこで・なぜ止まるか」を見るためのもの（疎通 → 1 件の読み取り → 担当候補の一覧）。
+    終了コードは、1 つでも失敗すれば 1。
+    """
+    from .probe import probe_all
+
+    config = load_config(Path(args.config))
+    engine = build_engine(config, Path(args.config).resolve().parent)
+    names = set(engine.adapters.names())
+    if args.name and args.name not in names:
+        print(f"アダプタ {args.name} は設定されていません / not configured: {args.name}", file=sys.stderr)
+        return 1
+    failed = 0
+    for report in probe_all(engine.adapters, args.name):
+        print(f"{'OK ' if report['ok'] else 'NG '} {report['name']}"
+              + ("  (担当を書き戻せる)" if report["writes_back"] else ""))
+        for step in report["steps"]:
+            glyph = mark("success" if step["ok"] else "failed")
+            print(f"      {glyph} {step['id']:<7} {step['ms']:>5} ms  {step['detail']}"
+                  + (f"  [{step['hint']}]" if step["hint"] else ""))
+        failed += 0 if report["ok"] else 1
+    return 1 if failed else 0
+
+
 def cmd_members(args: argparse.Namespace) -> int:
     """メンバーを、トラッカーのユーザーに引き当てた結果を見る(読み取りだけ・何も書かない)。
 
@@ -2153,6 +2182,12 @@ def main(argv: list[str] | None = None) -> int:
     p_members.add_argument("--tracker", choices=("plane", "openproject"),
                            help="1 つのトラッカーだけ / one tracker only")
     p_members.set_defaults(func=cmd_members)
+
+    p_integrations = sub.add_parser(
+        "integrations", help="課題管理ツールとの接続を読み取りだけで診断する "
+                             "/ diagnose tracker connections (read-only)")
+    p_integrations.add_argument("name", nargs="?", help="アダプタ名(省略で全部) / one adapter (default: all)")
+    p_integrations.set_defaults(func=cmd_integrations)
 
     p_file = sub.add_parser(
         "file", help="承認したタスクを課題管理ツールにも起票する(承認つき) "

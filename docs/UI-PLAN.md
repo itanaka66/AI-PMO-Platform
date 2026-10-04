@@ -120,6 +120,7 @@ covers, what to add, the order, and the decisions needed. Everything in chapter 
   **データ**は書かれたまま。Slack 通知と CLI（`aipmo pmo|tasks --why|assign|judgment` の警告・診断・理由・題名）は、設定の `lang` で出す（`lang` が無ければ従来どおり日本語。CLI の固定の見出しは元から日英併記）。再計画案の反映プレビューの変更点の文、WBS ファイル自体の構造の
   誤りの文も日本語のまま。
 - スマホの下タブは主な 4 つ（今日・受信箱・タスク・WBS）と「その他」。
+- 実サービス（Jira・Plane・OpenProject）は未確認。診断（`aipmo integrations`・画面のボタン）と手元で動かす確認は用意した（docs/LIVE-TRACKERS.md）。
 - 実 PostgreSQL（16.4）で、再計画案の一覧・受信箱・プレビュー・承認・テナント分離・全画面の API を確かめた（`tests/test_replan_postgres.py`。`AIPMO_TEST_PG_DSN` があるときだけ動く）。Docker は使えず、公式の zip 版バイナリで起動した。
 - アクセシビリティは、実ブラウザで自動点検した（`tests/test_ui_accessibility.py`）: 全画面・ライト／ダーク・広い画面／スマホ幅でコントラスト比（AA）、名前の無い操作要素、ランドマーク、キーボードでの到達とフォーカスの輪郭、スマホ幅での押せる大きさ。ブラウザのアクセシビリティ・ツリーを読むもので、**実際のスクリーンリーダー（NVDA・VoiceOver）での読み上げは未確認**。
 - ブラウザは Chrome（ヘッドレス）だけで確認。Safari・Firefox・実機のスマホは未確認。

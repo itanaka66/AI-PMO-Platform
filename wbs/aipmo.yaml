@@ -665,4 +665,23 @@ wbs:
             - "tests/test_ui_accessibility.py::test_contrast_names_landmarks_and_keyboard"
             - "aipmo/web/static/app.css::--on-fill"
           notes: "実際のスクリーンリーダーでの読み上げは未確認"
+        - id: "6.32"
+          name: "実サービスにつなぐ確認の道具（接続の診断・画面のボタン・手元で動かす自動確認）"
+          status: done
+          effort: 3
+          depends_on: ["6.31"]
+          done_on: 2026-10-03
+          evidence:
+            - "aipmo/probe.py"
+            - "tests/test_probe.py::test_http_failures_are_classified_and_secrets_are_hidden"
+            - "tests/test_live_trackers.py"
+            - "docs/LIVE-TRACKERS.md"
+          notes: "道具の用意まで。実サービスに対しては未実施"
+        - id: "6.33"
+          name: "実 Jira・Plane・OpenProject に対して診断と担当の書き戻しを実行して確かめる"
+          status: todo
+          effort: 2
+          priority: Medium
+          depends_on: ["6.32"]
+          notes: "docs/LIVE-TRACKERS.md の手順。接続先と認証情報が要る"
 

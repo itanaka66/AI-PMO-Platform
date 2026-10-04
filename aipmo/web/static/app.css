@@ -746,3 +746,11 @@ main.wide { max-width: 1240px; }
 .auto-select { min-height: var(--tap); padding: 0 10px; font: inherit; border: 1px solid var(--rule);
   border-radius: 6px; background: var(--surface); color: var(--ink); }
 .today-project .auto-select { margin-left: auto; }
+
+.probe { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
+.probe[data-ok="false"] { border-color: var(--fail); }
+.probe-step { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; flex-wrap: wrap; }
+.probe-step[data-ok="true"] .probe-mark { color: var(--ok); }
+.probe-step[data-ok="false"] .probe-mark { color: var(--fail); }
+.probe-id { min-width: 9em; font-weight: 600; }
+#integ-check { margin-bottom: 8px; min-height: var(--tap); }

@@ -78,6 +78,7 @@ from ..engine.runner import Engine, StepFailure
 from ..i18n import CATALOG, DEFAULT_LANG, detect, normalize
 from ..judgment import AUTONOMY, RANK, REMEDIES, JudgmentConfig, read_control, write_control
 from ..wbs_edit import WbsEditError, plan_changes, write_plan
+from ..probe import probe_all
 from ..messages import (is_japanese, localize_briefing, suggestion_reason, task_title,
                         translate)
 from ..messages import localize_alert as localize_alert_text
@@ -1131,6 +1132,27 @@ def create_app(
                 "wbs": briefing.get("wbs_drift"), "filing": filing_info,
                 "accounts": accounts, "lookup_assignees": lookup_assignees,
                 "generated_at": briefing.get("generated_at")}
+
+    _last_probe: list[float] = [0.0]
+
+    @app.post("/api/integrations/check")
+    def integrations_check(request: Request, payload: dict[str, Any],
+                           role: str = operator_guard) -> dict[str, Any]:
+        """課題管理ツールとの接続を、読み取りだけで診断する（operator のみ。外部サービスへ問い合わせる）。
+
+        疎通 → 1 件の読み取り → 担当候補の一覧、の順に行い、止まった所と原因の分類（認証・見つからない・
+        タイムアウト…）を返す。書き込みは呼ばない。外部への負荷を抑えるため、5 秒に 1 回まで。
+        Read-only diagnosis of the tracker connections (operator only: it calls the outside). Throttled.
+        """
+        name = str(payload.get("name") or "") or None
+        if name and name not in set(engine.adapters.names()):
+            raise HTTPException(status_code=404, detail="no such adapter")
+        now = time.monotonic()
+        if now - _last_probe[0] < 5:
+            raise HTTPException(status_code=429, detail="wait a few seconds", headers={"Retry-After": "5"})
+        _last_probe[0] = now
+        logger.info("integrations check (%s) by %s from %s", name or "all", role, _client_ip(request))
+        return {"reports": probe_all(engine.adapters, name)}
 
     @app.get("/api/learning/members", dependencies=[guard])
     def learning_members(role: str = guard) -> dict[str, Any]:

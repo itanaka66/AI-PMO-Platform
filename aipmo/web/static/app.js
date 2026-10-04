@@ -1102,6 +1102,22 @@ async function refreshIntegrations() {
   renderIntegrations();
 }
 
+function renderProbe(report) {
+  const card = el("div", "probe");
+  card.dataset.ok = String(report.ok);
+  card.append(el("div", "pmo-title", `${report.ok ? "✓" : "✗"} ${report.name}`));
+  for (const step of report.steps) {
+    const line = el("div", "probe-step");
+    line.dataset.ok = String(step.ok);
+    line.append(el("span", "probe-mark", step.ok ? "✓" : "✗"),
+      el("span", "probe-id", t(`web_integ_step_${step.id}`, step.id)),
+      el("span", "pmo-meta", `${step.ms} ms · ${step.detail}`));
+    card.append(line);
+    if (step.hint) card.append(el("div", "card-note error", t(`web_integ_hint_${step.hint}`, step.hint)));
+  }
+  return card;
+}
+
 function renderIntegrations() {
   const host = document.getElementById("integrations");
   if (!host) return;
@@ -1124,6 +1140,28 @@ function renderIntegrations() {
     grid.append(card);
   }
   host.append(grid);
+
+  if (canRun) {
+    const run = el("button", "btn", t("web_integ_check", "接続を確かめる"));
+    run.type = "button";
+    run.id = "integ-check";
+    const results = el("div", "integ-results");
+    results.id = "integ-results";
+    results.setAttribute("aria-live", "polite");
+    run.addEventListener("click", async () => {
+      run.disabled = true;
+      results.replaceChildren(el("div", "pmo-meta", t("web_integ_checking", "確かめています…")));
+      try {
+        const { reports } = await api("/api/integrations/check", { method: "POST", body: "{}" });
+        results.replaceChildren(...reports.map(renderProbe));
+      } catch (error) {
+        results.replaceChildren(el("div", "card-note error", error.message));
+      } finally {
+        run.disabled = false;
+      }
+    });
+    host.append(run, results);
+  }
 
   const col = todaySection(t("web_integ_collect", "進捗の収集"), null);
   if (!d.collection) {
