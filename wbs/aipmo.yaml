@@ -349,10 +349,15 @@ wbs:
           notes: "実際の GitHub の PR では未検証。偽の GitHub サーバーと実 git の通しまで（5.8）"
         - id: "5.8"
           name: "WBS の更新漏れの PR コメントを、実際の GitHub の PR で確かめる"
-          status: todo
+          status: done
           effort: 1
           priority: Low
           depends_on: ["5.6"]
+          done_on: 2026-10-04
+          evidence:
+            - ".github/workflows/wbs-drift.yml"
+            - "aipmo/wbs_notify.py::def collect"
+          notes: "PR #110（検証専用・マージせずクローズ）で実際に確認。わざと drift するノードを足して push → WBS drift ジョブが実行され、github-actions が目印つきコメントを投稿（ローカルの dry-run と同じ内容）。さらに空コミットで2回目を push → 同じコメントが更新され、件数は1件のまま（二重投稿しないことも確認）"
     - id: "6"
       name: "残作業（既知の未実装・未検証）"
       children:
