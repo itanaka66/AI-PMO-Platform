@@ -324,6 +324,7 @@ class OllamaProvider(LLMProvider):
                                else defaults.get("repeat_penalty"))
 
     def complete(self, request: LLMRequest) -> LLMResponse:
+        import urllib.error
         import urllib.request
 
         options: dict[str, Any] = {
@@ -357,8 +358,36 @@ class OllamaProvider(LLMProvider):
             data=json.dumps(payload).encode("utf-8"),
             headers=headers,
         )
-        with urllib.request.urlopen(req, timeout=600) as resp:
-            body = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=600) as resp:
+                body = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            from .presets import ProviderError
+
+            detail = _ollama_error_detail(exc)
+            hint = ""
+            if exc.code == 404:
+                # Ollama は未取得のモデルを指定しても 404 を返すだけで、
+                # 生の HTTPError のままだと「何が無いのか」が分からない。
+                # Ollama answers an unpulled model with a bare 404 too — left
+                # as a raw HTTPError, there is no clue what is actually missing.
+                hint = (
+                    f"\n  モデル '{self.model}' がまだ無いかもしれません。取得してください "
+                    f"/ the model may not be pulled yet:\n"
+                    f"    docker compose exec ollama ollama pull {self.model}"
+                )
+            raise ProviderError(
+                f"ollama: {self.host} への生成リクエストが失敗しました "
+                f"/ generate request to {self.host} failed (HTTP {exc.code}): "
+                f"{detail}{hint}"
+            ) from exc
+        except urllib.error.URLError as exc:
+            from .presets import ProviderError
+
+            raise ProviderError(
+                f"ollama: {self.host} に接続できません / cannot reach {self.host}: "
+                f"{exc.reason}"
+            ) from exc
 
         return LLMResponse(
             text=body.get("response", ""),
@@ -366,6 +395,29 @@ class OllamaProvider(LLMProvider):
             input_tokens=body.get("prompt_eval_count"),
             output_tokens=body.get("eval_count"),
         )
+
+
+def _ollama_error_detail(exc: Any) -> str:
+    """Ollama のエラー応答から本文を取り出す / pull the body out of Ollama's error response.
+
+    Ollama はエラーを {"error": "..."} という JSON で返す。生の
+    HTTPError のままだと「HTTP Error 404: Not Found」としか分からず、
+    実際には何が起きたか（モデル未取得など）が伝わらない。
+    Ollama answers errors with {"error": "..."} JSON. Left as a bare
+    HTTPError, all that surfaces is "HTTP Error 404: Not Found" — not what
+    actually went wrong (an unpulled model, say).
+    """
+    try:
+        raw = exc.read()
+    except Exception:
+        return str(exc)
+    if not raw:
+        return str(exc)
+    try:
+        data = json.loads(raw.decode("utf-8", "replace"))
+    except json.JSONDecodeError:
+        return raw.decode("utf-8", "replace")[:300]
+    return data.get("error", str(exc)) if isinstance(data, dict) else str(exc)
 
 
 def _claude_tool_schema(openai_tool: dict) -> dict:

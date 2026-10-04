@@ -5,6 +5,8 @@ Focus: the places where switching provider breaks quietly.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from aipmo.llm.base import LLMRequest, OllamaProvider, OpenAICompatibleProvider
@@ -736,3 +738,59 @@ def test_ollama_embedder_api_key_falls_back_to_the_environment_variable(monkeypa
     embedder = OllamaEmbedder(model="bge-m3")
 
     assert embedder.api_key == "sk-embed-env"
+
+
+# --- Ollama のエラー応答 / Ollama's error responses --------------------------
+
+def _raise_ollama_http_error(monkeypatch, status: int, body: bytes):
+    import io
+    import urllib.error
+
+    def fake_urlopen(request, timeout=None):
+        raise urllib.error.HTTPError(
+            request.full_url, status, "error", {}, io.BytesIO(body))
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+
+def test_ollama_404_names_the_missing_model_and_how_to_pull_it(monkeypatch):
+    """生の HTTPError のままだと「何が無いのか」が分からない。"""
+    body = json.dumps({
+        "error": "model 'qwen2.5:14b' not found, try pulling it first",
+    }).encode("utf-8")
+    _raise_ollama_http_error(monkeypatch, 404, body)
+    provider = OllamaProvider(model="qwen2.5:14b")
+
+    with pytest.raises(ProviderError) as excinfo:
+        provider.complete(LLMRequest(prompt="hi"))
+
+    message = str(excinfo.value)
+    assert "qwen2.5:14b" in message
+    assert "not found" in message
+    assert "ollama pull qwen2.5:14b" in message
+
+
+def test_ollama_non_404_http_error_has_no_pull_hint(monkeypatch):
+    body = json.dumps({"error": "internal error"}).encode("utf-8")
+    _raise_ollama_http_error(monkeypatch, 500, body)
+    provider = OllamaProvider(model="qwen2.5:14b")
+
+    with pytest.raises(ProviderError) as excinfo:
+        provider.complete(LLMRequest(prompt="hi"))
+
+    message = str(excinfo.value)
+    assert "internal error" in message
+    assert "ollama pull" not in message
+
+
+def test_ollama_connection_failure_is_a_clear_provider_error(monkeypatch):
+    import urllib.error
+
+    def fake_urlopen(request, timeout=None):
+        raise urllib.error.URLError("Connection refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    provider = OllamaProvider(model="qwen2.5:14b", host="http://ollama:11434")
+
+    with pytest.raises(ProviderError, match="ollama:11434"):
+        provider.complete(LLMRequest(prompt="hi"))
