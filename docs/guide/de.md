@@ -155,6 +155,7 @@ aipmo demo        # Demo-Beispieldaten ins Register (DB) laden oder löschen (--
 aipmo members     # prüfen, welchem Plane-/OpenProject-Benutzer ein Mitglied entspricht (nur lesend)
 aipmo file        # genehmigte Aufgaben zusätzlich im Ticket-Tool anlegen (--apply zum Erstellen, --skip zum Überspringen)
 aipmo judgment    # autonome Entscheidungen von PMO Core ansehen (pause / resume / reset zum Anhalten/Zurücksetzen)
+aipmo integrations  # die Verbindung zu Ticket-Tools nur lesend diagnostizieren (von der Erreichbarkeit bis zu Zuweisungskandidaten; ein Name prüft nur diesen Adapter)
 ```
 
 ---

@@ -151,6 +151,7 @@ aipmo demo        # デモ用のサンプルデータを台帳（DB）に入れ�
 aipmo members     # メンバーが Plane・OpenProject のどのユーザーに当たるかを確かめる（読むだけ）
 aipmo file        # 承認したタスクを課題管理ツールにも起票する（--apply で作る・--skip で見送る）
 aipmo judgment    # PMO Core の自律的な判断を見る（pause / resume / reset で止める・戻す）
+aipmo integrations  # 課題管理ツールとの接続を読み取りだけで診断する（疎通・担当候補まで。名前を指定すると1件だけ）
 ```
 
 ---

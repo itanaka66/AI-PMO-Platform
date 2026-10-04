@@ -152,6 +152,7 @@ aipmo demo        # 向台账（数据库）加载或清除演示用示例数据
 aipmo members     # 确认成员对应 Plane・OpenProject 中的哪个用户（只读）
 aipmo file        # 把已批准的任务也提交到工单工具（--apply 创建・--skip 跳过）
 aipmo judgment    # 查看 PMO Core 的自主判断（pause / resume / reset 暂停・恢复）
+aipmo integrations  # 只读诊断与工单工具的连接（连通性到担当候选；指定名称可只检查一个适配器）
 ```
 
 ---
