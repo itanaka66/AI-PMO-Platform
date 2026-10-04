@@ -709,4 +709,11 @@ wbs:
           priority: Medium
           depends_on: ["6.32"]
           notes: "docs/LIVE-TRACKERS.md の手順。接続先と認証情報が要る"
+        - id: "99.1"
+          name: "(一時) WBS drift コメントを実 GitHub PR で確かめるための検証用ノード。このPRはマージしない"
+          status: todo
+          effort: 1
+          priority: Low
+          evidence:
+            - "README.md"
 
