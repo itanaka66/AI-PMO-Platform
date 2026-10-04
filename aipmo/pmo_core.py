@@ -34,13 +34,14 @@ import json
 import logging
 import threading
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
 from .agent_roles import (KEEP_DISPATCHES, REVIEW_DECISIONS, SETTLED_BAD, excerpt_of, fit,
-                          latest_dispatch, params_for, review_of)
+                          latest_dispatch, params_for, rejection_rate, review_of)
 from .filing import FilingConfig, FilingError, eligible, filing_state
 from .generation import (GenerationConfig, due_date, followup_id, period_key,
                          recurring_id, wbs_drift_id)
@@ -318,18 +319,28 @@ def suggestion_spec(task: Task, member: Member, load: int) -> dict[str, Any]:
     return spec("sg_room", load=load, cap=member.capacity)
 
 
-def suggest_assignee(task: Task, members: list[Member],
-                     loads: dict[str, int]) -> tuple[Member, str] | None:
+def suggest_assignee(task: Task, members: list[Member], loads: dict[str, int],
+                     review_tally: Mapping[str, Mapping[str, int]] | None = None,
+                     ) -> tuple[Member, str] | None:
     """空いている人を選ぶ。スキル（ラベル）が合う人がいればその中から。
 
-    負荷の比率（持っている数 / 上限）が低い順、同率は名前順で決める。
-    上限に達している人には割り当てない。全員が上限なら提案しない —
-    黙って誰かに積み増すより、割り当て先が無いと知らせる方が正しい。
+    負荷の比率（持っている数 / 上限）が低い順。役割AIどうしが同率なら、
+    これまでの差し戻し率（`review_tally`、`PmoCore._review_tally()` 由来）が
+    低い方を先にする——差し戻しの多い役割AIに積み増し続けないため。人は
+    レビューという仕組みを通らないので、差し戻し率の対象ではない。
+    最後は名前順で決める。上限に達している人には割り当てない。全員が
+    上限なら提案しない — 黙って誰かに積み増すより、割り当て先が無いと
+    知らせる方が正しい。
 
     Picks whoever has the most room, from among skill matches when there are
-    any. Lowest load ratio wins, ties by name. Nobody at capacity is offered
-    more; if everyone is full, nothing is proposed — telling the PM there is no
-    room is better than silently piling more on someone.
+    any. Lowest load ratio wins first; among role AIs tied on load, the one
+    with the lower rejection rate so far (`review_tally`, from
+    `PmoCore._review_tally()`) goes first — so a role AI that keeps getting
+    sent back does not keep accumulating more work regardless. Humans never
+    go through review, so the rate does not apply to them. Ties beyond that
+    go by name. Nobody at capacity is offered more; if everyone is full,
+    nothing is proposed — telling the PM there is no room is better than
+    silently piling more on someone.
     """
     labels = {label.lower() for label in task.labels}
     # 担当してよいプロジェクトを限られた人には、その外のタスクを提案しない。
@@ -347,11 +358,14 @@ def suggest_assignee(task: Task, members: list[Member],
     if not open_members:
         return None
 
-    def rank(m: Member) -> tuple[int, float, str]:
+    tally = review_tally or {}
+
+    def rank(m: Member) -> tuple[int, float, float, str]:
         # 既定は人が先、役割AIはその次。`prefer` の役割AIだけが人より先。
         # Humans first by default; only a `prefer` role AI goes ahead of them.
         group = 0 if (m.is_agent and m.prefer) else (2 if m.is_agent else 1)
-        return (group, loads.get(m.name, 0) / m.capacity, m.name)
+        rate = rejection_rate(m.name, tally) if m.is_agent else 0.0
+        return (group, loads.get(m.name, 0) / m.capacity, rate, m.name)
 
     matched = [m for m in open_members if labels & set(m.skills)]
     pool, basis = (matched, "スキル一致") if matched else (open_members, "空き状況")
@@ -876,7 +890,7 @@ class PmoCore:
         for task in active:   # 順位の高い順に先に選ばせる / highest-ranked picks first
             if task.assignee or task.suggested_assignee:
                 continue
-            picked = suggest_assignee(task, self._team(), loads)
+            picked = suggest_assignee(task, self._team(), loads, self._review_tally())
             if picked is None:
                 continue
             member, reason = picked
@@ -1796,7 +1810,18 @@ class PmoCore:
             # 表示専用（`aipmo pmo`）。起動はしない / display-only: nothing is launched
             return {**base, "status": "would_dispatch"}
 
-        params = params_for(member, task)
+        # 直前のこの役割AIの成果が差し戻されていれば、その理由を引数で渡す。
+        # 同じ指摘を繰り返されないよう、テンプレート（プロンプト）側で踏まえ
+        # られる。承認済み・レビュー未了・初回はいずれも空（通常どおり）。
+        #
+        # If this role AI's last result on this task was rejected, pass the
+        # reason through as a parameter, so the template (its prompt) can
+        # account for it rather than repeating the same mistake. Accepted,
+        # not-yet-reviewed, and first-run are all empty (unchanged behavior).
+        previous_review = review_of(latest_dispatch(task, member.name))
+        review_note = (previous_review.get("note", "")
+                      if previous_review.get("decision") == "rejected" else "")
+        params = params_for(member, task, review_note=review_note)
         entry: dict[str, Any] = {"id": uuid.uuid4().hex[:10], "agent": member.name,
                                  "template": member.template,
                  "at": now.isoformat(), "status": "running", "params": params}

@@ -25,7 +25,14 @@ import pytest
 from aipmo import cli
 from aipmo.adapters.base import Adapter, AdapterRegistry, action
 from aipmo.adapters.mock import MockSlackAdapter
-from aipmo.agent_roles import EXCERPT_CHARS, ROLE_PRESETS, excerpt_of, fit, params_for
+from aipmo.agent_roles import (
+    EXCERPT_CHARS,
+    ROLE_PRESETS,
+    excerpt_of,
+    fit,
+    params_for,
+    rejection_rate,
+)
 from aipmo.dsl import loader
 from aipmo.engine.runner import Engine, PromptLibrary
 from aipmo.llm.base import EchoProvider, LLMResponse
@@ -152,6 +159,46 @@ def test_humans_come_first_unless_the_role_ai_is_preferred():
 def test_without_role_ais_the_choice_is_exactly_what_it_was():
     members = [Member("ann", capacity=3), Member("bob", capacity=3)]
     assert suggest_assignee(task_with([]), members, {"ann": 1, "bob": 0})[0].name == "bob"
+
+
+def test_among_equally_loaded_role_ais_the_one_rejected_less_often_wins():
+    """差し戻し率が低い役割AIが先に選ばれる（6.15）。人には適用されない。"""
+    low_rejection = dev_ai(name="careful-ai")
+    high_rejection = dev_ai(name="sloppy-ai")
+    loads = {"careful-ai": 0, "sloppy-ai": 0}
+    tally = {"careful-ai": {"accepted": 9, "rejected": 1},
+             "sloppy-ai": {"accepted": 1, "rejected": 9}}
+
+    chosen = suggest_assignee(task_with(["dev"]), [high_rejection, low_rejection],
+                              loads, tally)[0]
+
+    assert chosen.name == "careful-ai"
+
+
+def test_rejection_rate_is_only_a_tiebreak_after_load():
+    """負荷が先。差し戻し率は、負荷が同じ役割AIどうしでだけ効く。"""
+    busier_but_reliable = dev_ai(name="careful-ai", capacity=1)
+    freer_but_rejected = dev_ai(name="sloppy-ai", capacity=1)
+    loads = {"careful-ai": 1, "sloppy-ai": 0}        # careful-ai は満杯
+    tally = {"careful-ai": {"accepted": 10, "rejected": 0},
+             "sloppy-ai": {"accepted": 0, "rejected": 10}}
+
+    chosen = suggest_assignee(task_with(["dev"]), [busier_but_reliable, freer_but_rejected],
+                              loads, tally)[0]
+
+    assert chosen.name == "sloppy-ai"            # 空きが無いので差し戻し率は無関係
+
+
+def test_a_role_ai_with_no_review_history_ranks_as_if_perfect():
+    never_reviewed = dev_ai(name="new-ai")
+    some_rejections = dev_ai(name="veteran-ai")
+    loads = {"new-ai": 0, "veteran-ai": 0}
+    tally = {"veteran-ai": {"accepted": 5, "rejected": 1}}   # new-ai not in tally at all
+
+    chosen = suggest_assignee(task_with(["dev"]), [some_rejections, never_reviewed],
+                              loads, tally)[0]
+
+    assert chosen.name == "new-ai"
 
 
 def test_a_role_ais_load_is_what_is_running_not_what_it_finished():
@@ -300,6 +347,32 @@ def test_a_human_can_retry_with_dispatch_now(tmp_path):
     assert core.cycle()["alerts"] == []                                 # 直近は成功 → 警告は消える
 
 
+def test_a_rejected_result_s_note_is_passed_to_the_retry(tmp_path):
+    """差し戻しの理由が、再試行の引数（review_feedback）に乗る（6.15）。"""
+    te, core, launcher, _ = make(tmp_path, [dev_ai()])
+    core.cycle()
+    confirm(core)
+    core.cycle()
+    core.review_dispatch("PROJ-1", "rejected", "sato", "テストが無い")
+
+    core.dispatch_now("PROJ-1")
+
+    assert launcher.calls[0][0].params.get("review_feedback") is None
+    assert launcher.calls[1][0].params["review_feedback"] == "テストが無い"
+
+
+def test_an_accepted_result_leaves_no_review_feedback_on_the_next_run(tmp_path):
+    te, core, launcher, _ = make(tmp_path, [dev_ai()])
+    core.cycle()
+    confirm(core)
+    core.cycle()
+    core.review_dispatch("PROJ-1", "accepted", "sato")
+
+    core.dispatch_now("PROJ-1")
+
+    assert "review_feedback" not in launcher.calls[1][0].params
+
+
 def test_dispatch_now_refuses_what_is_not_assigned_to_a_role_ai(tmp_path):
     te, core, _, _ = make(
         tmp_path, [Member("sato", skills=("dev",)), dev_ai()],
@@ -433,6 +506,21 @@ def test_braces_in_a_title_cannot_break_the_parameters():
     task = Task(id="T:x", title="{ブレース} と {key} を含む", key="")
     assert params_for(ai, task)["question"] == "調べて: {ブレース} と {key} を含む"
     assert fit(ai, task)[0] is True
+
+
+def test_params_for_adds_review_feedback_only_when_given():
+    ai = dev_ai(template="role_researcher", params=(("question", "{title}"),))
+    task = Task(id="T:x", title="t", key="")
+    assert "review_feedback" not in params_for(ai, task)
+    assert "review_feedback" not in params_for(ai, task, review_note="")
+    assert params_for(ai, task, review_note="テストが無い")["review_feedback"] == "テストが無い"
+
+
+def test_rejection_rate_is_zero_with_no_history_and_otherwise_a_ratio():
+    assert rejection_rate("dev-ai", {}) == 0.0
+    assert rejection_rate("dev-ai", {"dev-ai": {"accepted": 3, "rejected": 1}}) == 0.25
+    assert rejection_rate("dev-ai", {"dev-ai": {"accepted": 0, "rejected": 0}}) == 0.0
+    assert rejection_rate("other-ai", {"dev-ai": {"accepted": 0, "rejected": 5}}) == 0.0
 
 
 # ===== 見え方 / visibility ===============================================================

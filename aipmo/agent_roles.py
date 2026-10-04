@@ -51,6 +51,24 @@ def review_of(entry: dict[str, Any] | None) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def rejection_rate(name: str, tally: Mapping[str, Mapping[str, int]]) -> float:
+    """この役割AIの、これまでの差し戻し率（0〜1）。記録が無ければ 0。
+
+    `PmoCore._review_tally()` が判断ログから数えた `{name: {accepted, rejected}}`
+    を受け取る——ここは純粋な計算だけを持つ（モジュールの方針どおり）。
+
+    The rejection rate (0–1) so far for this role AI; 0 with no history.
+    Takes the `{name: {accepted, rejected}}` tally `PmoCore._review_tally()`
+    counts from the decision log — kept a pure calculation here, matching
+    this module's own rule for what it owns.
+    """
+    counts = tally.get(name) or {}
+    accepted = int(counts.get("accepted", 0))
+    rejected = int(counts.get("rejected", 0))
+    total = accepted + rejected
+    return rejected / total if total else 0.0
+
+
 @dataclass(frozen=True)
 class RolePreset:
     params: Mapping[str, str]
@@ -93,12 +111,28 @@ def render(template: str, task: Any) -> str:
     return out
 
 
-def params_for(member: Any, task: Any) -> dict[str, str]:
-    """この役割AIがこのタスクで使うテンプレート引数 / the template parameters."""
+def params_for(member: Any, task: Any, *, review_note: str = "") -> dict[str, str]:
+    """この役割AIがこのタスクで使うテンプレート引数 / the template parameters.
+
+    review_note は、この (タスク, 役割AI) の直前の成果が差し戻された場合の
+    理由。空でなければ review_feedback として渡す——再試行のたびに
+    同じ指摘をされないよう、テンプレート（プロンプト）側で踏まえられる。
+    空のときはキー自体を足さない（既定のテンプレートが知らない引数を
+    もらって戸惑わないように）。
+
+    review_note is the reason the last result on this (task, role AI) pair
+    was rejected, if any. When non-empty it is passed through as
+    review_feedback, so the template (its prompt) can take it into account
+    on retry rather than repeating the same mistake. Left out entirely when
+    empty, so a template that doesn't expect it never sees an unfamiliar key.
+    """
     preset = ROLE_PRESETS.get(member.template or "")
     mapping: dict[str, str] = dict(preset.params) if preset else {}
     mapping.update(dict(member.params))
-    return {name: render(value, task) for name, value in mapping.items()}
+    rendered = {name: render(value, task) for name, value in mapping.items()}
+    if review_note:
+        rendered["review_feedback"] = review_note
+    return rendered
 
 
 def fit(member: Any, task: Any) -> tuple[bool, str]:
