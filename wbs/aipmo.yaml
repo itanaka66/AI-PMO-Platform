@@ -398,9 +398,18 @@ wbs:
           notes: "実アカウントが要る。仕様に沿って書いただけで、実機では未確認"
         - id: "6.4"
           name: "他 7 言語のガイドへ新しいコマンドを追記"
-          status: todo
+          status: done
           effort: 3
           priority: Low
+          done_on: 2026-10-04
+          evidence:
+            - "docs/guide/en.md"
+            - "docs/guide/zh.md"
+            - "docs/guide/ko.md"
+            - "docs/guide/es.md"
+            - "docs/guide/fr.md"
+            - "docs/guide/de.md"
+            - "docs/guide/pt.md"
         - id: "6.5"
           name: "PostgreSQL から SQLite への逆方向の移行"
           status: done

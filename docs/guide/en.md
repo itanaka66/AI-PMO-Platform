@@ -139,6 +139,21 @@ aipmo adapters    # list the connected tools
 aipmo doctor      # check that connections work
 aipmo serve       # open the interface for your phone
 aipmo schedule    # start running things on a schedule
+aipmo tasks       # cross-template priority — what to do next, across every template
+aipmo pmo         # overall status, warnings, and suggested assignments at a glance
+aipmo assign      # see suggested assignments (confirm with --apply; --writeback also writes to Jira/GitHub etc.)
+aipmo ledger info # where the ledger of work lives, and how much is in it
+aipmo wbs status  # this project's own development progress (wbs/aipmo.yaml)
+aipmo wbs notify  # post missed WBS updates / missing evidence as a PR comment (--post to actually post)
+aipmo wbs proposals  # view and approve WBS change proposals, reflecting them into the WBS file (approve / reject / apply)
+aipmo agents      # work handed to role AIs (dev/test/research/...) and their results (review records a human's check of the result)
+aipmo collect     # pull ticket-tracker progress into the ledger now (read-only)
+aipmo generated   # view and approve tasks PMO Core created (proposals / recurring)
+aipmo ledger      # inspect where the ledger lives, migrate between SQLite and PostgreSQL (migrate / migrate-to-sqlite), import from a sibling file
+aipmo demo        # load or clear sample demo data in the ledger (DB) (--config demo/config.yaml; see docs/DEMO.md)
+aipmo members     # check which Plane/OpenProject user a member maps to (read-only)
+aipmo file        # file approved tasks into the ticket tracker too (--apply to create, --skip to pass)
+aipmo judgment    # view PMO Core's autonomous decisions (pause / resume / reset to stop or roll back)
 ```
 
 ---

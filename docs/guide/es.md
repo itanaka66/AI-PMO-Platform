@@ -140,6 +140,21 @@ aipmo adapters    # ver las herramientas conectadas
 aipmo doctor      # comprobar que las conexiones funcionan
 aipmo serve       # abrir la interfaz para el móvil
 aipmo schedule    # empezar a ejecutar según el horario
+aipmo tasks       # prioridad de pendientes a través de varias plantillas
+aipmo pmo         # ver de un vistazo el estado general, avisos y propuestas de asignación
+aipmo assign      # ver las propuestas de asignación (confirmar con --apply; --writeback también escribe en Jira/GitHub, etc.)
+aipmo ledger info # dónde está el libro de tareas y cuántas hay
+aipmo wbs status  # el avance del propio desarrollo de este proyecto (wbs/aipmo.yaml)
+aipmo wbs notify  # publicar como comentario de PR las actualizaciones de WBS pendientes o la evidencia que falta (--post para publicarlo de verdad)
+aipmo wbs proposals  # ver y aprobar propuestas de cambio del WBS, reflejándolas en el archivo WBS (approve / reject / apply)
+aipmo agents      # trabajo encargado a IA de rol (desarrollo/pruebas/investigación...) y sus resultados (review deja constancia de la revisión humana)
+aipmo collect     # recopilar ahora en el libro el avance de las herramientas de incidencias (solo lectura)
+aipmo generated   # ver y aprobar las tareas que creó PMO Core (propuestas/periódicas)
+aipmo ledger      # consultar dónde vive el libro, migrar entre SQLite y PostgreSQL (migrate / migrate-to-sqlite), importar desde un archivo vecino
+aipmo demo        # cargar o borrar datos de ejemplo de demostración en el libro (BD) (--config demo/config.yaml; procedimiento en docs/DEMO.md)
+aipmo members     # comprobar a qué usuario de Plane/OpenProject corresponde cada miembro (solo lectura)
+aipmo file        # registrar también en la herramienta de incidencias las tareas aprobadas (--apply para crear, --skip para omitir)
+aipmo judgment    # ver las decisiones autónomas de PMO Core (pause / resume / reset para detener o revertir)
 ```
 
 ---

@@ -137,6 +137,21 @@ aipmo adapters    # 查看已连接的外部工具
 aipmo doctor      # 确认连接是否正常
 aipmo serve       # 打开手机端界面
 aipmo schedule    # 开始按设定时间自动运行
+aipmo tasks       # 跨模板的待办优先级
+aipmo pmo         # 一览全局状态・警告・分配建议
+aipmo assign      # 查看分配建议（用 --apply 确定；--writeback 还会写入 Jira・GitHub 等）
+aipmo ledger info # 任务台账保存在哪里・有多少条
+aipmo wbs status  # 本项目自身开发的进度（wbs/aipmo.yaml）
+aipmo wbs notify  # 将 WBS 更新遗漏・证据缺失发布为 PR 评论（加 --post 才会实际发布）
+aipmo wbs proposals  # 查看并批准 WBS 变更提案，反映到 WBS 文件（approve / reject / apply）
+aipmo agents      # 查看交给角色 AI（开发・测试・调查…）的工作及结果（review 记录人工确认结果）
+aipmo collect     # 把工单工具的进展现在就收集进台账（只读）
+aipmo generated   # 查看并批准 PMO Core 生成的任务（提案・定期）
+aipmo ledger      # 查看台账的存储位置・在 SQLite 与 PostgreSQL 之间迁移（migrate / migrate-to-sqlite）・导入相邻文件
+aipmo demo        # 向台账（数据库）加载或清除演示用示例数据（--config demo/config.yaml，步骤见 docs/DEMO.md）
+aipmo members     # 确认成员对应 Plane・OpenProject 中的哪个用户（只读）
+aipmo file        # 把已批准的任务也提交到工单工具（--apply 创建・--skip 跳过）
+aipmo judgment    # 查看 PMO Core 的自主判断（pause / resume / reset 暂停・恢复）
 ```
 
 ---
