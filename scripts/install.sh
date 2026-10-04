@@ -109,6 +109,30 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 ok ".venv"
 
+# Debian/Ubuntu の一部の python3 パッケージは、venv を作っても pip を
+# 自動では入れない（ensurepip を意図的に外したビルドのため）。venv の
+# 作成自体は成功して見えるので、ここで気づかないと次の pip 呼び出しで
+# 初めて「No module named pip」になる。
+#
+# Some Debian/Ubuntu python3 packages don't bootstrap pip into a new venv
+# (their build deliberately strips ensurepip). venv creation itself looks
+# successful, so without this check the first sign of trouble is "No
+# module named pip" at the next pip call.
+if ! "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then
+  warn "venv に pip がありません。ensurepip で入れます / venv has no pip; bootstrapping via ensurepip"
+  "$VENV/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 \
+    || fail "pip を導入できませんでした / could not install pip into the venv.
+システムの Python が ensurepip 無しでビルドされている可能性があります。
+python3-pip を導入してから、もう一度実行してください:
+  Debian/Ubuntu:  sudo apt install python3-pip
+  Fedora/RHEL:    sudo dnf install python3-pip
+
+Your system Python may have been built without ensurepip. Install
+python3-pip, then run this script again:
+  Debian/Ubuntu:  sudo apt install python3-pip
+  Fedora/RHEL:    sudo dnf install python3-pip"
+fi
+
 EXTRAS="cloud,data"
 [ "$INSTALL_WEB" = "1" ] && EXTRAS="$EXTRAS,web"
 
