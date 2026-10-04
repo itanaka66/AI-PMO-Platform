@@ -43,13 +43,26 @@ from uuid import uuid4
 
 from ..wbs_edit import WbsEditError, plan_changes, validate_changes
 from .base import Adapter, AdapterError, action
-from .postgres import PostgresAdapter
 
 
 class WbsReplanAdapter(Adapter):
+    """`postgres` は `PostgresAdapter`、または PostgreSQL が無いときの
+    `aipmo.wbs_proposals.LedgerProposalStore`（提案を台帳に置く）のどちらか——
+    `query`/`execute` が同じ形であれば区別しない。ただし `LedgerProposalStore` は
+    `latest_forecast_snapshot` を持たないため、`propose` は台帳だけでは働かない
+    （`pending_count` と、cli.py 経由の一覧・承認・却下・反映は働く）。
+
+    `postgres` is either a `PostgresAdapter` or, without PostgreSQL,
+    `aipmo.wbs_proposals.LedgerProposalStore` (proposals live in the ledger
+    instead) — this class doesn't care, as long as `query`/`execute` match.
+    `LedgerProposalStore` has no `latest_forecast_snapshot`, though, so
+    `propose` does not work on the ledger alone (`pending_count`, and
+    listing/approving/rejecting/applying via cli.py, do).
+    """
+
     name = "wbs_replan"
 
-    def __init__(self, postgres: PostgresAdapter, file: str | None = None,
+    def __init__(self, postgres: Any, file: str | None = None,
                  root: str | None = None, **config: Any) -> None:
         super().__init__(**config)
         self.postgres = postgres

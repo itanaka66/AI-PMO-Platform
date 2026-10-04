@@ -111,9 +111,15 @@ adapters:
 
 ## WBS の変更提案を承認して、ファイルへ反映する / Approving a replan proposal
 
-WBS 再計画 AI（`wbs_replan`）の提案は、PostgreSQL に**承認待ち**で記録されます。提案の `diff` に、決まった形の
-変更の一覧（`changes`）が入っていれば、人が承認したときに **WBS ファイルへ反映**されます
-（`templates/examples/wbs_file_replan.yaml` が、WBS ファイルを読んでそれを提案する例）。
+WBS 再計画 AI（`wbs_replan`）の提案は**承認待ち**で記録されます——`adapters.postgres` があれば
+PostgreSQL に、無ければ台帳（SQLite でも PostgreSQL でも、`task_engine` の設定どおり）に置かれます。
+提案の `diff` に、決まった形の変更の一覧（`changes`）が入っていれば、人が承認したときに
+**WBS ファイルへ反映**されます（`templates/examples/wbs_file_replan.yaml` が、WBS ファイルを読んで
+それを提案する例）。
+
+**提案の新規作成**（`wbs_replan.propose`）は、直前の `risk_forecast` 予測スナップショットが
+別の PostgreSQL 専用表にあるため、引き続き PostgreSQL が要ります。台帳だけで動くのは、
+**すでにある提案を見る・承認する・却下する・反映する**側（下記のコマンドと Web 画面）です。
 
 ```json
 {"changes": [
@@ -129,7 +135,8 @@ WBS 再計画 AI（`wbs_replan`）の提案は、PostgreSQL に**承認待ち**�
 
 ```yaml
 adapters:
-  postgres: { ... }
+  postgres: { ... }    # 無くてもよい——その場合、提案の置き場は台帳（task_engine）になる
+                       # （wbs_replan.propose による新規作成は引き続き postgres が要る）
   wbs_replan: { file: wbs/aipmo.yaml, root: . }   # 反映先。あると提案の時点でファイルに当てて確かめる
 ```
 
@@ -159,8 +166,9 @@ Web 画面の承認ボタンも同じです（`adapters.wbs_replan.file` があ�
 
 ## できないこと / Not (yet) done
 
-- **WBS の変更提案の置き場は PostgreSQL**（`wbs_replan`）。PostgreSQL が無い環境では、提案を
-  貯めて承認する流れは使えない（台帳に置く版は未実装。WBS 項 5.7）。
+- **提案の新規作成（`wbs_replan.propose`）は PostgreSQL が要る。** 直前の `risk_forecast`
+  予測スナップショットが別の PostgreSQL 専用表にあるため。すでにある提案の一覧・承認・却下・
+  反映（本節のコマンドと Web 画面）は台帳だけで動く（WBS 項 5.7）。
 - **担当者（`owner`）の書き戻しは無い。** Task Engine で担当を確定しても、台帳に
   残るだけで WBS ファイルは変わらない（読み取り専用のため）。
 - 証拠は「ファイルと語句が在る」ことの確認で、**中身が正しく動くこと**までは

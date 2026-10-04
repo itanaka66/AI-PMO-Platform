@@ -232,26 +232,38 @@ def build_engine(
         wbs_spec["root"] = str(resolve(str(wbs_spec.get("root", "."))))
         adapters.register(WbsFileAdapter(**wbs_spec))
 
-    # wbs_replan は postgres の上に合成される（JiraAgileAdapter が jira の
-    # 上に合成されるのと同じ形）。postgres が無ければ wbs_replan_proposals
-    # にもそもそも書けないので、postgres が設定されているときだけ登録する。
+    # wbs_replan は postgres か、無ければ台帳（LedgerProposalStore）の上に
+    # 合成される（JiraAgileAdapter が jira の上に合成されるのと同じ形）。
+    # ただし「新規提案の作成」（propose）は risk_forecast のスナップショット
+    # （別の PostgreSQL 専用表）も要るため、台帳だけでは働かない——その場合
+    # でも、既にある提案の一覧・承認・却下・反映（aipmo wbs proposals）は
+    # 台帳だけで動く。
     #
-    # wbs_replan is composed on top of postgres (same shape as
-    # JiraAgileAdapter over jira). With no postgres there is nowhere for
-    # wbs_replan_proposals to live, so this only registers when postgres is
-    # configured.
+    # wbs_replan is composed on top of postgres, or on the ledger
+    # (LedgerProposalStore) when there is none (same shape as JiraAgileAdapter
+    # over jira). *Creating* a proposal (propose) also needs a risk_forecast
+    # snapshot (a separate PostgreSQL-only table), so that still fails without
+    # postgres — but viewing, approving, rejecting and applying proposals
+    # that already exist (`aipmo wbs proposals`) works on the ledger alone.
     if "wbs_replan" in adapter_config:
-        if not adapters.has("postgres"):
-            raise ConfigError(
-                "config.yaml の adapters.wbs_replan を使うには adapters.postgres の"
-                "設定も必要です / adapters.wbs_replan requires adapters.postgres "
-                "to also be configured"
-            )
+        if adapters.has("postgres"):
+            store: Any = adapters.get("postgres")
+        else:
+            from .wbs_proposals import LedgerProposalStore
+
+            try:
+                store = LedgerProposalStore(open_ledger(config, base).side)
+            except ConfigError as exc:
+                raise ConfigError(
+                    "config.yaml の adapters.wbs_replan を使うには adapters.postgres か、"
+                    f"使える台帳（task_engine）のどちらかが必要です / adapters.wbs_replan "
+                    f"needs either adapters.postgres or a usable ledger (task_engine): {exc}"
+                ) from exc
         from .adapters.wbs_replan import WbsReplanAdapter
 
         replan_spec = dict(adapter_config["wbs_replan"] or {})
         adapters.register(WbsReplanAdapter(
-            postgres=cast(PostgresAdapter, adapters.get("postgres")),
+            postgres=store,
             file=str(resolve(str(replan_spec["file"]))) if replan_spec.get("file") else None,
             root=str(resolve(str(replan_spec.get("root", ".")))) if replan_spec.get("file")
             else None))
@@ -1399,11 +1411,6 @@ def cmd_wbs_proposals(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
-    if not engine.adapters.has("postgres"):
-        print("postgres アダプタが設定されていません（WBS 変更提案は PostgreSQL にあります） "
-              "/ the postgres adapter is not configured", file=sys.stderr)
-        return 1
-    pg: Any = engine.adapters.get("postgres")
     tenant = str(config.get("tenant") or "")
     spec = dict((config.get("adapters") or {}).get("wbs_replan") or {})
     file = Path(args.file or spec.get("file") or "wbs/aipmo.yaml")
@@ -1411,11 +1418,29 @@ def cmd_wbs_proposals(args: argparse.Namespace) -> int:
     file = file if file.is_absolute() else base / file
     root = root if root.is_absolute() else base / root
     try:
-        decisions = open_ledger(config, base).side
+        side = open_ledger(config, base).side
     except ConfigError as exc:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
-    target = Target(file=file.resolve(), root=root.resolve(), decisions=decisions)
+    # postgres アダプタがあればそちら、無ければ台帳（SideStore）に提案を置く
+    # （LedgerProposalStore は pg.query/pg.execute と同じ形を持つので、以降の
+    # 呼び出しはどちらが相手かを区別しない）。「提案の新規作成」（wbs_replan
+    # テンプレート）は risk_forecast のスナップショットが別途 PostgreSQL に
+    # 要るため、ここでは扱わない——ここが扱うのは既にある提案の一覧・決定・反映。
+    #
+    # Uses the postgres adapter when configured, otherwise the ledger's own
+    # SideStore (LedgerProposalStore matches pg.query/pg.execute's shape, so
+    # everything below is indifferent to which one it's talking to).
+    # *Creating* a proposal (the wbs_replan template) still needs PostgreSQL
+    # separately for its risk_forecast snapshot; this only covers viewing,
+    # deciding, and applying proposals that already exist.
+    if engine.adapters.has("postgres"):
+        pg: Any = engine.adapters.get("postgres")
+    else:
+        from .wbs_proposals import LedgerProposalStore
+
+        pg = LedgerProposalStore(side)
+    target = Target(file=file.resolve(), root=root.resolve(), decisions=side)
     by = args.by or __import__("getpass").getuser()
     command = args.proposals_command or "list"
 

@@ -42,7 +42,12 @@ STATE = "pmo-core-state.json"
 LEARNED = "pmo-learned.json"
 CONTROL = "pmo-judgment-control.json"
 DECISIONS = "pmo-decisions.jsonl"
-DOCS = (BRIEFING, STATE, LEARNED, CONTROL)
+# WBS 変更提案（PostgreSQL 無しのとき。aipmo/wbs_proposals.py の
+# LedgerProposalStore）。
+# WBS change proposals when there is no PostgreSQL (aipmo/wbs_proposals.py's
+# LedgerProposalStore).
+WBS_PROPOSALS = "wbs-proposals.json"
+DOCS = (BRIEFING, STATE, LEARNED, CONTROL, WBS_PROPOSALS)
 LOGS = (DECISIONS,)
 ALL_NAMES = DOCS + LOGS
 
