@@ -140,6 +140,21 @@ aipmo adapters    # die angebundenen Werkzeuge auflisten
 aipmo doctor      # prüfen, ob die Verbindungen stehen
 aipmo serve       # die Oberfläche fürs Telefon öffnen
 aipmo schedule    # zeitgesteuerte Ausführung starten
+aipmo tasks       # Prioritäten der Aufgaben über alle Vorlagen hinweg
+aipmo pmo         # Gesamtstatus, Warnungen und Zuweisungsvorschläge auf einen Blick
+aipmo assign      # Zuweisungsvorschläge ansehen (mit --apply bestätigen; --writeback schreibt auch nach Jira/GitHub usw.)
+aipmo ledger info # wo das Aufgabenregister liegt und wie viele Einträge es hat
+aipmo wbs status  # der Entwicklungsfortschritt dieses Projekts selbst (wbs/aipmo.yaml)
+aipmo wbs notify  # verpasste WBS-Updates/fehlende Nachweise als PR-Kommentar posten (--post zum tatsächlichen Posten)
+aipmo wbs proposals  # WBS-Änderungsvorschläge ansehen und genehmigen, Übernahme in die WBS-Datei (approve / reject / apply)
+aipmo agents      # an Rollen-KIs (Entwicklung/Test/Recherche…) übergebene Arbeit und deren Ergebnisse (review hält die menschliche Prüfung fest)
+aipmo collect     # den Fortschritt der Ticket-Tools jetzt ins Register einsammeln (nur lesend)
+aipmo generated   # von PMO Core erstellte Aufgaben ansehen und genehmigen (Vorschläge/wiederkehrend)
+aipmo ledger      # Speicherort des Registers prüfen, zwischen SQLite und PostgreSQL migrieren (migrate / migrate-to-sqlite), aus einer Nachbardatei importieren
+aipmo demo        # Demo-Beispieldaten ins Register (DB) laden oder löschen (--config demo/config.yaml; Ablauf in docs/DEMO.md)
+aipmo members     # prüfen, welchem Plane-/OpenProject-Benutzer ein Mitglied entspricht (nur lesend)
+aipmo file        # genehmigte Aufgaben zusätzlich im Ticket-Tool anlegen (--apply zum Erstellen, --skip zum Überspringen)
+aipmo judgment    # autonome Entscheidungen von PMO Core ansehen (pause / resume / reset zum Anhalten/Zurücksetzen)
 ```
 
 ---

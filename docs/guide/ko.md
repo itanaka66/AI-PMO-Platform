@@ -138,6 +138,21 @@ aipmo adapters    # 연결된 외부 도구 목록
 aipmo doctor      # 연결이 되는지 확인
 aipmo serve       # 휴대폰용 화면 열기
 aipmo schedule    # 정해진 시각의 자동 실행 시작
+aipmo tasks       # 여러 템플릿을 아우른 할 일의 우선순위
+aipmo pmo         # 전체 상황・경고・담당 제안을 한눈에 보기
+aipmo assign      # 담당 제안을 보기 (확정은 --apply, --writeback으로 Jira・GitHub 등에도 기록)
+aipmo ledger info # 할 일 대장이 어디에 몇 건 있는지
+aipmo wbs status  # 이 프로젝트 자신의 개발 진행 상황 (wbs/aipmo.yaml)
+aipmo wbs notify  # WBS 업데이트 누락・증거 부족을 PR 댓글로 남기기 (--post로 실제 게시)
+aipmo wbs proposals  # WBS 변경 제안을 보고 승인하여 WBS 파일에 반영 (approve / reject / apply)
+aipmo agents      # 역할 AI(개발・테스트・조사…)에게 맡긴 작업과 그 결과 (review로 사람이 확인한 기록 남기기)
+aipmo collect     # 이슈 관리 도구의 진행 상황을 지금 대장으로 모으기 (읽기 전용)
+aipmo generated   # PMO Core가 만든 작업(제안・정기)을 보고 승인하기
+aipmo ledger      # 대장의 저장 위치 확인・SQLite와 PostgreSQL 간 이전 (migrate / migrate-to-sqlite)・옆 파일 가져오기
+aipmo demo        # 데모용 샘플 데이터를 대장(DB)에 넣거나 지우기 (--config demo/config.yaml, 절차는 docs/DEMO.md)
+aipmo members     # 멤버가 Plane・OpenProject의 어느 사용자에 해당하는지 확인 (읽기 전용)
+aipmo file        # 승인된 작업을 이슈 관리 도구에도 등록 (--apply로 생성・--skip으로 건너뛰기)
+aipmo judgment    # PMO Core의 자율적 판단 보기 (pause / resume / reset으로 중지・되돌리기)
 ```
 
 ---
