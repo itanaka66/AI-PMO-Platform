@@ -385,10 +385,18 @@ wbs:
           notes: "記録は実行記録と判断ログ。AI 自身はレビューできず、差し戻しには理由が要り警告になる。差し戻しの理由をテンプレートに渡す／割り当てに反映するのは未実装（6.15）"
         - id: "6.15"
           name: "レビュー結果（差し戻しの理由・認めた率）を、再実行の引数と役割AIの割り当てに反映する"
-          status: todo
+          status: done
           effort: 3
           priority: Low
           depends_on: ["6.10"]
+          done_on: 2026-10-04
+          evidence:
+            - "aipmo/agent_roles.py::def rejection_rate"
+            - "aipmo/agent_roles.py::def params_for"
+            - "aipmo/pmo_core.py::def suggest_assignee"
+            - "tests/test_agent_dispatch.py::test_a_rejected_result_s_note_is_passed_to_the_retry"
+            - "tests/test_agent_dispatch.py::test_among_equally_loaded_role_ais_the_one_rejected_less_often_wins"
+          notes: "差し戻し率は負荷が並んだ役割AIどうしの同点決着にのみ使う（UI の理由文には出さない——sg_skill/sg_room の8言語i18nを増やすのは今回は見送り）。再実行は直前の差し戻し理由を review_feedback としてテンプレート引数に渡す（空なら引数自体を足さない）"
         - id: "6.3"
           name: "非 Jira の実サービスでの書き戻し検証（GitHub・Azure DevOps・Plane・OpenProject）"
           status: todo
