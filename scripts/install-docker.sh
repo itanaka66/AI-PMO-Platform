@@ -306,7 +306,16 @@ docker compose run --rm aipmo validate templates/examples/meeting_minutes.yaml
 printf '\n  完了しました / Done.\n\n'
 printf '  使い方 / Usage:\n'
 printf '    docker compose run --rm aipmo doctor\n'
-printf '    docker compose run --rm aipmo run templates/examples/meeting_minutes.yaml\n\n'
+# meeting_minutes.yaml の trigger は event:teams:meeting_ended で、
+# {{ trigger.meeting_id }} を参照する。--trigger 無しで aipmo run すると
+# ResolutionError になる——これは実際の Teams イベント経由を想定した
+# テンプレートで、手動実行する場合はペイロードを渡す必要があるため。
+#
+# meeting_minutes.yaml's trigger is event:teams:meeting_ended and
+# references {{ trigger.meeting_id }}. Running it with plain `aipmo run`
+# (no --trigger) fails with ResolutionError — it expects a real Teams
+# event; running it by hand needs the payload supplied explicitly.
+printf '    docker compose run --rm aipmo run templates/examples/meeting_minutes.yaml --trigger '"'"'{"meeting_id": "demo"}'"'"'\n\n'
 
 if [ "$WEB_MODE" = 1 ]; then
   printf '  WebUI を起動しました / WebUI is running:\n'
