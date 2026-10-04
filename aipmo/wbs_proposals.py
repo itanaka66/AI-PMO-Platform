@@ -30,12 +30,14 @@ forced. Free-form proposals only record the decision.
 from __future__ import annotations
 
 import json
+import threading
+import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .side_store import DECISIONS, FileSide, SideStore
+from .side_store import DECISIONS, WBS_PROPOSALS, FileSide, SideStore
 from .wbs_edit import Plan, WbsEditError, plan_changes, validate_changes, write_plan
 
 APPLIED_KIND = "wbs_proposal_applied"
@@ -57,6 +59,125 @@ class Target:
     root: Path
     # 反映の記録の置き場。ファイルの場所（Path）か、台帳の隣の置き場（SideStore）。
     decisions: Path | SideStore | None = None
+
+
+class LedgerProposalStore:
+    """WBS 変更提案の**扱い**（一覧・承認・却下・反映）を PostgreSQL 無しで行う。
+
+    `fetch`・`decide`・`approve`・`apply_approved`（この下）は、`pg.query(name, params)` /
+    `pg.execute(name, params, idempotency_key=...)` という形だけを相手に書いてある
+    （PostgresAdapter と区別しない）。この型は同じ形を、台帳の隣（`SideStore`）に置いた
+    1つの JSON 文書で実装する——`task_engine.backend: postgres` が無い構成でも、
+    `aipmo wbs proposals` がそのまま動く。
+
+    **含まないもの**: `wbs_replan` テンプレートによる提案の**新規作成**は、直前の
+    `risk_forecast` 予測スナップショット（`latest_forecast_snapshot` / PostgreSQL の別表）を
+    必須とするため、ここでは扱わない——作成は引き続き PostgreSQL が要る。ここが扱うのは
+    「すでにある提案を見る・決める・反映する」という、人が日常に触れる側だけ。
+
+    Handles WBS change proposals — listing, approving, rejecting, applying — without
+    PostgreSQL. `fetch`/`decide`/`approve`/`apply_approved` (below) only ever call
+    `pg.query(name, params)` / `pg.execute(name, params, idempotency_key=...)`, never caring
+    whether `pg` is a PostgresAdapter; this class implements the same shape over a single JSON
+    document beside the ledger (`SideStore`), so `aipmo wbs proposals` works even without
+    `task_engine.backend: postgres`.
+
+    **Not covered**: *creating* a proposal via the `wbs_replan` template still needs
+    PostgreSQL, since it requires the latest `risk_forecast` snapshot
+    (`latest_forecast_snapshot`, a separate PostgreSQL-only table) to assign a tier. This class
+    only covers the side a human actually touches day to day: viewing, deciding, and applying
+    proposals that already exist.
+    """
+
+    name = "wbs_proposals_ledger"
+
+    def __init__(self, side: SideStore) -> None:
+        self.side = side
+        self._lock = threading.Lock()   # 同一プロセス内の競合だけ防ぐ（決定は稀なので十分）
+                                         # guards same-process races only — decisions are rare enough
+
+    def health_check(self) -> bool:
+        return True
+
+    def _read_all(self) -> dict[str, dict[str, Any]]:
+        raw = self.side.read_doc(WBS_PROPOSALS)
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _write_all(self, rows: dict[str, dict[str, Any]]) -> None:
+        self.side.write_doc(WBS_PROPOSALS, json.dumps(rows, ensure_ascii=False))
+
+    def query(self, name: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        params = params or {}
+        with self._lock:
+            rows = self._read_all()
+            if name == "pending_wbs_proposals":
+                matched = [dict(r) for r in rows.values()
+                          if r.get("tenant") == params.get("tenant")
+                          and r.get("status") == "pending"]
+                matched.sort(key=lambda r: (r.get("tier") if r.get("tier") is not None else 99,
+                                            r.get("wbs_version_from") or "",
+                                            r.get("option_label") or "",
+                                            r.get("created_at") or ""))
+                return {"rows": matched, "count": len(matched)}
+            if name == "get_wbs_proposal":
+                row = rows.get(params.get("id", ""))
+                if row is None or row.get("tenant") != params.get("tenant"):
+                    return {"rows": [], "count": 0}
+                return {"rows": [dict(row)], "count": 1}
+            raise KeyError(f"wbs_proposals_ledger: 未知のクエリ / unknown query: {name}")
+
+    def execute(self, name: str, params: dict[str, Any] | None = None,
+               idempotency_key: str | None = None) -> dict[str, Any]:
+        params = params or {}
+        with self._lock:
+            rows = self._read_all()
+            if name == "save_wbs_proposal":
+                # ON CONFLICT (source_key) DO UPDATE ... WHERE status = 'pending' と同じ:
+                # 既存の承認待ち提案と同じ idempotency_key（= source_key）なら上書きし、
+                # 決定済みの行には触れない。一致が無ければ新規行。
+                # Mirrors ON CONFLICT (source_key) DO UPDATE ... WHERE status = 'pending': a
+                # match on idempotency_key (source_key) among pending rows is overwritten;
+                # decided rows are left untouched; no match inserts a new row.
+                existing = next((r for r in rows.values()
+                                 if r.get("source_key") == idempotency_key
+                                 and r.get("tenant") == params.get("tenant")), None)
+                if existing is not None and existing.get("status") != "pending":
+                    return {"affected": 0, "rows": []}
+                row_id = existing["id"] if existing is not None else str(uuid.uuid4())
+                record = {
+                    "id": row_id, "tenant": params.get("tenant"),
+                    "wbs_version_from": params.get("wbs_version_from"),
+                    "diff": params.get("diff"), "rationale": params.get("rationale"),
+                    "assumptions": params.get("assumptions") or {},
+                    "tier": params.get("tier"), "confidence": params.get("confidence"),
+                    "option_label": params.get("option_label"), "source_key": idempotency_key,
+                    "status": "pending",
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "decided_by": None, "decided_at": None, "decision_note": None,
+                }
+                rows[row_id] = record
+                self._write_all(rows)
+                return {"affected": 1, "rows": [{"id": row_id}]}
+            if name == "decide_wbs_proposal":
+                row = rows.get(params.get("id", ""))
+                if (row is None or row.get("tenant") != params.get("tenant")
+                        or row.get("status") != "pending"):
+                    return {"affected": 0, "rows": []}
+                row = dict(row)
+                row["status"] = params["status"]
+                row["decided_by"] = params.get("decided_by")
+                row["decided_at"] = datetime.now(timezone.utc).isoformat()
+                row["decision_note"] = params.get("decision_note")
+                rows[row["id"]] = row
+                self._write_all(rows)
+                return {"affected": 1, "rows": [{"id": row["id"], "status": row["status"]}]}
+            raise KeyError(f"wbs_proposals_ledger: 未知のクエリ / unknown query: {name}")
 
 
 def changes_of(row: dict[str, Any]) -> Any | None:
@@ -193,5 +314,6 @@ def apply_approved(pg: Any, tenant: str, proposal_id: str, by: str, target: Targ
             "report": plan.report, "error": None, "changed": plan.changed}
 
 
-__all__ = ["APPLIED_KIND", "ProposalError", "Target", "apply_approved", "applied_before",
-           "approve", "changes_of", "decide", "fetch", "plan_for", "validate_changes"]
+__all__ = ["APPLIED_KIND", "LedgerProposalStore", "ProposalError", "Target", "apply_approved",
+           "applied_before", "approve", "changes_of", "decide", "fetch", "plan_for",
+           "validate_changes"]

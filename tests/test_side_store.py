@@ -37,6 +37,7 @@ from aipmo.side_store import (
     DECISIONS,
     LEARNED,
     STATE,
+    WBS_PROPOSALS,
     DbSide,
     FileSide,
     import_files,
@@ -326,7 +327,7 @@ def test_import_copies_documents_and_logs_once_and_never_overwrites(tmp_path):
 
     report = import_files(source, target)
     assert report == {BRIEFING: "imported", STATE: "kept", LEARNED: "absent", CONTROL: "absent",
-                      DECISIONS: "imported"}
+                      WBS_PROPOSALS: "absent", DECISIONS: "imported"}
     assert target.read_doc(BRIEFING) == "B1" and target.read_doc(STATE) == "S-newer"
     assert target.tail(DECISIONS, 0) == ["a", "b"]
 

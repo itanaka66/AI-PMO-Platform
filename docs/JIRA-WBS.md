@@ -296,13 +296,16 @@ pmo_core:
 `maybe_done`・証拠の欠けが、「WBS を確かめる」という**承認待ちの提案**になります（`aipmo generated`）。承認すれば
 普通のタスクになり、直れば未決の提案は取り下げられます。WBS ファイルは**変わりません**。
 
-### 3-4. AI の再計画案を、承認して WBS ファイルへ反映する（PostgreSQL が要る）
+### 3-4. AI の再計画案を、承認して WBS ファイルへ反映する
 
 WBS 再計画 AI（`wbs_replan`）の提案の `diff.changes`（決まった形の変更）を、人が承認したときに WBS ファイルへ反映できます。
+承認・却下・反映は PostgreSQL が無くても台帳（SQLite）だけで動きます——提案の**新規作成**
+（`wbs_replan.propose`）だけ、引き続き PostgreSQL が要ります（`risk_forecast` の予測スナップショットが
+別の PostgreSQL 専用表にあるため）。
 
 ```yaml
 adapters:
-  postgres: {dsn: ...}
+  postgres: {dsn: ...}   # 無くてもよい（その場合、提案は台帳に置かれる。新規作成だけ postgres が必要）
   wbs_replan: {file: wbs/aipmo.yaml, root: .}
 ```
 

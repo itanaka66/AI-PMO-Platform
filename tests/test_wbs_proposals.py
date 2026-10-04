@@ -368,12 +368,26 @@ def test_cli_approve_of_an_unapplicable_proposal_exits_nonzero_and_leaves_it_pen
     assert "9.9" in capsys.readouterr().err and pg.rows["p1"]["status"] == "pending"
 
 
-def test_cli_without_postgres_says_so(tmp_path, monkeypatch, capsys):
+def test_cli_without_postgres_falls_back_to_the_ledger(tmp_path, monkeypatch, capsys):
+    """postgres が無くても台帳（SQLite 既定）で動く（5.7）。"""
     registry = AdapterRegistry()
     monkeypatch.setattr(cli, "build_engine", lambda *a, **k: Engine(registry, LLMRegistry()))
     config = tmp_path / "config.yaml"
     config.write_text("tenant: acme\n", encoding="utf-8")
-    assert run(config) == 1 and "postgres" in capsys.readouterr().err
+    assert run(config) == 0
+    assert "pending WBS proposals (0)" in capsys.readouterr().out
+
+
+def test_cli_reports_a_broken_ledger_config_clearly(tmp_path, monkeypatch, capsys):
+    """postgres も、使える台帳も無ければ、両方を案内する理由を返す。"""
+    registry = AdapterRegistry()
+    monkeypatch.setattr(cli, "build_engine", lambda *a, **k: Engine(registry, LLMRegistry()))
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "tenant: acme\ntask_engine:\n  backend: postgres\n", encoding="utf-8")   # dsn が無い
+    assert run(config) == 1
+    err = capsys.readouterr().err
+    assert "postgres" in err and "task_engine" in err
 
 
 # ===== (6) Web =====================================================================================================

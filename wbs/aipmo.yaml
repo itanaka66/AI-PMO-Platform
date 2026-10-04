@@ -323,10 +323,18 @@ wbs:
           notes: "決まった形の変更（set / add_evidence / add）だけ。反映は人の確定した操作で、反映後の内容まで検証してから書く。実 PostgreSQL では未検証"
         - id: "5.7"
           name: "WBS の変更提案を PostgreSQL 無しで扱う（台帳に置く）／実 PostgreSQL で承認→反映を確かめる"
-          status: todo
+          status: done
           effort: 3
           priority: Low
           depends_on: ["5.5"]
+          done_on: 2026-10-05
+          evidence:
+            - "aipmo/wbs_proposals.py::class LedgerProposalStore"
+            - "aipmo/cli.py::def cmd_wbs_proposals"
+            - "aipmo/adapters/wbs_replan.py::class WbsReplanAdapter"
+            - "tests/test_wbs_proposals_ledger.py"
+            - "tests/test_replan_postgres.py::test_approving_applies_once_and_leaves_the_inbox"
+          notes: "台帳側は一覧・承認・却下・反映のみ（LedgerProposalStore、query/executeがPostgresAdapterと同じ形）。新規作成（wbs_replan.propose）はrisk_forecastのスナップショットが別のPostgreSQL専用表にあるため引き続きpostgresが要る（docs/SELF-WBS.mdに明記）。実PostgreSQLでの承認→反映は、ローカルのzipバイナリ版PostgreSQL 16.4（Dockerが使えなかったため）に対してtest_replan_postgres.pyを実行し確認（4/4件green）"
         - id: "5.6"
           name: "WBS の更新漏れ（maybe_done）を PR に知らせる"
           status: done
