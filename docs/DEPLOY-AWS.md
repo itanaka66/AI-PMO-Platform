@@ -234,3 +234,19 @@ for the same reasons as the Oracle guide — and not for anything that must
 stay free past month 12.
 
 **12か月のあいだ、試す・小さく回す・型を作る**にはよく機能します。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：使用 AWS 免费套餐（EC2 + RDS，或外部 PostgreSQL）的部署方案。与 Azure 一样是**限时**的（新账户 12 个月），AWS 自带与 EC2 配套的免费 PostgreSQL（RDS），这点与 Oracle、GCP、Azure 都略有不同。
+
+**한국어**：AWS 프리 티어(EC2 + RDS 또는 외부 PostgreSQL)를 사용하는 배포 구성입니다. Azure처럼 **기간 한정**(신규 계정 12개월)이며, EC2와 짝을 이루는 무료 PostgreSQL(RDS)을 AWS 자체가 제공한다는 점에서 Oracle·GCP·Azure와 조금 다른 선택지가 있습니다.
+
+**Español**：Un despliegue con la capa gratuita de AWS (EC2 + RDS, o un PostgreSQL externo). Igual que en Azure, es **por tiempo limitado** (12 meses desde una cuenta nueva); AWS ofrece su propio PostgreSQL gratuito (RDS) emparejado con EC2, lo que lo distingue ligeramente de Oracle, GCP y Azure.
+
+**Français**：Un déploiement utilisant le niveau gratuit AWS (EC2 + RDS, ou un PostgreSQL externe). Comme pour Azure, il est **limité dans le temps** (12 mois pour un nouveau compte) ; AWS propose son propre PostgreSQL gratuit (RDS) couplé à EC2, ce qui le distingue un peu d'Oracle, GCP et Azure.
+
+**Deutsch**：Eine Bereitstellung mit der AWS-Free-Tier (EC2 + RDS oder ein externes PostgreSQL). Wie bei Azure ist sie **zeitlich befristet** (12 Monate ab Neukonto); AWS bietet ein eigenes kostenloses PostgreSQL (RDS) passend zu EC2, was sie etwas von Oracle, GCP und Azure unterscheidet.
+
+**Português**：Uma implantação usando o nível gratuito da AWS (EC2 + RDS, ou um PostgreSQL externo). Assim como no Azure, é **por tempo limitado** (12 meses a partir de uma conta nova); a AWS oferece seu próprio PostgreSQL gratuito (RDS) junto com o EC2, o que a diferencia um pouco de Oracle, GCP e Azure.

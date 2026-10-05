@@ -217,3 +217,19 @@ open rather than closed.
 
 Works well for a small in-house team running this day to day — the same
 niche as the generic VPS guide.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：在单台 Hetzner Cloud 服务器上自建 PostgreSQL 的方案，思路与通用 VPS 版相同，但 Hetzner 有一个**与其他指南相反的注意点**：多数其他云/VPS 默认是关闭的，需要开放 80/443 端口，而**Hetzner 默认是开放的**。
+
+**한국어**：Hetzner Cloud 한 대에 자체 PostgreSQL을 두는 구성으로, 일반 VPS 가이드와 발상은 같지만 Hetzner에는 **다른 가이드와 반대되는 주의점**이 있습니다. 다른 클라우드/VPS는 대부분 기본적으로 닫혀 있어 80/443 포트를 여는 작업이 중심이었지만, **Hetzner는 기본적으로 열려 있습니다.**
+
+**Español**：Un despliegue con PostgreSQL propio en un único servidor Hetzner Cloud, con la misma idea que la guía genérica de VPS, pero Hetzner tiene una **advertencia en sentido contrario a las demás guías**: la mayoría de otros VPS/nubes vienen cerrados por defecto y hay que abrir los puertos 80/443, mientras que **Hetzner viene abierto por defecto.**
+
+**Français**：Un déploiement avec PostgreSQL auto-hébergé sur un seul serveur Hetzner Cloud, suivant la même idée que le guide VPS générique, mais Hetzner comporte un **avertissement inverse des autres guides** : la plupart des autres VPS/clouds sont fermés par défaut et il faut ouvrir les ports 80/443, alors que **Hetzner est ouvert par défaut.**
+
+**Deutsch**：Eine Bereitstellung mit selbst gehostetem PostgreSQL auf einem einzigen Hetzner-Cloud-Server, nach derselben Idee wie der allgemeine VPS-Leitfaden, aber Hetzner hat einen **im Vergleich zu anderen Leitfäden umgekehrten Hinweis**: Die meisten anderen VPS/Clouds sind standardmäßig geschlossen, sodass man die Ports 80/443 öffnen muss, während **Hetzner standardmäßig offen ist.**
+
+**Português**：Uma implantação com PostgreSQL autogerenciado em um único servidor Hetzner Cloud, com a mesma ideia do guia genérico de VPS, mas a Hetzner tem um **alerta oposto ao das outras guias**: a maioria das outras nuvens/VPS vem fechada por padrão e é preciso abrir as portas 80/443, enquanto a **Hetzner vem aberta por padrão.**

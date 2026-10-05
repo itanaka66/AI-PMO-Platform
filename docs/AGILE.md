@@ -161,3 +161,19 @@ a notification nobody reads is not read when it matters either.
 The one thing it does report is finding no estimates at all: that usually means
 the field id was not resolved, and left alone it makes every later report
 meaningless.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：Sprint 和看板位于与问题跟踪不同的 API（`/rest/agile/1.0`），但认证信息与 Jira 共用，无需额外配置。
+
+**한국어**：스프린트와 보드는 이슈와 별도의 API(`/rest/agile/1.0`)에 있지만 인증 정보는 Jira와 동일하게 그대로 사용할 수 있습니다.
+
+**Español**：Los sprints y tableros viven en una API separada de las incidencias (`/rest/agile/1.0`), pero las credenciales son las mismas que las de Jira.
+
+**Français**：Les sprints et les tableaux se trouvent dans une API distincte des tickets (`/rest/agile/1.0`), mais les identifiants sont les mêmes que ceux de Jira.
+
+**Deutsch**：Sprints und Boards liegen in einer eigenen API (`/rest/agile/1.0`), die Zugangsdaten sind jedoch dieselben wie bei Jira.
+
+**Português**：Sprints e quadros ficam em uma API separada dos itens (`/rest/agile/1.0`), mas as credenciais são as mesmas do Jira.

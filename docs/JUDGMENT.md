@@ -75,3 +75,19 @@ utility, and acts only inside the operator-granted envelope (default: notify and
 everything else is a proposal needing human approval). Only the resident `aipmo schedule` executes. A circuit
 breaker demotes `auto` to `propose` after repeated failures; failed remedies are retried up to `max_attempts`;
 `aipmo judgment pause|resume|reset` controls it. Not verified against real services.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：PMO Core 自主诊断问题、从学习到的效用梯子中选择对策，并只在运营者允许的范围内执行（默认只有通知和只读的重新收集是 `auto`，其余都是需要人工批准的提案）。只有常驻的 `aipmo schedule` 会真正执行。连续失败会触发断路器把 `auto` 降级为 `propose`；失败的对策最多重试 `max_attempts` 次；可用 `aipmo judgment pause|resume|reset` 控制。尚未在真实服务上验证。
+
+**한국어**：PMO Core는 문제를 스스로 진단하고, 학습된 효용에 따라 진단별 대책 사다리에서 하나를 고르며, 운영자가 허용한 범위 안에서만 실행합니다(기본값은 알림과 읽기 전용 재수집만 `auto`, 나머지는 사람의 승인이 필요한 제안). 오직 상주하는 `aipmo schedule`만 실제로 실행합니다. 반복 실패 시 회로 차단기가 `auto`를 `propose`로 낮추고, 실패한 대책은 `max_attempts`까지 재시도합니다. `aipmo judgment pause|resume|reset`으로 제어합니다. 실제 서비스 대상 검증은 아직입니다.
+
+**Español**：PMO Core diagnostica problemas de forma determinista (sin LLM), elige un remedio de una escalera por diagnóstico según la utilidad aprendida, y actúa solo dentro del margen concedido por el operador (por defecto, solo notificar y la recolección de solo lectura son `auto`; el resto son propuestas que requieren aprobación humana). Solo el `aipmo schedule` residente ejecuta. Un disyuntor degrada `auto` a `propose` tras fallos repetidos; los remedios fallidos se reintentan hasta `max_attempts`; se controla con `aipmo judgment pause|resume|reset`. No verificado aún contra servicios reales.
+
+**Français**：PMO Core diagnostique les problèmes de manière déterministe (sans LLM), choisit un remède dans une échelle par diagnostic selon une utilité apprise, et n'agit que dans la marge accordée par l'opérateur (par défaut, seules la notification et la recollecte en lecture seule sont `auto` ; le reste nécessite une approbation humaine). Seul le `aipmo schedule` résident exécute. Un disjoncteur rétrograde `auto` en `propose` après des échecs répétés ; les remèdes échoués sont retentés jusqu'à `max_attempts` ; contrôlé via `aipmo judgment pause|resume|reset`. Pas encore vérifié face à de vrais services.
+
+**Deutsch**：PMO Core diagnostiziert Probleme deterministisch (ohne LLM), wählt anhand gelernten Nutzens eine Abhilfe aus einer Leiter pro Diagnose und handelt nur innerhalb des vom Betreiber erlaubten Rahmens (standardmäßig sind nur Benachrichtigung und das reine Nachsammeln `auto`; alles andere ist ein Vorschlag, der menschliche Genehmigung braucht). Nur das residente `aipmo schedule` führt aus. Ein Schutzschalter stuft `auto` nach wiederholten Fehlern auf `propose` zurück; fehlgeschlagene Abhilfen werden bis `max_attempts` erneut versucht; Steuerung über `aipmo judgment pause|resume|reset`. Noch nicht gegen echte Dienste verifiziert.
+
+**Português**：O PMO Core diagnostica problemas de forma determinística (sem LLM), escolhe um remédio de uma escada por diagnóstico segundo a utilidade aprendida, e age apenas dentro do limite concedido pelo operador (por padrão, só notificar e a recoleta somente leitura são `auto`; o resto são propostas que exigem aprovação humana). Só o `aipmo schedule` residente executa. Um disjuntor rebaixa `auto` para `propose` após falhas repetidas; remédios falhos são tentados novamente até `max_attempts`; controlado por `aipmo judgment pause|resume|reset`. Ainda não verificado contra serviços reais.

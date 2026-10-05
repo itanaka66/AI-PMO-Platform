@@ -330,3 +330,19 @@ Run `aipmo serve` again on the server to print the URL.
 ```bash
 pip install "aipmo[web]"
 ```
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：Web 服务器和 AI 服务器**部署在哪里由使用者决定**；这款软件只提供监听端，公开范围、URL、端口都由配置指定。
+
+**한국어**：웹 서버와 AI 서버 **어디서 돌릴지는 사용자가 정합니다.** 이 소프트웨어는 수신 측만 제공하며 공개 범위·URL·포트는 설정으로 지정합니다.
+
+**Español**：Tanto el servidor web como el servidor de IA **se ejecutan donde el usuario decida**; este software solo provee el extremo que escucha, y la exposición, la URL y el puerto se definen por configuración.
+
+**Français**：Le serveur web comme le serveur IA **s'exécutent où l'utilisateur le décide** ; ce logiciel ne fournit que l'écoute, l'exposition, l'URL et le port étant définis par configuration.
+
+**Deutsch**：Sowohl der Webserver als auch der KI-Server **laufen dort, wo der Nutzer es entscheidet**; diese Software stellt nur den Listener bereit, Sichtbarkeit, URL und Port werden per Konfiguration festgelegt.
+
+**Português**：Tanto o servidor web quanto o servidor de IA **rodam onde o usuário decidir**; este software fornece apenas o lado que escuta, e a exposição, URL e porta são definidas por configuração.

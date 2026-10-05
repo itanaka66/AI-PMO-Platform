@@ -146,3 +146,19 @@ covers, what to add, the order, and the decisions needed. Everything in chapter 
 - WBS のツリー描画（工程バー・依存の矢印）は、画面案どおりにすると JS が大きくなる。まず表＋バーだけにして、矢印は後。
 - 実 PostgreSQL・実 Jira・実ブラウザ（他のブラウザ・実機のスマホ）での確認は、今回は **Chrome（ヘッドレス）とデモのデータ**まで。
 - 画面が増えると、`/api/pmo` が重くなる。画面ごとに必要な分だけ読む API に分けているのは、そのため。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：将界面方案（设计画布：今日・任务・WBS・收件箱・成果审核・自主判断・成员与学习・集成・手机）纳入**现有 Web（`aipmo serve`）**的计划。列出了现有 API 能做到的范围、需要新增的 API、顺序与需判断之处，并对照实际代码逐一核实。**正如第 6 章所述，目前已全部实现。**
+
+**한국어**：화면 시안(디자인 캔버스: 오늘·작업·WBS·수신함·성과 리뷰·자율 판단·멤버와 학습·연동·모바일)을 **기존 웹(`aipmo serve`)에 들여오기** 위한 계획입니다. 기존 API로 되는 범위, 추가할 API, 순서와 판단이 필요한 지점을 실제 코드에 대보며 정리했습니다. **6장대로 전부 구현되었습니다.**
+
+**Español**：El plan para incorporar las maquetas de pantalla (lienzo de diseño: Hoy, Tareas, WBS, Bandeja de entrada, revisión de resultados, juicio autónomo, miembros y aprendizaje, integraciones, móvil) **a la web existente (`aipmo serve`)**. Enumera lo que ya cubre la API actual, lo que falta añadir, el orden y los puntos que requieren decisión, verificado contra el código real. **Como dice el capítulo 6, todo está implementado.**
+
+**Français**：Le plan pour intégrer les maquettes d'écran (canevas de conception : Aujourd'hui, Tâches, WBS, Boîte de réception, revue des résultats, jugement autonome, membres et apprentissage, intégrations, mobile) **dans le web existant (`aipmo serve`)**. Liste ce que couvre déjà l'API actuelle, ce qu'il faut ajouter, l'ordre et les points nécessitant une décision, vérifié contre le code réel. **Comme indiqué au chapitre 6, tout est implémenté.**
+
+**Deutsch**：Der Plan, die Bildschirmentwürfe (Design-Canvas: Heute, Aufgaben, WBS, Posteingang, Ergebnisprüfung, autonomes Urteil, Mitglieder und Lernen, Integrationen, Mobil) **in das bestehende Web (`aipmo serve`) zu übernehmen**. Listet auf, was die aktuelle API schon abdeckt, was hinzuzufügen ist, Reihenfolge und Entscheidungspunkte, anhand des tatsächlichen Codes geprüft. **Wie in Kapitel 6 beschrieben, ist alles implementiert.**
+
+**Português**：O plano para incorporar os esboços de tela (tela de design: Hoje, Tarefas, WBS, Caixa de entrada, revisão de resultados, julgamento autônomo, membros e aprendizado, integrações, celular) **à web existente (`aipmo serve`)**. Lista o que a API atual já cobre, o que falta adicionar, a ordem e os pontos que exigem decisão, verificado contra o código real. **Como descrito no capítulo 6, tudo está implementado.**

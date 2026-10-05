@@ -231,3 +231,19 @@ no transcription.
 | 会議が見つからない | `organiser_id` が本当に主催者か。出席者では引けません |
 | Transcript が空 | 会議中に文字起こしが有効だったか。`wait_seconds` を伸ばす |
 | 発話者が「不明」 | ゲスト参加者は名前が付かないことがあります |
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：从 Teams 会议记录生成会议纪要和待办事项。**设置工作主要在 Azure 一侧，大多数人卡在那里**，请按顺序进行。
+
+**한국어**：Teams 회의 기록에서 회의록과 할 일을 만듭니다. **설정 작업은 대부분 Azure 쪽에 있고, 거기서 막히는 경우가 대부분**이니 순서대로 진행하세요.
+
+**Español**：Genera actas y tareas a partir de las grabaciones de reuniones de Teams. **La mayor parte del trabajo de configuración está en el lado de Azure, y es ahí donde la mayoría se atasca**; sigue el orden indicado.
+
+**Français**：Génère des comptes rendus et des tâches à partir des enregistrements de réunions Teams. **La majeure partie de la configuration se fait côté Azure, c'est là que la plupart des gens bloquent** ; suivez l'ordre indiqué.
+
+**Deutsch**：Erstellt Protokolle und To-dos aus Teams-Besprechungsaufzeichnungen. **Der Großteil der Einrichtung liegt auf Azure-Seite, dort bleiben die meisten stecken** – der Reihenfolge folgen.
+
+**Português**：Gera atas e tarefas a partir das gravações de reuniões do Teams. **A maior parte da configuração está do lado do Azure, e é aí que a maioria trava**; siga a ordem indicada.

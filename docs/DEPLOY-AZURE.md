@@ -198,3 +198,19 @@ stay free past month 12, since Azure's free VM is time-limited.
 **12か月のあいだ、試す・小さく回す・型を作る**にはよく機能します。
 It works well for trying things, running small, and building templates —
 for the 12 months it lasts.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：使用 Azure 免费账户的部署方案。**与 Oracle、GCP 的"永久免费"不同，Azure 的免费虚拟机是限时的**，这是设计前必须先知道的最大差异。
+
+**한국어**：Azure 무료 계정을 사용하는 배포 구성입니다. **Oracle·GCP의 Always Free와 달리 Azure 무료 VM은 기간 한정**이며, 설계 전에 알아야 할 가장 큰 차이점입니다.
+
+**Español**：Un despliegue con una cuenta gratuita de Azure. **A diferencia del Always Free de Oracle o GCP, la VM gratuita de Azure es por tiempo limitado**, la mayor diferencia a conocer antes de diseñar nada.
+
+**Français**：Un déploiement avec un compte gratuit Azure. **Contrairement à l'Always Free d'Oracle ou GCP, la VM gratuite Azure est limitée dans le temps**, la plus grande différence à connaître avant de concevoir quoi que ce soit.
+
+**Deutsch**：Eine Bereitstellung mit einem kostenlosen Azure-Konto. **Anders als das Always-Free von Oracle oder GCP ist die kostenlose Azure-VM zeitlich befristet** – der wichtigste Unterschied, den man vor dem Design kennen sollte.
+
+**Português**：Uma implantação com uma conta gratuita do Azure. **Diferente do Always Free da Oracle ou do GCP, a VM gratuita do Azure é por tempo limitado**, a maior diferença a conhecer antes de projetar qualquer coisa.

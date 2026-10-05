@@ -265,3 +265,19 @@ DEPLOY-VPS.md / DEPLOY-HETZNER.md). The 1GB-class free tiers assume
 external PostgreSQL and Ollama (see DEPLOY-GCP.md / DEPLOY-AZURE.md /
 DEPLOY-AWS.md) — but Qdrant alone still fits even there, via an external
 Qdrant Cloud plan.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：在通用的 `deploy/generic/` 配置中，为 PostgreSQL、Ollama、Qdrant 分别选择"在本机 compose 内自建（内部）"或"连接外部现有服务（外部）"。三者可以独立选择，例如 Postgres 用外部而 Ollama 自建。
+
+**한국어**：공용 `deploy/generic/` 구성에서 PostgreSQL·Ollama·Qdrant를 각각 "이 머신의 compose 안에 직접 세움(내부)"으로 할지 "외부 기존 서비스에 연결(외부)"로 할지 고르는 절차입니다. 셋은 서로 독립적으로 선택할 수 있습니다.
+
+**Español**：En la configuración genérica `deploy/generic/`, el procedimiento para elegir, para PostgreSQL, Ollama y Qdrant por separado, si se levantan dentro del propio compose de esta máquina (interno) o si se conecta a uno externo ya existente. Los tres se eligen de forma independiente.
+
+**Français**：Dans la configuration générique `deploy/generic/`, la procédure pour choisir, pour PostgreSQL, Ollama et Qdrant séparément, de les héberger dans le compose de cette machine (interne) ou de se connecter à un service externe existant (externe). Les trois se choisissent indépendamment.
+
+**Deutsch**：In der generischen Konfiguration `deploy/generic/` die Vorgehensweise, um für PostgreSQL, Ollama und Qdrant jeweils zu wählen, ob sie im eigenen Compose dieser Maschine betrieben (intern) oder mit einem bestehenden externen Dienst verbunden werden (extern). Alle drei lassen sich unabhängig voneinander wählen.
+
+**Português**：Na configuração genérica `deploy/generic/`, o procedimento para escolher, para PostgreSQL, Ollama e Qdrant separadamente, se serão hospedados dentro do compose desta máquina (interno) ou conectados a um serviço externo já existente (externo). Os três podem ser escolhidos de forma independente.

@@ -224,3 +224,19 @@ creation or message sending.
 ```
 
 詳しくは [AGENTS.md](AGENTS.md) を見てください。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：实际用于创建 Jira 问题并发送 Slack 通知的配置说明。
+
+**한국어**：Jira 이슈 등록과 Slack 알림을 실제로 수행하기 위한 설정 설명입니다.
+
+**Español**：La configuración para crear incidencias en Jira y enviar notificaciones a Slack de forma real.
+
+**Français**：La configuration pour créer réellement des tickets Jira et envoyer des notifications Slack.
+
+**Deutsch**：Die Konfiguration, um tatsächlich Jira-Tickets anzulegen und Slack-Benachrichtigungen zu senden.
+
+**Português**：A configuração para criar itens no Jira e enviar notificações no Slack de fato.

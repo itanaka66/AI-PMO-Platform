@@ -180,3 +180,19 @@ Web 画面の PMO Core 欄に「起票待ち」が出て、実行用トークン
   相手の設定に無いと、課題管理ツール側が拒否する（その場合は失敗として残る）。
 - 実サービス（Jira・GitHub など）に対しては未検証。偽サーバーを使った実プロセスの通し確認と単体テストのみ。
 - 収集は課題管理ツールの**状態**を集めるもので、コミットや PR からの進捗の推定はしない。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：此前台账（Task Engine）里的任务只来自**外部**（问题跟踪工具、模板输出）。新增两项能力让台账自身也能动起来，两者都只在写了配置时才生效（默认不做任何事）。
+
+**한국어**：지금까지 원장(Task Engine)에 들어오는 작업은 **외부에서 오는 것**뿐이었습니다(이슈 관리 도구, 템플릿 출력). 두 가지 추가로 원장 스스로도 움직일 수 있게 했으며, 둘 다 설정을 적어야만 동작합니다(기본값은 아무것도 안 함).
+
+**Español**：Hasta ahora las tareas que entraban en el libro mayor (Task Engine) venían solo **de fuera** (herramientas de seguimiento de incidencias, salidas de plantillas). Dos nuevas capacidades permiten que el propio libro mayor actúe; ambas solo funcionan si se configuran (por defecto no hacen nada).
+
+**Français**：Jusqu'ici, les tâches entrant dans le registre (Task Engine) ne venaient que **de l'extérieur** (outils de suivi de tickets, sorties de modèles). Deux ajouts permettent au registre lui-même d'agir ; les deux ne fonctionnent que si configurés (par défaut, rien ne se passe).
+
+**Deutsch**：Bisher kamen Aufgaben im Ledger (Task Engine) nur **von außen** (Ticket-Tracking-Tools, Vorlagenausgaben). Zwei Ergänzungen lassen das Ledger selbst aktiv werden; beide funktionieren nur bei Konfiguration (Standard: nichts).
+
+**Português**：Até agora, as tarefas que entravam no livro-razão (Task Engine) vinham apenas **de fora** (ferramentas de rastreamento de itens, saídas de modelos). Duas adições permitem que o próprio livro-razão aja; ambas só funcionam se configuradas (padrão: nada).

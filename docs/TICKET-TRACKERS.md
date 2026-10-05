@@ -315,3 +315,19 @@ The idempotency key rides on tags (System.Tags) — WIQL's
 | `create_issues` | ✓ |
 | `update_issue` | ✓ |
 | `add_comment` | ✓ |
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：Jira 以外的问题跟踪工具（GitHub Projects、Plane、OpenProject、Azure DevOps）的配置说明。它们都以相同形式公开 `search`/`find_overdue`（GitHub Projects 除外）/`create_issues`/`update_issue`/`add_comment`，模板写法与 Jira 版几乎一致，但各工具数据模型的差异仍保留，字段名并未完全统一。
+
+**한국어**：Jira 외의 이슈 관리 도구(GitHub Projects·Plane·OpenProject·Azure DevOps)를 쓰기 위한 설정입니다. 모두 `search`/`find_overdue`(GitHub Projects 제외)/`create_issues`/`update_issue`/`add_comment`를 같은 형태로 공개하므로 Jira용과 거의 같은 발상으로 템플릿을 쓸 수 있지만, 각 도구의 데이터 모델 차이는 그대로 남아 필드명이 완전히 통일돼 있지는 않습니다.
+
+**Español**：La configuración para usar gestores de incidencias distintos de Jira (GitHub Projects, Plane, OpenProject, Azure DevOps). Todos exponen `search`/`find_overdue` (excepto GitHub Projects)/`create_issues`/`update_issue`/`add_comment` de la misma forma, por lo que las plantillas se escriben con casi la misma idea que para Jira, aunque las diferencias de modelo de datos de cada herramienta permanecen y los nombres de campo no están del todo unificados.
+
+**Français**：La configuration pour utiliser des gestionnaires de tickets autres que Jira (GitHub Projects, Plane, OpenProject, Azure DevOps). Tous exposent `search`/`find_overdue` (sauf GitHub Projects)/`create_issues`/`update_issue`/`add_comment` sous la même forme, donc les modèles s'écrivent avec presque la même logique que pour Jira, bien que les différences de modèle de données de chaque outil subsistent et que les noms de champs ne soient pas totalement unifiés.
+
+**Deutsch**：Die Konfiguration für andere Ticket-Tracker als Jira (GitHub Projects, Plane, OpenProject, Azure DevOps). Alle stellen `search`/`find_overdue` (außer GitHub Projects)/`create_issues`/`update_issue`/`add_comment` in derselben Form bereit, sodass Vorlagen fast nach demselben Prinzip wie für Jira geschrieben werden können, wobei die Datenmodellunterschiede jedes Tools bestehen bleiben und die Feldnamen nicht vollständig vereinheitlicht sind.
+
+**Português**：A configuração para usar rastreadores de itens além do Jira (GitHub Projects, Plane, OpenProject, Azure DevOps). Todos expõem `search`/`find_overdue` (exceto GitHub Projects)/`create_issues`/`update_issue`/`add_comment` na mesma forma, então os modelos podem ser escritos com quase a mesma ideia dos modelos para Jira, embora as diferenças de modelo de dados de cada ferramenta permaneçam e os nomes de campo não estejam totalmente unificados.
