@@ -284,3 +284,19 @@ SQLite では台帳のファイルと、隣のブリーフィング・判断ロ�
 | PostgreSQL に接続できない | `echo $AIPMO_DEMO_DSN`、`docker ps`。`aipmo --config demo/config.postgres.yaml ledger info` で確かめる |
 | 画面が開かない | `serve` の出力のポート（既定 8765）。`pip install -e ".[web]"` を入れたか |
 | Windows で `demo reset` が消せない | `serve` や `schedule` が台帳を開いたまま。止めてから |
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：无需外部服务即可体验的演示数据和步骤。一条命令即可载入一个"已运营一段时间"的账本（3 个项目、22 个任务），其中预埋了逾期、长期阻塞、过载、未分配负责人、角色 AI 成果、WBS 偏差等情况，PMO Core 会据此发出真实的警告和建议。
+
+**한국어**：외부 서비스 없이 체험할 수 있는 데모 데이터와 절차입니다. 한 번의 명령으로 "한동안 운영된" 원장(3개 프로젝트, 22개 작업)을 불러오며, 기한 초과·장기 차단·과부하·미배정·역할 AI 성과·WBS 이탈이 미리 심어져 있어 PMO Core가 실제 판정으로 경고와 제안을 냅니다.
+
+**Español**：Datos y pasos de demostración sin ningún servicio externo. Un solo comando carga un libro mayor "con historia" (3 proyectos, 22 tareas) con vencimientos, bloqueos largos, sobrecarga, tareas sin responsable, resultados de IA de rol y desviaciones del WBS ya sembrados, sobre los que PMO Core emite advertencias y propuestas reales.
+
+**Français**：Données et étapes de démonstration sans aucun service externe. Une seule commande charge un registre "déjà vécu" (3 projets, 22 tâches) avec retards, blocages longs, surcharge, tâches sans responsable, résultats d'IA de rôle et écarts de WBS déjà intégrés, sur lesquels PMO Core émet de vraies alertes et propositions.
+
+**Deutsch**：Demo-Daten und -Schritte ganz ohne externen Dienst. Ein einzelner Befehl lädt ein "gelebtes" Ledger (3 Projekte, 22 Aufgaben) mit bereits eingebauten Verzögerungen, langen Blockaden, Überlastung, nicht zugewiesenen Aufgaben, Rollen-KI-Ergebnissen und WBS-Abweichungen, zu denen PMO Core echte Warnungen und Vorschläge liefert.
+
+**Português**：Dados e passos de demonstração sem nenhum serviço externo. Um único comando carrega um livro-razão "já vivido" (3 projetos, 22 tarefas) com atrasos, bloqueios longos, sobrecarga, tarefas sem responsável, resultados de IA de função e desvios do WBS já inseridos, sobre os quais o PMO Core emite avisos e propostas reais.

@@ -224,3 +224,19 @@ Qdrant Cloud plan works fine at 1GB (see "RAM 1GB" above).
 
 **試す・小さく回す・型を作る**にはよく機能します。
 It works well for trying things, running small, and building the templates.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：使用 Google Cloud 免费套餐的零成本部署方案，思路与 Oracle 版相同（免费小型 VM + 外部免费 PostgreSQL），但 GCP 的免费额度比 Oracle 更小，限制直接决定了设计。
+
+**한국어**：Google Cloud 프리 티어를 이용한 무료 배포 구성으로, Oracle 버전과 같은 발상(무료 소형 VM + 외부 무료 PostgreSQL)이지만 GCP의 무료 한도가 Oracle보다 더 작아 그 제약이 설계를 그대로 좌우합니다.
+
+**Español**：Un despliegue sin coste con la capa gratuita de Google Cloud, con la misma idea que la guía de Oracle (una VM pequeña gratuita + un PostgreSQL externo gratuito), pero los límites gratuitos de GCP son aún menores que los de Oracle y determinan el diseño directamente.
+
+**Français**：Un déploiement sans coût avec le niveau gratuit de Google Cloud, sur le même principe que le guide Oracle (petite VM gratuite + PostgreSQL externe gratuit), mais les limites gratuites de GCP sont encore plus faibles que celles d'Oracle et dictent directement la conception.
+
+**Deutsch**：Eine kostenlose Bereitstellung mit der Google-Cloud-Free-Tier, nach derselben Idee wie der Oracle-Leitfaden (kleine kostenlose VM + externes kostenloses PostgreSQL), wobei die Free-Tier-Grenzen von GCP noch enger sind als bei Oracle und das Design direkt bestimmen.
+
+**Português**：Uma implantação sem custo com o nível gratuito do Google Cloud, com a mesma ideia do guia da Oracle (uma VM pequena gratuita + um PostgreSQL externo gratuito), mas os limites gratuitos do GCP são ainda menores que os da Oracle e determinam diretamente o design.

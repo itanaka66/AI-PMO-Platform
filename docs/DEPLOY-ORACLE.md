@@ -264,3 +264,19 @@ your own GPU machine instead), and not for many concurrent users.
 
 **試す・小さく回す・型を作る**にはよく機能します。
 It works well for trying things, running small, and building the templates.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：零成本、可从手机访问的部署方案（Oracle Cloud Always Free + Aiven PostgreSQL）。免费额度带有实际限制，这些限制直接决定了设计，因此先讲限制。
+
+**한국어**：무료이면서 휴대폰에서도 사용할 수 있는 구성입니다(Oracle Cloud Always Free + Aiven PostgreSQL). 무료 한도에는 실제로 영향을 주는 제약이 있으며, 그 제약이 설계를 결정하므로 먼저 제약을 설명합니다.
+
+**Español**：Un despliegue sin coste y accesible desde el móvil (Oracle Cloud Always Free + Aiven PostgreSQL). Las capas gratuitas tienen límites que realmente importan, y esos límites determinan el diseño, así que se explican primero.
+
+**Français**：Un déploiement sans coût et accessible depuis un téléphone (Oracle Cloud Always Free + Aiven PostgreSQL). Les niveaux gratuits ont des limites bien réelles qui déterminent la conception, d'où leur présentation en premier.
+
+**Deutsch**：Eine kostenlose, vom Smartphone aus nutzbare Bereitstellung (Oracle Cloud Always Free + Aiven PostgreSQL). Die Free-Tiers haben echte Grenzen, die das Design bestimmen, daher werden sie zuerst erklärt.
+
+**Português**：Uma implantação sem custo e acessível pelo celular (Oracle Cloud Always Free + Aiven PostgreSQL). Os níveis gratuitos têm limites que realmente importam, e esses limites determinam o design, por isso são explicados primeiro.

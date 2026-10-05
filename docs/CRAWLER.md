@@ -153,3 +153,19 @@ sudo journalctl -u aipmo-scheduler.service -f
 `/home/aipmo/.local/bin/aipmo` is the launcher
 [scripts/install.sh](../scripts/install.sh) creates. Adjust the path if you
 installed elsewhere.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：这是一个只读适配器，用于抓取外部网页并提取文本、链接和元数据，不需要任何凭据。
+
+**한국어**：외부 페이지 하나를 가져와 HTML에서 텍스트·링크·메타데이터를 추출하는 읽기 전용 어댑터이며 인증 정보가 필요 없습니다.
+
+**Español**：Un adaptador de solo lectura que obtiene una página externa y extrae texto, enlaces y metadatos de su HTML. No requiere credenciales.
+
+**Français**：Un adaptateur en lecture seule qui récupère une page externe et en extrait le texte, les liens et les métadonnées. Aucun identifiant n'est nécessaire.
+
+**Deutsch**：Ein reiner Lese-Adapter, der eine externe Seite abruft und Text, Links und Metadaten aus ihrem HTML extrahiert. Keine Zugangsdaten erforderlich.
+
+**Português**：Um adaptador somente leitura que busca uma página externa e extrai texto, links e metadados do HTML. Não exige credenciais.

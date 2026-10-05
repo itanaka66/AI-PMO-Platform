@@ -114,3 +114,19 @@ web:
 - 常駐のスケジューラ自身の状態（`scheduler-state.json`、最後に走った時刻）は、そのホストのローカルファイルのまま
   （ホストごとのもの）。
 - 実際の運用規模（長期間・多数のテナント）での負荷は未確認です。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：说明台账旁边保存的文件（简报 `pmo-briefing.json`、跨周期状态 `pmo-core-state.json` 等）以及它们可以放在文件旁边或迁移到数据库中的方式。
+
+**한국어**：원장 옆에 남는 파일들(브리핑 `pmo-briefing.json`, 주기를 넘기는 상태 `pmo-core-state.json` 등)과 이를 파일로 두거나 DB로 옮기는 방법을 설명합니다.
+
+**Español**：Describe los archivos que viven junto al libro mayor (el briefing `pmo-briefing.json`, el estado entre ciclos `pmo-core-state.json`, etc.) y cómo pueden mantenerse como archivos o migrarse a una base de datos.
+
+**Français**：Décrit les fichiers qui vivent à côté du registre (le briefing `pmo-briefing.json`, l'état inter-cycles `pmo-core-state.json`, etc.) et comment les garder en fichiers ou les migrer vers une base de données.
+
+**Deutsch**：Beschreibt die Dateien, die neben dem Ledger liegen (das Briefing `pmo-briefing.json`, zyklenübergreifender Zustand `pmo-core-state.json` usw.) und wie sie als Dateien bleiben oder in eine Datenbank migriert werden können.
+
+**Português**：Descreve os arquivos que ficam ao lado do livro-razão (o briefing `pmo-briefing.json`, o estado entre ciclos `pmo-core-state.json`, etc.) e como eles podem continuar como arquivos ou ser migrados para um banco de dados.

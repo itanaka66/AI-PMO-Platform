@@ -128,3 +128,19 @@ the schema, so implementing these later needs no migration.
 - テンプレートのロード・プロンプト存在確認は
   [tests/test_templates.py](../tests/test_templates.py) が全テンプレート
   共通で自動カバーする。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：将项目保持为完整状态（WBS、任务、进度预测、资源、风险、问题、依赖、预算、决策、文档），而不只是任务列表，用"确定性规则打分 + LLM 见解"的混合方式回答"这个项目还好吗"。
+
+**한국어**：프로젝트를 단순한 작업 목록이 아니라 전체 상태(WBS·작업·일정 예측·자원·위험·이슈·의존관계·예산·의사결정·문서)로 보유하고, 결정론적 규칙 채점 + LLM 소견을 결합한 방식으로 "이 프로젝트는 괜찮은가"에 답합니다.
+
+**Español**：Mantiene el proyecto como un estado completo —no solo una lista de tareas— que abarca WBS, tareas, previsión de calendario, recursos, riesgos, incidencias, dependencias, presupuesto, decisiones y documentos, y responde "¿está bien este proyecto?" mediante una combinación de puntuación determinista por reglas y observaciones de un LLM.
+
+**Français**：Conserve le projet comme un état complet — pas seulement une liste de tâches — couvrant le WBS, les tâches, les prévisions de calendrier, les ressources, les risques, les problèmes, les dépendances, le budget, les décisions et les documents, et répond à « ce projet va-t-il bien ? » via une combinaison de notation déterministe par règles et d'avis d'un LLM.
+
+**Deutsch**：Hält das Projekt als vollständigen Zustand — nicht nur eine Aufgabenliste — über WBS, Aufgaben, Terminprognose, Ressourcen, Risiken, Probleme, Abhängigkeiten, Budget, Entscheidungen und Dokumente, und beantwortet „Ist dieses Projekt in Ordnung?" durch eine Kombination aus deterministischer Regelbewertung und LLM-Einschätzung.
+
+**Português**：Mantém o projeto como um estado completo — não apenas uma lista de tarefas — abrangendo WBS, tarefas, previsão de cronograma, recursos, riscos, problemas, dependências, orçamento, decisões e documentos, e responde "este projeto está bem?" por meio de uma combinação de pontuação determinística por regras e observações de um LLM.

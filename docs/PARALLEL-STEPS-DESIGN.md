@@ -547,3 +547,19 @@ def test_parallel_speedup_ratio():
 
 **初版作成日：2026-09-03**  
 **実装予定日：Phase 1: 2026-09 / Phase 2: 2026-10 / Phase 3: 2026-11**
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：并行执行步骤的实现设计文档。现状是**只能顺序执行**，成为瓶颈——例如 3 个独立的通知任务各等待 2 秒，就要花 6 秒。
+
+**한국어**：병렬 단계 실행의 구현 설계 문서입니다. 현재는 **순차 실행만 가능**해 병목이 생깁니다——예를 들어 독립적인 알림 작업 3개가 각 2초씩 대기하면 총 6초가 걸립니다.
+
+**Español**：El documento de diseño de implementación para la ejecución de pasos en paralelo. Actualmente **solo se ejecuta de forma secuencial**, lo que crea un cuello de botella: por ejemplo, 3 tareas de notificación independientes con 2s de espera cada una tardan 6s en total.
+
+**Français**：Le document de conception de l'implémentation pour l'exécution d'étapes en parallèle. Actuellement, **seule l'exécution séquentielle** existe, ce qui crée un goulot d'étranglement : par exemple, 3 tâches de notification indépendantes avec 2s d'attente chacune prennent 6s en tout.
+
+**Deutsch**：Das Implementierungsdesign-Dokument für die parallele Schrittausführung. Derzeit gibt es **nur sequentielle Ausführung**, was zu einem Engpass führt – zum Beispiel brauchen 3 unabhängige Benachrichtigungsaufgaben mit je 2s Wartezeit insgesamt 6s.
+
+**Português**：O documento de design de implementação para a execução paralela de etapas. Atualmente há **apenas execução sequencial**, o que cria um gargalo — por exemplo, 3 tarefas de notificação independentes com 2s de espera cada levam 6s no total.

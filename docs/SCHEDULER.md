@@ -222,3 +222,19 @@ the same instant and be throttled.
 | 時刻がずれる | `timezone` の指定。既定は `Asia/Tokyo` |
 | 再起動のたびに走る | `state_file` が書ける場所か。Docker では volume が要ります |
 | 通知が二重に届く | 画面からの手動実行と重なっていないか（上記「同時実行」） |
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：实际启动模板中写的 `trigger: "schedule:..."`。**如果调度器没有运行，定时触发的模板即使写好了也什么都不会发生。**
+
+**한국어**：템플릿에 적은 `trigger: "schedule:..."`를 실제로 실행시킵니다. **이것이 돌지 않으면 정시 실행 템플릿을 적어 둬도 아무 일도 일어나지 않습니다.**
+
+**Español**：Ejecuta de verdad el `trigger: "schedule:..."` escrito en una plantilla. **Si esto no está corriendo, una plantilla programada puede escribirse pero nunca se dispara.**
+
+**Français**：Exécute réellement le `trigger: "schedule:..."` déclaré dans un modèle. **Si cela ne tourne pas, un modèle programmé peut être écrit mais ne se déclenchera jamais.**
+
+**Deutsch**：Führt das in einer Vorlage deklarierte `trigger: "schedule:..."` tatsächlich aus. **Läuft dies nicht, kann eine geplante Vorlage geschrieben werden, feuert aber nie.**
+
+**Português**：Executa de fato o `trigger: "schedule:..."` declarado em um modelo. **Se isso não estiver rodando, um modelo agendado pode ser escrito mas nunca dispara.**

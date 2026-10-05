@@ -229,3 +229,19 @@ unlimited headroom.
 
 Works well for a small in-house team running this day to day, without the
 constant juggling a free tier's limits impose.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：在一台付费 VPS 上自建 PostgreSQL 的方案。与 1GB 内存的免费套餐不同，只要有 2GB 以上内存，PostgreSQL 和 Qdrant 都能和应用同居一台机器，**不必依赖外部免费数据库**。以さくら VPS 为例，但同样适用于 ConoHa、Vultr、DigitalOcean 等标准 Ubuntu VPS。
+
+**한국어**：유료 VPS 한 대에 자체 PostgreSQL을 두는 구성입니다. 1GB 메모리의 무료 티어와 달리 2GB 이상이면 PostgreSQL과 Qdrant 모두 같은 머신에 둘 수 있어 **외부 무료 DB에 의존할 필요가 없습니다.** 사쿠라 VPS를 예로 들었지만 ConoHa·Vultr·DigitalOcean 같은 표준 Ubuntu VPS 전반에 동일하게 적용됩니다.
+
+**Español**：Un despliegue con PostgreSQL propio en un único VPS de pago. A diferencia de la capa gratuita de 1GB de RAM, con 2GB o más PostgreSQL y Qdrant pueden convivir en la misma máquina, **sin depender de una base de datos externa gratuita.** Se usa Sakura VPS como ejemplo, pero se aplica igual a VPS Ubuntu estándar como ConoHa, Vultr o DigitalOcean.
+
+**Français**：Un déploiement avec PostgreSQL auto-hébergé sur un seul VPS payant. Contrairement au niveau gratuit à 1 Go de RAM, avec 2 Go ou plus, PostgreSQL et Qdrant peuvent cohabiter sur la même machine, **sans dépendre d'une base de données externe gratuite.** Sakura VPS est pris comme exemple, mais cela s'applique tout autant aux VPS Ubuntu standards comme ConoHa, Vultr ou DigitalOcean.
+
+**Deutsch**：Eine Bereitstellung mit selbst gehostetem PostgreSQL auf einem einzigen kostenpflichtigen VPS. Anders als bei der Free-Tier mit 1 GB RAM können PostgreSQL und Qdrant ab 2 GB auf derselben Maschine koexistieren, **ohne auf eine externe kostenlose Datenbank angewiesen zu sein.** Sakura VPS dient als Beispiel, gilt aber genauso für Standard-Ubuntu-VPS wie ConoHa, Vultr oder DigitalOcean.
+
+**Português**：Uma implantação com PostgreSQL autogerenciado em um único VPS pago. Diferente do nível gratuito de 1GB de RAM, com 2GB ou mais, PostgreSQL e Qdrant podem coexistir na mesma máquina, **sem depender de um banco de dados externo gratuito.** O Sakura VPS é usado como exemplo, mas se aplica igualmente a VPS Ubuntu padrão como ConoHa, Vultr ou DigitalOcean.

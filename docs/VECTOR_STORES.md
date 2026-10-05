@@ -213,3 +213,19 @@ Same constraint regardless of backend: changing the embedding provider or
 model can change the vector dimension, and an existing collection or
 table's dimension is fixed, so switching means **recreating it and
 re-indexing.** See [docs/PROVIDERS.md](PROVIDERS.md).
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：像 `meeting_to_tasks` 这类业务模板不需要向量存储；只有像 `generalize_knowledge` 这种检索/积累过往知识的模板才会用到。可从 5 种中选择：**Qdrant・pgvector・Chroma・Milvus・Weaviate。**
+
+**한국어**：`meeting_to_tasks` 같은 업무 템플릿에는 필요 없습니다. 과거 지식을 검색·축적하는 `generalize_knowledge` 같은 템플릿에서만 씁니다. 5종 중에서 고를 수 있습니다: **Qdrant·pgvector·Chroma·Milvus·Weaviate.**
+
+**Español**：No se necesita para una plantilla de trabajo como `meeting_to_tasks`. Solo lo usa una plantilla que busca o acumula conocimiento pasado, como `generalize_knowledge`. Se puede elegir entre 5 opciones: **Qdrant, pgvector, Chroma, Milvus, Weaviate.**
+
+**Français**：Pas nécessaire pour un modèle métier comme `meeting_to_tasks`. Utilisé seulement par un modèle qui recherche ou accumule des connaissances passées, comme `generalize_knowledge`. Choix entre 5 options : **Qdrant, pgvector, Chroma, Milvus, Weaviate.**
+
+**Deutsch**：Nicht nötig für eine Geschäftsvorlage wie `meeting_to_tasks`. Wird nur von einer Vorlage genutzt, die vergangenes Wissen durchsucht oder ansammelt, wie `generalize_knowledge`. Wahl zwischen 5 Optionen: **Qdrant, pgvector, Chroma, Milvus, Weaviate.**
+
+**Português**：Não é necessário para um modelo de negócio como `meeting_to_tasks`. Usado apenas por um modelo que busca ou acumula conhecimento passado, como `generalize_knowledge`. Pode-se escolher entre 5 opções: **Qdrant, pgvector, Chroma, Milvus, Weaviate.**

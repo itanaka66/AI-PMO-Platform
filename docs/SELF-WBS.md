@@ -174,3 +174,19 @@ Web 画面の承認ボタンも同じです（`adapters.wbs_replan.file` があ�
 - 証拠は「ファイルと語句が在る」ことの確認で、**中身が正しく動くこと**までは
   確かめない（それはテストの仕事）。証拠に対応するテストを挙げておくと、
   「完了」の根拠が強くなる。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：把 PMO AI 要求客户项目做的事（持有 WBS、统计进度、预测延迟、经人批准后修改计划）用在**这个项目自身的开发**上。这不仅是"自己不用的东西不推荐给别人"，也是为了自己先踩到 WBS 运营的弱点。
+
+**한국어**：PMO AI가 고객 프로젝트에 요구하는 것——WBS를 두고, 진행을 세고, 지연을 예측하고, 사람이 승인해 계획을 고치는 것——을 **이 프로젝트 자신의 개발**에 사용합니다. 스스로 못 쓰는 것을 남에게 권하지 않는다는 것뿐 아니라, WBS 운영의 약점을 먼저 스스로 밟아 보려는 목적도 있습니다.
+
+**Español**：Lo que PMO AI pide a los proyectos de sus clientes —mantener un WBS, contar el progreso, prever retrasos, corregir el plan con aprobación humana— se aplica **al desarrollo de este mismo proyecto**. No es solo no recomendar lo que uno mismo no usa, sino pisar primero, con las propias manos, las debilidades de gestionar un WBS.
+
+**Français**：Ce que PMO AI demande aux projets de ses clients — tenir un WBS, compter l'avancement, prévoir les retards, corriger le plan avec approbation humaine — s'applique **au développement de ce projet lui-même**. Ce n'est pas seulement ne pas recommander ce qu'on n'utilise pas soi-même, mais aussi affronter en premier, de ses propres mains, les faiblesses de la gestion d'un WBS.
+
+**Deutsch**：Was PMO AI von den Projekten seiner Kunden verlangt — ein WBS führen, Fortschritt zählen, Verzögerungen vorhersagen, den Plan mit menschlicher Genehmigung korrigieren — wird **auf die Entwicklung dieses Projekts selbst** angewendet. Es geht nicht nur darum, nichts zu empfehlen, das man selbst nicht nutzt, sondern auch darum, die Schwächen des WBS-Betriebs zuerst selbst zu erfahren.
+
+**Português**：O que o PMO AI exige dos projetos de seus clientes — manter um WBS, contar o progresso, prever atrasos, corrigir o plano com aprovação humana — é aplicado **ao desenvolvimento deste próprio projeto**. Não é só não recomendar o que não se usa, mas também enfrentar primeiro, com as próprias mãos, as fraquezas de operar um WBS.

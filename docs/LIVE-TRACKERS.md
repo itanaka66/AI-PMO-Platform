@@ -55,3 +55,19 @@ AIPMO_LIVE_CONFIG=/path/to/config.yaml AIPMO_LIVE_WRITE=1 AIPMO_LIVE_ISSUES="jir
 - **実サービスに対しては、まだ一度も動かしていない。** 実際の応答の細部（権限の範囲、検索の癖、Jira の
   `accountId` の引き当て、OpenProject の `lockVersion` の競合、Plane の API キーの種類）は、上の確認を実環境で
   動かして初めて分かる。動かして出た差は、このファイルの表に足していく。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：由于开发/CI 环境没有真实服务的连接信息，针对真实服务的验证需要**在本地进行**。为此准备了 3 个工具，**只有明确指定时才会写入**。
+
+**한국어**：이 환경(개발·CI)에는 실제 서비스 연결 정보도 인증 정보도 없으므로, 실제 서비스에 대한 확인은 **직접 손으로 해야 합니다.** 이를 위한 도구 3가지를 준비했으며, **모두 명시했을 때만 쓰기를 수행합니다.**
+
+**Español**：Como este entorno (desarrollo/CI) no tiene credenciales ni destinos de servicios reales, la verificación contra servicios reales debe hacerse **a mano**. Para ello se preparan 3 herramientas, y **todas solo escriben cuando se indica explícitamente.**
+
+**Français**：Comme cet environnement (développement/CI) n'a ni identifiants ni cibles de services réels, la vérification contre des services réels doit se faire **à la main**. Trois outils sont prévus à cet effet, et **tous n'écrivent que lorsque c'est explicitement demandé.**
+
+**Deutsch**：Da diese Umgebung (Entwicklung/CI) weder Zugangsdaten noch Ziele echter Dienste hat, muss die Prüfung gegen echte Dienste **manuell** erfolgen. Dafür gibt es 3 Werkzeuge, die **nur schreiben, wenn es ausdrücklich angegeben wird.**
+
+**Português**：Como este ambiente (desenvolvimento/CI) não tem credenciais nem destinos de serviços reais, a verificação contra serviços reais precisa ser feita **manualmente**. Para isso há 3 ferramentas preparadas, e **todas só escrevem quando explicitamente indicado.**

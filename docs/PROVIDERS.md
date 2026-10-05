@@ -345,3 +345,19 @@ working, check the provider's model list and change `model:`.
 Meeting transcripts are sensitive. If they cannot leave your network, run the
 AI yourself — and note that without a GPU the speed will not be usable, which
 makes it a hardware question rather than a configuration one.
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：模板中只写 `profile: default`，具体分配到哪个提供商和模型由配置决定。**即使更换提供商，模板也不需要改一个字。**
+
+**한국어**：템플릿에는 `profile: default`라고만 적습니다. 어느 제공처·모델로 연결할지는 설정이 결정하므로, **제공처를 바꿔도 템플릿은 한 글자도 바꾸지 않습니다.**
+
+**Español**：Una plantilla solo dice `profile: default`; a qué proveedor y modelo se resuelve lo decide la configuración, así que **cambiar de proveedor no modifica ni una letra de la plantilla.**
+
+**Français**：Un modèle ne dit que `profile: default` ; le fournisseur et le modèle vers lesquels cela se résout sont décidés par la configuration, donc **changer de fournisseur ne modifie pas une lettre du modèle.**
+
+**Deutsch**：Eine Vorlage sagt nur `profile: default`; zu welchem Anbieter und Modell das aufgelöst wird, entscheidet die Konfiguration, sodass **ein Anbieterwechsel die Vorlage nicht um ein Zeichen ändert.**
+
+**Português**：Um modelo diz apenas `profile: default`; para qual provedor e modelo isso se resolve é decidido pela configuração, então **trocar de provedor não altera uma letra do modelo.**

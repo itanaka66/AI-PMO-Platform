@@ -394,3 +394,19 @@ pmo_core:
 - Jira のステータス名は上の表の名前で判定します（独自の名前は認識されない）。
 - WBS の作業と Jira の課題の自動の対応付けはありません（第 3 部）。
 - WBS からの書き戻し（`owner` など）はありません。WBS を書き換えるのは人（と、承認した再計画案の反映）だけです。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：将 AI-PMO Platform 与 Jira（实际工作项）和 WBS（计划）连接并投入运营的完整指南，汇总了设置方法与每日/每周的运行方式。
+
+**한국어**：AI-PMO Platform을 Jira(실제 작업 항목)와 WBS(계획)에 연결해 운영하는 전 과정 가이드로, 설정 방법과 매일·매주 돌리는 방식을 한곳에 모았습니다.
+
+**Español**：La guía de extremo a extremo para conectar AI-PMO Platform con Jira (los elementos de trabajo reales) y el WBS (el plan), reuniendo la configuración y el funcionamiento diario y semanal en un solo lugar.
+
+**Français**：Le guide de bout en bout pour connecter AI-PMO Platform à Jira (les éléments de travail réels) et au WBS (le plan), réunissant la configuration et le fonctionnement quotidien et hebdomadaire en un seul endroit.
+
+**Deutsch**：Der End-to-End-Leitfaden, um AI-PMO Platform mit Jira (den echten Arbeitselementen) und dem WBS (dem Plan) zu verbinden, mit Konfiguration und täglichem/wöchentlichem Betrieb an einem Ort.
+
+**Português**：O guia de ponta a ponta para conectar o AI-PMO Platform ao Jira (os itens de trabalho reais) e ao WBS (o plano), reunindo a configuração e a operação diária/semanal em um só lugar.

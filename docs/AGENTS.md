@@ -380,3 +380,19 @@ only means landing in the review queue, not publishing. It is handed exactly
 that one tool, with `allow_writes: true` stated explicitly. `vector_store` is
 the logical name for whichever backend is configured (Qdrant, pgvector,
 Chroma, Milvus, or Weaviate); see [docs/VECTOR_STORES.md](VECTOR_STORES.md).
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：智能体步骤让模型自行选择并调用工具，而不是执行固定的流程，适合事先无法确定步骤的工作。
+
+**한국어**：에이전트 단계는 고정된 절차 대신 모델이 스스로 도구를 선택해 호출합니다. 사전에 절차를 정할 수 없는 작업에 적합합니다.
+
+**Español**：Un paso de agente deja que el modelo elija y llame herramientas por sí mismo, en lugar de seguir una secuencia fija. Útil cuando el trabajo no tiene una forma predecible.
+
+**Français**：Une étape agent laisse le modèle choisir et appeler lui-même les outils, au lieu de suivre une séquence fixe. Adapté aux tâches dont la forme n'est pas connue à l'avance.
+
+**Deutsch**：Ein Agent-Schritt lässt das Modell selbst Werkzeuge auswählen und aufrufen, statt eine feste Abfolge auszuführen. Geeignet für Arbeit, deren Ablauf vorher nicht feststeht.
+
+**Português**：Uma etapa de agente deixa o modelo escolher e chamar ferramentas por conta própria, em vez de seguir uma sequência fixa. Útil quando o trabalho não tem forma conhecida de antemão.

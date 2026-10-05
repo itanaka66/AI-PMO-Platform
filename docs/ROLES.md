@@ -120,3 +120,19 @@ aipmo run templates/roles/role_writer.yaml --param doc_type=release_notes --para
 2. `templates/roles/role_<名前>.yaml` に `agent.tools` を**必要最小限**で列挙し、
    `config.system` に役割の憲章を書く。書き込みが要るなら `require_approval: true`。
 3. `tests/test_roles.py` の `EXPECTED_TOOLS` に道具の集合を足す。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：为 `agent` 步骤赋予**特定角色的工具和提示词**的模板（`templates/roles/`）。机制与 AGENTS.md 相同，区别只在于给了什么、没给什么。
+
+**한국어**：`agent` 단계에 **역할별 도구와 프롬프트**를 부여한 템플릿입니다(`templates/roles/`). 메커니즘은 AGENTS.md와 같고, 차이는 "무엇을 주고 무엇을 안 주는가"뿐입니다.
+
+**Español**：Plantillas que dan a un paso `agent` **las herramientas y el prompt de un rol** (`templates/roles/`). El mecanismo es el mismo que en AGENTS.md; la diferencia está solo en qué se le da y qué no.
+
+**Français**：Des modèles qui donnent à une étape `agent` **les outils et le prompt d'un rôle** (`templates/roles/`). Le mécanisme est le même que dans AGENTS.md ; la seule différence est ce qu'on lui donne ou non.
+
+**Deutsch**：Vorlagen, die einem `agent`-Schritt **die Werkzeuge und den Prompt einer Rolle** geben (`templates/roles/`). Der Mechanismus ist derselbe wie in AGENTS.md; der Unterschied liegt nur darin, was man gibt und was nicht.
+
+**Português**：Modelos que dão a uma etapa `agent` **as ferramentas e o prompt de uma função** (`templates/roles/`). O mecanismo é o mesmo de AGENTS.md; a diferença está apenas no que se dá e no que não se dá.

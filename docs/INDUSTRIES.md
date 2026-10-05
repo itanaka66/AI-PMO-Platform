@@ -441,3 +441,19 @@ a prompt and a template are not enough.
 
 アダプタの書き方は `aipmo/adapters/base.py` と、既存の実装を参照してください。
 署名から道具の定義が自動生成されるので、エージェントからも使えるようになります。
+
+---
+
+### 他言語の要約 / Summary in other languages
+
+**中文**：位于 `templates/industries/<行业>/` 的各行业模板一览（软件开发、建筑施工等），列出每个行业对应的模板文件与用途。
+
+**한국어**：`templates/industries/<업종>/`에 있는 업종별 템플릿 목록(소프트웨어 개발, 건설 현장 관리 등)으로, 업종마다 쓰이는 템플릿 파일과 용도를 정리합니다.
+
+**Español**：Un listado de plantillas por sector en `templates/industries/<sector>/` (desarrollo de software, gestión de obras de construcción, etc.), con el archivo de plantilla y su uso para cada sector.
+
+**Français**：Une liste de modèles par secteur dans `templates/industries/<secteur>/` (développement logiciel, gestion de chantiers, etc.), avec le fichier modèle et son usage pour chaque secteur.
+
+**Deutsch**：Eine Übersicht branchenspezifischer Vorlagen unter `templates/industries/<branche>/` (Softwareentwicklung, Baustellenmanagement usw.) mit der jeweiligen Vorlagendatei und ihrem Zweck.
+
+**Português**：Uma lista de modelos por setor em `templates/industries/<setor>/` (desenvolvimento de software, gestão de obras, etc.), com o arquivo de modelo e seu uso para cada setor.
