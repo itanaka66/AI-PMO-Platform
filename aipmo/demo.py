@@ -181,6 +181,36 @@ def _outcome_rows(samples: Samples, now: datetime) -> list[dict[str, Any]]:
     return rows
 
 
+def _drop_stale_recurring_periods(ledger: Any) -> None:
+    """定期タスクは期間（ISO週など）ごとに1件作られる。過去の周を再生する間に
+    「今週」と別の週をまたぐと（月〜水に実行したとき）、仕込みと無関係な期間の分が
+    もう1件増える——実行した曜日でタスクの総数が変わらないよう、各定期タスク
+    (`generated_from`) につき最新の期間（id が一番大きい = 期間文字列が一番新しい）
+    だけを残し、それより古い期間の分は消す。
+
+    A recurring task is created once per period (e.g. ISO week) a cycle touches.
+    Replaying history (3/2/1 days ago) can straddle a different week than "now"
+    purely by which weekday the demo happens to run on (Mon-Wed), adding an extra
+    instance unrelated to the seeded scenario. For each recurring task
+    (`generated_from`), only the newest period (its id sorts highest) is kept so
+    the demo's task count does not depend on which day it is run.
+    """
+    newest: dict[str, Any] = {}
+    for task in ledger.tasks.values():
+        if not task.generated_from.startswith("recurring:"):
+            continue
+        current = newest.get(task.generated_from)
+        if current is None or task.id > current.id:
+            newest[task.generated_from] = task
+    stale = [task.id for task in ledger.tasks.values()
+             if task.generated_from.startswith("recurring:")
+             and newest[task.generated_from].id != task.id]
+    if stale:
+        with ledger.transaction():
+            for task_id in stale:
+                del ledger.tasks[task_id]
+
+
 def load(config: dict[str, Any], base: Path, *, do_reset: bool = False) -> dict[str, Any]:
     from . import cli
 
@@ -217,6 +247,7 @@ def load(config: dict[str, Any], base: Path, *, do_reset: bool = False) -> dict[
                 core.cycle()
         clock["now"] = real_now
         core.cycle()                                   # いま
+        _drop_stale_recurring_periods(ledger)          # 返す briefing より先に（件数に出るため）
 
         reviews = _review_role_ai(core)
         briefing = core.cycle()                        # 差し戻しが警告になった状態にする
