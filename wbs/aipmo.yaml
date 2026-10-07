@@ -457,10 +457,14 @@ wbs:
           notes: "実 PostgreSQL 16 で 40 並列の接続が +40 → +8。画面の postgres アダプタ（WBS 提案・Digital Twin）は 1 本のまま"
         - id: "6.7"
           name: "Web 画面の実機確認（スマホ幅・配色）"
-          status: todo
+          status: done
           effort: 2
           priority: Medium
           depends_on: ["4.3"]
+          done_on: 2026-10-07
+          evidence:
+            - "tests/test_ui_accessibility.py::test_contrast_names_landmarks_and_keyboard"
+          notes: "demo/config.yaml で aipmo serve を起動し、実 Chrome（AIPMO_TEST_BROWSER=1）で test_ui_accessibility.py を実行して確認：全9タブ×ライト/ダークでコントラスト比の問題0件、スマホ幅（900px未満）でタップ領域44px未満の操作要素0件、ランドマーク（header/nav/main）・言語・見出し・aria状態が揃っている、Tabで14回中10件以上の操作要素に到達しフォーカスの輪郭が全て見える。合わせて実行した test_inbox_browser.py の1件の失敗はデモデータの件数が日付に依存して変わるだけで、6.7の範囲とは無関係（既知）"
         - id: "6.8"
           name: "学習の拡張（優先度の重み・見積り精度）"
           status: done
