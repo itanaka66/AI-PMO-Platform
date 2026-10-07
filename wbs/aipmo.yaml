@@ -724,4 +724,15 @@ wbs:
           effort: 5
           priority: Low
           notes: "第一段（PR #112）：全29ファイルの末尾に6言語の要約節（2〜3文）を追加。第二段：LIVE-TRACKERS.md と JUDGMENT.md の2ファイルを、要約ではなく本文全体（見出し・表・コード例を含む）の6言語訳に差し替えた。残り27ファイルはまだ要約のみ。本文全体を8言語化するのは1ファイルで数百行規模のため、ファイルを選びながら段階的に進める方針（優先度は低いまま）"
+        - id: "6.35"
+          name: "デモの台帳が実行した曜日で件数がずれる不具合を直す"
+          status: done
+          effort: 2
+          priority: Medium
+          done_on: 2026-10-07
+          evidence:
+            - "aipmo/demo.py::def _drop_stale_recurring_periods"
+            - "tests/test_messages.py::test_the_inbox_is_composed_in_the_servers_language"
+            - "tests/test_tasks_screen.py::test_the_integrations_screen_reports_adapters_filing_wbs_and_accounts"
+          notes: "原因：demo.load() が過去の周（3・2・1日前）を再生する際、月〜水に実行すると3日前が前のISO週にまたがり、週次レビューの定期タスクが今週分と合わせて2件できていた（本来は正しい挙動だが、デモの再現性を壊す）。各定期タスクにつき最新の期間だけを残すよう台帳から古い方を消す後処理を追加。test_messages.py・test_inbox.py・test_tasks_screen.py の計10件の失敗（14/15/16個のハードコードされた件数との不一致）がこれで解消し、フルスイート 1833 passed / 50 skipped（スキップは Postgres・実ブラウザのオプトイン分）"
 
