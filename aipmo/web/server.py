@@ -1532,6 +1532,51 @@ def create_app(
         logger.info("judgment %s by %s from %s", action, role, _client_ip(request))
         return {"action": action, "control": state}
 
+    # -- 自己学習サイクルの「RAG を信用する」設定 / self-learning cycle's trust-RAG toggle --
+    #
+    # `templates/examples/self_learning_cycle.yaml` が提出した候補だけを対象にした、
+    # オプトインの自動承認（aipmo/self_learning.py）。既定は無効——人が
+    # aipmo knowledge / Web の「ナレッジ」で決める。運用者がここで明示的に
+    # 有効にしたときだけ、このサイクル専用に自動化される。いつでも無効化できる。
+    #
+    # Opt-in auto-approval (aipmo/self_learning.py) for candidates submitted
+    # specifically by `templates/examples/self_learning_cycle.yaml`. Off by
+    # default — a human decides via `aipmo knowledge` / the web "Knowledge"
+    # screen. Only turned on when an operator explicitly flips this switch,
+    # and only for that one cycle; can be turned off again at any time.
+
+    @app.get("/api/learning/control", dependencies=[guard])
+    def learning_control_state() -> dict[str, Any]:
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        store = _open_store(ledger, sync=False)
+        try:
+            control = read_control(store.side)
+        finally:
+            _release(store)
+        return {"trust_rag": bool(control.get("learning_trust_rag"))}
+
+    @app.post("/api/learning/trust-rag")
+    def set_learning_trust_rag(request: Request, payload: dict[str, Any],
+                               role: str = operator_guard) -> dict[str, Any]:
+        enabled = bool(payload.get("enabled"))
+        ledger = _pmo_ledger()
+        if not _ledger_present(ledger):
+            raise HTTPException(status_code=404, detail="no PMO data yet")
+        stamp = datetime.now(timezone.utc).isoformat()
+        store = _open_store(ledger, sync=False)
+        try:
+            key = "learning_trust_rag_enabled_at" if enabled else "learning_trust_rag_disabled_at"
+            state = write_control(store.side, learning_trust_rag=enabled, **{key: stamp})
+            store.side.append(DECISIONS, json.dumps(
+                {"at": stamp, "kind": "learning_trust_rag", "enabled": enabled, "by": role},
+                ensure_ascii=False))
+        finally:
+            _release(store)
+        logger.info("learning trust_rag=%s by %s from %s", enabled, role, _client_ip(request))
+        return {"trust_rag": enabled, "control": state}
+
     @app.post("/api/pmo/proposals/decide")
     def pmo_decide(request: Request, payload: dict[str, Any],
                    role: str = operator_guard) -> dict[str, Any]:

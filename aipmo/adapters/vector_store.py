@@ -217,7 +217,8 @@ class VectorStoreAdapter(Adapter):
 
         with self._lock:
             self._upsert_backend(self._connect(), collection, points)
-        return {"upserted": len(points), "collection": collection}
+        return {"upserted": len(points), "collection": collection,
+                "ids": [p["id"] for p in points]}
 
     @action(writes=True)
     def submit_candidate(
@@ -262,6 +263,7 @@ class VectorStoreAdapter(Adapter):
         result = self.upsert([payload], scope=PRIVATE, idempotency_key=idempotency_key)
         return {
             **result,
+            "id": result["ids"][0],
             "review_status": "pending",
             "publicability_score": score,
             "publicability_reasons": scored.reasons,

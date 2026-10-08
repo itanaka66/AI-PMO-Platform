@@ -1033,6 +1033,50 @@ def cmd_judgment(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_learning(args: argparse.Namespace) -> int:
+    """自己学習サイクル（self_learning_cycle）の、RAG を包括的に信用する設定を見る／切り替える。
+
+    `aipmo learning`          … 今の状態（有効/無効、いつ切り替えたか）
+    `aipmo learning enable`   … 有効にする：このサイクルが提出した候補だけ、以後は自動承認
+    `aipmo learning disable`  … 無効にする（いつでも）：以後の自動承認を止める。
+                                  すでに自動承認した判断はそのまま残る
+
+    `templates/examples/self_learning_cycle.yaml` と aipmo/self_learning.py の説明を参照。
+    """
+    from .self_learning import set_trust_rag, trust_rag_enabled
+
+    config = load_config(Path(args.config))
+    base = Path(args.config).resolve().parent
+    try:
+        path = open_ledger(config, base).side
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return 1
+
+    command = args.learning_command or "status"
+    if command == "enable":
+        set_trust_rag(path, True)
+        print("有効にしました。self_learning_cycle が提出した候補は、以後は人の承認を待たず"
+              "自動で公開コレクションへ昇格します / enabled: candidates this cycle submits"
+              " will be auto-approved from now on")
+        print("(aipmo schedule が次にこのテンプレートを実行したときから効きます "
+              "/ takes effect on aipmo schedule's next run of this template)")
+        return 0
+    if command == "disable":
+        set_trust_rag(path, False)
+        print("無効にしました。以後は今までどおり人が aipmo knowledge / Web で決めます "
+              "/ disabled: future candidates await a human again")
+        print("(すでに自動承認した判断は残ります / decisions already made are unaffected)")
+        return 0
+
+    enabled = trust_rag_enabled(path)
+    print(f"RAG を包括的に信用する設定 / trust-RAG setting: "
+          f"{'有効 / enabled' if enabled else '無効 / disabled'}")
+    print("(self_learning_cycle が提出した候補だけが対象。ほかの経路の候補には影響しません "
+          "/ affects only candidates from self_learning_cycle; nothing else)")
+    return 0
+
+
 def cmd_collect(args: argparse.Namespace) -> int:
     """課題管理ツールの今の状態を、いま台帳へ集める(読み取り専用)。
 
@@ -2034,6 +2078,17 @@ def cmd_schedule(args: argparse.Namespace) -> int:
         print(f"設定エラー / config error: {exc}", file=sys.stderr)
         return 1
 
+    # 自己学習サイクル（self_learning_cycle）のオプトイン自動承認。台帳（制御の
+    # 置き場）が無ければ、トグルの状態を持てないので何もしない——その場合も
+    # テンプレート自体は走り、提出した候補は人間のレビュー待ちのままになる。
+    # Opt-in auto-approval for the self_learning_cycle template. Without a
+    # ledger (nowhere to keep the toggle's state) this is skipped; the
+    # template still runs, its candidates just stay pending for a human.
+    if task_engine is not None and engine.adapters.has("vector_store"):
+        from .self_learning import attach as attach_self_learning
+
+        attach_self_learning(engine, task_engine.side)
+
     web = dict(config.get("web") or {})
     root = Path(web.get("templates_dir", "templates"))
     if not root.is_absolute():
@@ -2412,6 +2467,12 @@ def main(argv: list[str] | None = None) -> int:
     p_knowledge.add_argument("--by", help="決めた人の名前（既定はOSのユーザー名）")
     p_knowledge.add_argument("--note", help="承認・却下のメモ")
     p_knowledge.set_defaults(func=cmd_knowledge)
+
+    p_learning = sub.add_parser(
+        "learning", help="自己学習サイクルの「RAG を信用する」設定 / self-learning cycle's trust-RAG setting")
+    p_learning.add_argument("learning_command", nargs="?",
+                            choices=("status", "enable", "disable"), default="status")
+    p_learning.set_defaults(func=cmd_learning)
 
     p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")
     p_setup.add_argument("--dir", default=".", help="設定の出力先 / where to write config")

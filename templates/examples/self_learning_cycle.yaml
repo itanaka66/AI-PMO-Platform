@@ -1,0 +1,82 @@
+name: self_learning_cycle
+version: "1"
+industry: generic
+description: |
+  ローカル LLM で架空の（実在しない）PMO 業務課題を作り、同じモデルに
+  自己判断させ、別のモデルで検証し、結果をナレッジ候補として提出する——
+  これを `aipmo schedule` が繰り返す。実際のトラッカー・外部サービスへの
+  書き込みは一切しない（練習・デモ専用）。提出した候補は、ほかのテンプレート
+  と同じ承認待ちの private な行になり、既定では人間が `aipmo knowledge` /
+  Web の「ナレッジ」で決める。運用者が「RAG を包括的に信用する」と明示的に
+  選んだとき（`aipmo learning enable`）だけ、このサイクルが提出した候補に
+  限って自動承認される（aipmo/self_learning.py）。
+
+  Uses a local LLM to invent a fictional PMO task, has the same model judge
+  it, a different model verify that judgment, and submits the result as a
+  knowledge candidate — repeated by `aipmo schedule`. Never writes to a real
+  tracker or external service (practice/demo only). Submitted candidates are
+  ordinary pending rows like any other template's, awaiting a human via
+  `aipmo knowledge` / the web "Knowledge" screen by default; only when an
+  operator explicitly opts in (`aipmo learning enable`) are candidates from
+  this specific cycle auto-approved (aipmo/self_learning.py).
+
+trigger: "schedule:0 * * * *"   # 既定は毎時。運用者が変更してよい / hourly by default
+
+params:
+  topic: "ソフトウェア開発プロジェクトのPMO運営"
+
+steps:
+  - id: propose_task
+    llm:
+      profile: self_learner        # ローカル LLM（生成役）/ local LLM, the generator
+      temperature: 0.7
+    prompt_inline: |
+      {{ params.topic }} に関する、架空の（実在しない）業務課題を1つ考えて
+      ください。実在のプロジェクト名・会社名・人名は使わないこと。これは
+      練習用で、実際のトラッカーには一切書き込みません。
+
+      課題の内容だけを1〜2文で出力してください。前置きは不要です。
+
+  - id: self_judge
+    llm:
+      profile: self_learner        # 同じモデルが自己判断 / the same model judges itself
+      temperature: 0.3
+    prompt_inline: |
+      次の課題にどう対応すべきか、あなた自身の判断を述べてください。
+
+      課題:
+      {{ steps.propose_task.output }}
+
+      対応方針とその理由を、150字程度で書いてください。
+
+  - id: verify
+    llm:
+      profile: self_verifier       # 別のローカル LLM（検証役）/ a different local LLM, the verifier
+      temperature: 0.1
+    prompt_inline: |
+      次の課題と、それに対するある判断を読み、その判断が妥当かどうかを
+      検証してください。筋が通っていない、具体性が無い、課題に答えていない
+      場合は needs_fix としてください。
+
+      課題: {{ steps.propose_task.output }}
+      判断: {{ steps.self_judge.output }}
+
+      次の形で、JSON だけを出力してください。
+      {"verdict": "ok または needs_fix", "reason": "判定の理由"}
+    output_format: json
+    output_schema:
+      required: [verdict, reason]
+
+  - id: submit
+    when: "{{ steps.verify.output.verdict }} == 'ok'"
+    adapter: vector_store
+    action: submit_candidate
+    inputs:
+      knowledge:
+        text: |
+          課題: {{ steps.propose_task.output }}
+          判断: {{ steps.self_judge.output }}
+          検証した理由: {{ steps.verify.output.reason }}
+        source: self_learning
+      knowledge_level: 3
+      idempotency_key: "self_learning:{{ run.id }}"

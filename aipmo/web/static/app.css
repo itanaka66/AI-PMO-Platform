@@ -253,6 +253,22 @@ h2:first-of-type { margin-top: 4px; }
 }
 .knowledge-text[readonly] { background: var(--ground); }
 
+.learning-trust-rag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -6px 0 10px;
+  padding: 8px 10px;
+  border: 1px dashed var(--rule);
+  border-radius: 3px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}
+.learning-trust-rag[hidden] { display: none; }
+.learning-trust-rag input { width: var(--tap); height: var(--tap); margin: 0; flex: 0 0 auto; }
+.learning-trust-rag:has(input:checked) { color: var(--accent); border-color: var(--accent); }
+
 .btn {
   min-height: var(--tap);
   padding: 0 16px;

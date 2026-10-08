@@ -119,6 +119,45 @@ decision be rewritten after the fact.
 
 ---
 
+## 自己学習サイクル（ローカル LLM・自己判断・別モデル検証）/ The self-learning cycle
+
+`templates/examples/self_learning_cycle.yaml` は、`aipmo schedule` が繰り返す
+練習用のループ：ローカル LLM が架空の（実在しない）PMO 業務課題を作り、
+**同じモデルが自己判断**し、**別のローカル LLM が検証**（`verdict: ok` /
+`needs_fix`）し、妥当だったものだけを上の人間承認フローへ`submit_candidate`
+で提出する。実際のトラッカー・外部サービスへは一切書き込まない。
+
+```yaml
+llm:
+  self_learner: {provider: ollama, model: llama3.1}     # 生成・自己判断
+  self_verifier: {provider: ollama, model: qwen2.5:14b}  # 検証（別モデル）
+```
+
+提出された候補は、ほかのテンプレートが作るものとまったく同じ、承認待ちの
+private な行——既定では、ここでも人間が `aipmo knowledge` / Web の
+「ナレッジ」で決める。
+
+### オプトインの自動承認 / Opt-in auto-approval
+
+運用者が「RAG を包括的に信用する」と明示的に選んだときだけ、**この
+サイクルが提出した候補に限って**自動で承認される（ほかの経路の候補には
+一切触れない）。いつでも無効化でき、無効化は新しい候補の自動承認を
+止めるだけで、それまでに自動承認した判断（誰が・いつ）は記録されたまま
+消えない。
+
+```bash
+aipmo learning                # 今の状態
+aipmo learning enable         # 有効にする（Web 画面にも同じチェックボックスがある）
+aipmo learning disable        # いつでも無効化できる
+```
+
+Only turned on when an operator explicitly opts in, and only for candidates
+*this specific cycle* submitted — `aipmo/self_learning.py` matches by
+template name before checking the toggle, so no other source's candidates
+are ever touched by it.
+
+---
+
 ## Qdrant
 
 ```yaml

@@ -181,6 +181,7 @@ approves them (connecting the existing `wbs_replan` to this file).
 | `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める / Sends independent notifications concurrently to cut run time |
 | `crawl_watch` | 外部サイトの1ページを取得し、見出し・リンク・メタデータを Slack へ通知 / Fetches an external page and posts its headline, links, and metadata to Slack |
 | `generalize_knowledge` | 社内知見を匿名化・一般化し、レビュー待ちの候補として提出 / Anonymizes and generalizes internal knowledge, submitting it as a candidate awaiting review |
+| `self_learning_cycle` | ローカル LLM で架空の課題を作り自己判断、別モデルで検証してナレッジ候補として提出（デモ・練習用。`aipmo learning enable` で自動承認もできる）/ A local LLM invents a fictional task, judges it, a different model verifies it, submitted as a knowledge candidate (demo/practice only; `aipmo learning enable` opts into auto-approval) |
 | `construction/site_meeting` | 工程会議 → 是正起票・安全指摘の即時通知 / Site meeting → corrective-action issues and immediate safety-flag notification |
 | `marketing/campaign_check` | キャンペーン進行（承認待ちを分けて扱う） / Campaign progress check, separating items awaiting approval |
 | `manufacturing/line_downtime_triage` | 生産ライン停止の仕分け（安全・資材待ち・内製を分けて扱う） / Triages production-line downtime — safety, material-wait, and in-house causes kept apart |
@@ -270,6 +271,7 @@ aipmo agents review [KEY --accept|--reject --note 理由]  # 成果を人が確�
 aipmo wbs status                     # PMO AI 自身の開発 WBS の状況 / this project's own WBS
 aipmo wbs check                      # 同じ WBS の検証（証拠の欠け・循環）/ validate it
 aipmo knowledge [show|edit|approve|reject ID]  # ナレッジ公開候補のレビュー / review knowledge candidates
+aipmo learning [enable|disable]      # 自己学習サイクルの RAG 信用設定 / self-learning cycle's trust-RAG setting
 aipmo doctor                         # 接続確認 / connection check
 pytest                               # 1015 件
 ```
