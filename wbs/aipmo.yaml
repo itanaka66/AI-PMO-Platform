@@ -770,4 +770,18 @@ wbs:
             - "tests/test_knowledge_review_cli.py"
             - "tests/test_knowledge_review_web.py"
           notes: "vector_store.submit_candidate の docstring が約束していた『人間が承認するレビューのワークフロー』が未実装だったので実装した（ユーザーに確認し、この承認フローのことだと確定）。list_candidates/edit_candidate/decide_candidate はアダプタに追加したが @action を付けていないため、テンプレートからは呼べない（adapter.actions() で確認）——CLI（aipmo knowledge list/show/edit/approve/reject）と Web 画面（ナレッジ、/api/knowledge）だけが呼ぶ。承認・却下はどちらも private 側のその行に reviewed_by/reviewed_at/review_note を書き足して残す（削除しない＝これが人間の判断の記録）。承認したときだけ、審査用の項目を除いた内容を public コレクションへ複製。決定済みの候補は編集できない。CLIもユーザー確認のうえ対象に含めた。実ブラウザで一覧・編集・承認の流れを確認"
+        - id: "6.39"
+          name: "ローカル LLM による自己学習サイクル（課題創出→自己判断→別モデル検証→RAG提出）を繰り返す"
+          status: done
+          effort: 5
+          priority: Low
+          depends_on: ["6.38"]
+          done_on: 2026-10-08
+          evidence:
+            - "templates/examples/self_learning_cycle.yaml"
+            - "aipmo/self_learning.py::def attach"
+            - "aipmo/cli.py::def cmd_learning"
+            - "tests/test_self_learning.py"
+            - "tests/test_learning_web.py"
+          notes: "ユーザーに2点を事前確認：(1) 課題創出はデモ/練習用の架空の課題のみ（実トラッカーには書かない）、(2) RAGへの自動公開は既定オフで、運用者がUIチェックボックス（Webの『ナレッジ』欄・aipmo learning enable）で明示的に『包括的に信用する』と選んだときだけ、かついつでも無効化できる、という条件で合意。self_learning_cycle テンプレートが trigger: schedule で aipmo schedule が繰り返す：ローカル LLM（profile: self_learner）が架空課題を作り自己判断→別のローカル LLM（profile: self_verifier）が verdict: ok/needs_fix で検証→ok のときだけ vector_store.submit_candidate で提出（WBS 6.38 の承認待ち private 行として）。aipmo/self_learning.py の run_listener は、テンプレート名が self_learning_cycle のときだけ・制御の文書の learning_trust_rag が有効なときだけ、自動で decide_candidate(approve=True) を呼ぶ（ほかの経路の候補には一切触れない）。EchoProvider で全4ステップ・when分岐（ok/needs_fix）・自動承認の両方を手動で通し確認"
 

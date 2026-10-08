@@ -2635,6 +2635,52 @@ async function refreshKnowledge() {
   }
 }
 
+/* ---------- 自己学習サイクルの「RAG を信用する」設定 / trust-RAG toggle ----
+ *
+ * self_learning_cycle が提出した候補だけを対象にした、オプトインの自動承認
+ * （aipmo/self_learning.py）。既定は無効。台帳が無い構成では 404 が返るので、
+ * その場合はチェックボックス自体を出さない。operator だけが切り替えられる
+ * （viewer には readonly で見せる）。
+ *
+ * Opt-in auto-approval (aipmo/self_learning.py) for candidates from
+ * self_learning_cycle specifically. Off by default; hidden entirely when
+ * there is no ledger (404). Only operator can flip it; viewer sees it
+ * read-only.
+ */
+async function refreshLearningControl() {
+  const row = $("learning-trust-rag");
+  try {
+    const { trust_rag } = await api("/api/learning/control");
+    row.hidden = false;
+    const box = $("learning-trust-rag-checkbox");
+    box.checked = trust_rag;
+    box.disabled = !canRun;
+    $("learning-trust-rag-label").textContent = t("web_learning_trust_rag",
+      "Trust the RAG completely (auto-approve candidates from self_learning_cycle)");
+  } catch (error) {
+    row.hidden = true;
+  }
+}
+
+async function setLearningTrustRag(enabled) {
+  const box = $("learning-trust-rag-checkbox");
+  box.disabled = true;
+  try {
+    await api("/api/learning/trust-rag", {
+      method: "POST",
+      body: JSON.stringify({ enabled }),
+    });
+    toast(enabled
+      ? t("web_learning_enabled", "Enabled: future candidates from self_learning_cycle are auto-approved.")
+      : t("web_learning_disabled", "Disabled: future candidates await a human again."));
+  } catch (error) {
+    box.checked = !enabled;         // 反映できなかったので元に戻す / revert on failure
+    toast(error.message, "error");
+  } finally {
+    box.disabled = !canRun;
+  }
+}
+
 async function refreshHealth() {
   try {
     const { adapters } = await api("/api/health");
@@ -2666,6 +2712,10 @@ async function boot() {
     await refreshPmo();
     await refreshProposals();
     await refreshKnowledge();
+    await refreshLearningControl();
+    $("learning-trust-rag-checkbox").addEventListener("change", (event) => {
+      setLearningTrustRag(event.target.checked);
+    });
     await refreshWbs();
     // 受信箱が使える構成（PMO Core の台帳がある）なら、タブで切り替える。無ければ従来どおり。
     // With a PMO ledger the sections become tabs and the inbox leads; otherwise nothing changes.
@@ -2695,6 +2745,7 @@ function refreshEverything() {
   refreshPmo().catch(() => {});
   refreshProposals().catch(() => {});
   refreshKnowledge().catch(() => {});
+  refreshLearningControl().catch(() => {});
   refreshWbs();
   if (tabsEnabled) {
     refreshInbox(); refreshTasks(false); refreshReviews(); refreshMembers(); refreshIntegrations();

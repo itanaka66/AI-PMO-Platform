@@ -229,6 +229,13 @@ def test_submit_candidate_stays_private_and_pending():
     assert result["review_status"] == "pending"
     assert points[0].payload["review_status"] == "pending"
     assert points[0].payload["tenant"] == "company_a"
+    assert result["id"] == points[0].id == result["ids"][0]
+
+
+def test_upsert_returns_the_ids_it_wrote():
+    adapter, _ = build_qdrant()
+    result = adapter.invoke("upsert", {"documents": [{"text": "a"}, {"text": "b"}]})
+    assert len(result["ids"]) == 2
 
 
 def test_submit_candidate_computes_a_score_when_none_is_given():
