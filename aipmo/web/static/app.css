@@ -438,6 +438,88 @@ h2:first-of-type { margin-top: 4px; }
 }
 .run-queue-status[hidden] { display: none; }
 
+/* ---------- ワークフローの時系列 / run timeline (Gantt-style) --------- */
+
+.run-timeline {
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 10px 12px;
+  margin-bottom: var(--gap);
+}
+.run-timeline[hidden] { display: none; }
+
+.run-timeline-axis {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.run-timeline-rows { display: flex; flex-direction: column; gap: 4px; }
+
+.run-timeline-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.run-timeline-label {
+  flex: 0 0 auto;
+  width: 9em;
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-timeline-track {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  background: var(--ground);
+  border-radius: 3px;
+}
+
+.run-timeline-bar {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  min-width: 3px;
+  border-radius: 3px;
+  background: var(--ok);
+}
+.run-timeline-bar[data-status="failed"] { background: var(--fail); }
+.run-timeline-bar[data-status="running"] {
+  background: repeating-linear-gradient(
+    135deg, var(--accent), var(--accent) 6px, var(--surface) 6px, var(--surface) 10px);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .run-timeline-bar[data-status="running"] { animation: run-timeline-stripe 1s linear infinite; }
+}
+@keyframes run-timeline-stripe { to { background-position: 14px 0; } }
+
+.run-timeline-upcoming {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px dashed var(--rule);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.run-timeline-upcoming[hidden] { display: none; }
+.run-timeline-upcoming li {
+  border: 1px dashed var(--rule);
+  border-radius: 3px;
+  padding: 2px 6px;
+}
+
 .busy {
   display: inline-block;
   width: 10px;

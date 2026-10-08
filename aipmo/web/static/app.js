@@ -436,9 +436,71 @@ async function run(item, card, note) {
   }
 }
 
+/* ---------- 実行履歴の時系列 / run timeline (Gantt-style) ------------------
+ *
+ * 処理済み（成功・失敗）は開始〜終了の帯、処理中は「いま」まで伸びる縞模様の
+ * 帯、処理予定（待ち行列）は時刻を持たないので軸の外に番号付きで並べる。
+ *
+ * Done (success/failed) runs get a bar from start to finish; the running one
+ * gets a striped bar stretching to "now"; queued runs have no timestamp yet,
+ * so they're listed, numbered, outside the time axis instead.
+ */
+function renderRunTimeline(items) {
+  const host = $("run-timeline");
+  const timed = items.filter((r) => r.started_at && r.status !== "queued");
+  const queued = items.filter((r) => r.status === "queued")
+    .sort((a, b) => (a.queue_position || 0) - (b.queue_position || 0));
+
+  if (timed.length === 0 && queued.length === 0) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+
+  const now = Date.now();
+  let start = now;
+  let end = now;
+  for (const record of timed) {
+    const s = new Date(record.started_at).getTime();
+    const e = record.finished_at ? new Date(record.finished_at).getTime() : now;
+    if (s < start) start = s;
+    if (e > end) end = e;
+  }
+  if (end - start < 60000) start = end - 60000;   // 帯が見えなくなるほど短い幅を避ける
+  const span = end - start;
+
+  $("run-timeline-axis").replaceChildren(
+    el("span", null, clock(new Date(start).toISOString())),
+    el("span", null, clock(new Date(end).toISOString())));
+
+  $("run-timeline-rows").replaceChildren(...timed.map((record) => {
+    const row = el("div", "run-timeline-row");
+    row.append(el("span", "run-timeline-label", record.template));
+    const track = el("div", "run-timeline-track");
+    const bar = el("div", "run-timeline-bar");
+    bar.dataset.status = record.status;
+    const s = new Date(record.started_at).getTime();
+    const e = record.finished_at ? new Date(record.finished_at).getTime() : now;
+    bar.style.left = `${((s - start) / span) * 100}%`;
+    bar.style.width = `${Math.max(((e - s) / span) * 100, 0.6)}%`;
+    track.append(bar);
+    row.append(track);
+    return row;
+  }));
+
+  const upcoming = $("run-timeline-upcoming");
+  upcoming.replaceChildren(...queued.map((record, index) => {
+    const li = document.createElement("li");
+    li.textContent = `${record.queue_position || index + 1}. ${record.template}`;
+    return li;
+  }));
+  upcoming.hidden = queued.length === 0;
+}
+
 /* ---------- 実行履歴 / run history ---------- */
 
 function renderRuns(items) {
+  renderRunTimeline(items);
   const host = $("runs");
   host.replaceChildren();
 

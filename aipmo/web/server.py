@@ -553,7 +553,9 @@ def create_app(
                     "id": run_id or secrets.token_hex(6), "template": template.name,
                     "started_by": role,
                     "status": status, "error": error, "steps": [],
-                    "started_at": None, "total": len(template.steps),
+                    "started_at": None,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "total": len(template.steps),
                 }
                 runs.add(record)
                 logger.info("run %s: template=%s started_by=%s status=%s",
@@ -574,7 +576,9 @@ def create_app(
             record = {
                 "id": run_id, "template": template.name, "started_by": role,
                 "status": "failed", "error": str(exc), "steps": [],
-                "started_at": started_at.isoformat(), "total": len(template.steps),
+                "started_at": started_at.isoformat(),
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "total": len(template.steps),
             }
             runs.add(record)
             logger.exception("run %s: template=%s started_by=%s crashed",
@@ -588,6 +592,7 @@ def create_app(
             "status": status,
             "error": error,
             "started_at": ctx.started_at.isoformat(),
+            "finished_at": datetime.now(timezone.utc).isoformat(),
             "total": len(template.steps),
             "steps": [
                 {

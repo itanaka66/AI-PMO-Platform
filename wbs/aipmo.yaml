@@ -747,4 +747,14 @@ wbs:
             - "aipmo/web/static/app.js::function watchRun"
             - "tests/test_web.py::test_run_records_step_outcomes"
           notes: "POST /api/runs は即座に queued を返し、実行はワーカー1本の待ち行列（RunQueue）に乗せる——LLM を呼ぶ工程が複数の実行から同時に走らないようにし、待っている件数そのものを GET /api/queue で見せるため。GET /api/runs/{id} を0.5秒おきに読み、待ち順→今のステップ（index/total/step_id）の順にダイアログへ反映。8言語の文言を追加。既存テスト9件を、完了を待ってから確認する形に修正（run_and_wait ヘルパー）。実 Chrome でダイアログの見た目を確認済み。対象は Web 画面のみ（CLI の aipmo run は対象外、との事前確認どおり）"
+        - id: "6.37"
+          name: "PMO が処理するワークフローを時系列（ガント風）で、処理済み・処理中・処理予定の状態ごとにグラフィカル表示"
+          status: done
+          effort: 2
+          priority: Low
+          done_on: 2026-10-08
+          evidence:
+            - "aipmo/web/static/app.js::function renderRunTimeline"
+            - "aipmo/web/server.py::def _do_run"
+          notes: "実行履歴（GET /api/runs、既存）に finished_at を追加し、開始〜終了の時刻から帯の位置・幅を計算。成功（緑）・失敗（赤）・実行中（いまへ伸びる縞模様の帯、prefers-reduced-motion で静止）を同じ時間軸に並べ、時刻を持たない処理予定（待ち行列）は軸の外に番号付きで列挙。新しいエンドポイントは追加していない（既存の /api/runs がそのまま使える）。実ブラウザで4状態すべての見た目を確認済み。ユーザー確認：時系列（タイムライン・ガント風）を選択（3択のうち）"
 
