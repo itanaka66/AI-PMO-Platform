@@ -304,6 +304,83 @@ function renderTemplates(items) {
   }
 }
 
+/* ---------- 実行中ダイアログ / run-progress dialog -------------------------
+ *
+ * `/api/runs` はすぐ `status: queued` を返すだけで、実際の実行は1本の
+ * ワーカーが待ち行列からさばく（LLM を呼ぶ工程が重ならないため）。
+ * ここでは `GET /api/runs/{id}` を数百 ms おきに読みに行き、待ち順→
+ * 今のステップの順にダイアログへ映す。
+ *
+ * `/api/runs` only returns `status: queued` right away; the actual run is
+ * drained from a single-worker queue (so LLM-calling steps never overlap).
+ * This polls `GET /api/runs/{id}` every few hundred ms and reflects it in
+ * the dialog, from queue position through to the current step.
+ */
+
+function updateRunDialog(record) {
+  const title = $("run-progress-title");
+  const meter = $("run-progress-meter");
+  const step = $("run-progress-step");
+
+  if (record.status === "queued") {
+    title.textContent = t("web_run_progress_title", "Running");
+    meter.removeAttribute("value");
+    step.textContent = record.queue_position
+      ? t("web_run_queue_wait", "{n} ahead of you…").replace("{n}", String(record.queue_position))
+      : "";
+    return;
+  }
+
+  title.textContent = t("web_run_progress_title", "Running");
+  const progress = record.progress;
+  if (progress && progress.step_id) {
+    meter.max = progress.total;
+    meter.value = progress.index;
+    step.textContent = t("web_run_step", "Step {i}/{n}: {step}")
+      .replace("{i}", String(progress.index))
+      .replace("{n}", String(progress.total))
+      .replace("{step}", progress.step_id);
+  } else {
+    meter.removeAttribute("value");
+    step.textContent = "";
+  }
+}
+
+async function watchRun(runId) {
+  const dialog = $("run-progress");
+  const supportsDialog = dialog && typeof dialog.showModal === "function";
+  if (supportsDialog && !dialog.open) dialog.showModal();
+
+  try {
+    // ポーリングは、この実行自体が本人の操作で始まったものなので許される
+    // （常時バックグラウンドで回すものではない）。止まったときに必ず抜ける
+    // よう、何度か失敗したら諦める。
+    //
+    // Polling here is fine because this run was started by the person
+    // watching it (not a standing background loop). Gives up after
+    // repeated failures so a dead server never spins forever.
+    let failures = 0;
+    for (;;) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      let record;
+      try {
+        record = await api(`/api/runs/${runId}`);
+        failures = 0;
+      } catch (error) {
+        failures += 1;
+        if (failures >= 5) throw error;
+        continue;
+      }
+      if (record.status !== "queued" && record.status !== "running") {
+        return record;
+      }
+      updateRunDialog(record);
+    }
+  } finally {
+    if (supportsDialog && dialog.open) dialog.close();
+  }
+}
+
 async function run(item, card, note) {
   const original = note.textContent;
   card.disabled = true;
@@ -313,10 +390,11 @@ async function run(item, card, note) {
   note.append(spinner, " ", t("web_running", "Running…"));
 
   try {
-    const record = await api("/api/runs", {
+    const started = await api("/api/runs", {
       method: "POST",
       body: JSON.stringify({ path: item.path }),
     });
+    const record = await watchRun(started.id);
     await refreshRuns();
     if (record.status === "failed") {
       toast(record.error || t("web_run_failed", "Run failed."), "error");
@@ -2282,6 +2360,33 @@ async function refreshInbox() {
 async function refreshRuns() {
   const { items } = await api("/api/runs");
   renderRuns(items);
+  await refreshQueueStatus();
+}
+
+async function refreshQueueStatus() {
+  // 画面を開く／戻るたびに1回だけ読む。常時のポーリングはしない
+  // （電池を使うので、既存の画面更新と同じ考え方に合わせる）。
+  //
+  // Read once per visit to the screen, same as the rest of this file's
+  // refreshes — no standing poll, to keep with the no-battery-drain rule
+  // already followed here.
+  const host = $("run-queue-status");
+  try {
+    const status = await api("/api/queue");
+    const parts = [];
+    if (status.running) {
+      parts.push(t("web_queue_running", "Running: {template}")
+        .replace("{template}", status.running.template));
+    }
+    if (status.waiting.length > 0) {
+      parts.push(t("web_queue_waiting", "Waiting: {n}")
+        .replace("{n}", String(status.waiting.length)));
+    }
+    host.textContent = parts.join(" ・ ");
+    host.hidden = parts.length === 0;
+  } catch (error) {
+    host.hidden = true;
+  }
 }
 
 async function refreshProposals() {

@@ -67,8 +67,15 @@
   <div id="templates" data-tab="tools"></div>
 
   <h2 id="h-runs" data-tab="tools">Runs</h2>
+  <div id="run-queue-status" class="run-queue-status" data-tab="tools" hidden></div>
   <div id="runs" class="spine" data-tab="tools"></div>
 </main>
+
+<dialog id="run-progress" class="run-progress" aria-labelledby="run-progress-title">
+  <p id="run-progress-title" class="run-progress-title"></p>
+  <progress id="run-progress-meter" max="1"></progress>
+  <p id="run-progress-step" class="run-progress-step"></p>
+</dialog>
 
 <div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 

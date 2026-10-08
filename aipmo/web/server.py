@@ -49,8 +49,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import queue as queue_module
 import secrets
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -129,21 +131,100 @@ class RateLimiter:
 
 
 class RunStore:
-    """実行履歴を新しい順に保持する / keeps run records, newest first."""
+    """実行履歴を新しい順に保持する / keeps run records, newest first.
+
+    `add` は同じ id の行があれば置き換える（実行中の進捗を、同じ場所で
+    更新していくため）。バックグラウンドの進捗更新と、画面からの一覧・
+    詳細取得が別スレッドから同時に起こるので、ロックで守る。
+
+    `add` replaces a record sharing its id in place (so progress on a
+    running entry updates where it already sits). Background progress
+    writes and the UI's list/detail reads happen from different threads, so
+    a lock guards all three methods.
+    """
 
     def __init__(self, limit: int = HISTORY_LIMIT) -> None:
         self._runs: list[dict[str, Any]] = []
         self._limit = limit
+        self._lock = threading.Lock()
 
     def add(self, record: dict[str, Any]) -> None:
-        self._runs.insert(0, record)
-        del self._runs[self._limit:]
+        with self._lock:
+            for index, existing in enumerate(self._runs):
+                if existing["id"] == record["id"]:
+                    self._runs[index] = record
+                    return
+            self._runs.insert(0, record)
+            del self._runs[self._limit:]
 
     def list(self) -> list[dict[str, Any]]:
-        return list(self._runs)
+        with self._lock:
+            return list(self._runs)
 
     def get(self, run_id: str) -> dict[str, Any] | None:
-        return next((r for r in self._runs if r["id"] == run_id), None)
+        with self._lock:
+            return next((r for r in self._runs if r["id"] == run_id), None)
+
+
+class RunQueue:
+    """テンプレートの実行を直列化する待ち行列 / a serial queue for template runs.
+
+    ワーカーは1本だけ。LLM を呼ぶ工程が複数の実行から同時に走ることはなく、
+    台帳にも同時書き込みは来ない。既に重いアダプタ呼び出しを直列化している
+    箇所（Postgres・ベクトルストアの `_lock`）と同じ考え方——ここでは
+    「待っている件数」そのものを画面に見せたいので、素の `BackgroundTasks`
+    （並行に何本でも走る）ではなく、この待ち行列を自分で持つ。
+
+    Exactly one worker thread. LLM-calling steps from different runs never
+    overlap, and the ledger never sees concurrent writes from two runs. The
+    same idea as the locking already used around heavy adapter calls
+    (Postgres, the vector-store adapters' own `_lock`) — but here the queue
+    itself needs to be visible on screen, so this keeps its own ordered list
+    rather than firing jobs through FastAPI's `BackgroundTasks` (which would
+    run them concurrently with no queue to show).
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._waiting: list[str] = []
+        self._running: str | None = None
+        self._jobs: queue_module.Queue[tuple[str, Callable[[], None]] | None] = queue_module.Queue()
+        threading.Thread(target=self._work, daemon=True).start()
+
+    def enqueue(self, run_id: str, job: Callable[[], None]) -> None:
+        with self._lock:
+            self._waiting.append(run_id)
+        self._jobs.put((run_id, job))
+
+    def position(self, run_id: str) -> int | None:
+        """1始まりの待ち順。待っていなければ None（実行中・完了済みも None）。"""
+        with self._lock:
+            if run_id not in self._waiting:
+                return None
+            return self._waiting.index(run_id) + 1
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {"running": self._running, "waiting": list(self._waiting)}
+
+    def _work(self) -> None:
+        while True:
+            item = self._jobs.get()
+            if item is None:
+                return
+            run_id, job = item
+            with self._lock:
+                if run_id in self._waiting:
+                    self._waiting.remove(run_id)
+                self._running = run_id
+            try:
+                job()
+            except Exception:
+                logger.exception("run queue: job for %s crashed", run_id)
+            finally:
+                with self._lock:
+                    self._running = None
+
 
 def discover_templates(root: Path) -> list[dict[str, Any]]:
     """テンプレートを読み、壊れているものも一覧に残す。
@@ -208,6 +289,7 @@ def create_app(
     pool_idle: float = 300.0,
 ):
     runs = store or RunStore()
+    run_queue = RunQueue()
     # 閲覧用トークンが見てよいプロジェクト。未設定（空）なら制限なし。
     # 空のリストを「何も見せない」と読むと、設定の書き忘れで画面が空に
     # なるだけで原因に気づけないので、制限なしとして扱う。
@@ -390,31 +472,76 @@ def create_app(
     def templates() -> dict[str, Any]:
         return {"items": discover_templates(template_root)}
 
+    def _with_queue_position(record: dict[str, Any]) -> dict[str, Any]:
+        """`status: queued` の行に、今の待ち順をその場で足す（保存はしない）。
+
+        Adds the current wait position to a `status: queued` record without
+        storing it — the queue moves, so this is only ever read fresh.
+        """
+        if record.get("status") != "queued":
+            return record
+        return {**record, "queue_position": run_queue.position(record["id"])}
+
     @app.get("/api/runs", dependencies=[guard])
     def run_list() -> dict[str, Any]:
-        return {"items": runs.list()}
+        return {"items": [_with_queue_position(r) for r in runs.list()]}
 
     @app.get("/api/runs/{run_id}", dependencies=[guard])
     def run_detail(run_id: str) -> Any:
         record = runs.get(run_id)
         if record is None:
             raise HTTPException(status_code=404, detail="no such run")
-        return record
+        return _with_queue_position(record)
+
+    @app.get("/api/queue", dependencies=[guard])
+    def queue_status() -> dict[str, Any]:
+        """今 LLM/テンプレートの実行を使っているものと、待っているものの列。
+
+        The template run currently using the LLM/engine, and the queue of
+        runs waiting their turn.
+        """
+        snap = run_queue.snapshot()
+
+        def describe(run_id: str) -> dict[str, Any]:
+            record = runs.get(run_id)
+            return {"id": run_id, "template": record.get("template") if record else None}
+
+        return {
+            "running": describe(snap["running"]) if snap["running"] else None,
+            "waiting": [describe(run_id) for run_id in snap["waiting"]],
+        }
 
     def _do_run(template: Any, params: dict[str, Any], trigger: dict[str, Any],
-                role: str) -> dict[str, Any]:
+                role: str, run_id: str | None = None) -> dict[str, Any]:
         """テンプレートを実際に走らせ、実行履歴の1件として記録する。
 
-        `/api/runs`（同期）と `/api/webhook`（バックグラウンド実行）の
-        両方から呼ばれる共通の実行本体。
+        `/api/runs`（バックグラウンド実行、`run_id` を先に渡す）と
+        `/api/webhook`（バックグラウンド実行、`run_id` は渡さない）の
+        両方から呼ばれる共通の実行本体。`run_id` があるときだけ、
+        実行中の進捗（今どのステップか）を `runs` に書き続ける——
+        画面がその id を `GET /api/runs/{id}` で読みに来る前提のときだけの負担。
 
         Actually runs a template and records it as one run-history entry.
-        Shared by both `/api/runs` (synchronous) and `/api/webhook`
-        (backgrounded).
+        Shared by both `/api/runs` (backgrounded, `run_id` given upfront) and
+        `/api/webhook` (backgrounded, no `run_id`). Progress is only written
+        while running when `run_id` is given — the cost of keeping it live
+        only applies when something is actually polling for it.
         """
+        started_at = datetime.now(timezone.utc)
+
+        def on_progress(index: int, total: int, step_id: str) -> None:
+            runs.add({
+                "id": run_id, "template": template.name, "started_by": role,
+                "status": "running", "error": None,
+                "started_at": started_at.isoformat(), "steps": [],
+                "progress": {"index": index, "total": total, "step_id": step_id},
+                "total": total,
+            })
+
         ctx: RunContext | None
         try:
-            ctx = engine.run(template, params=params, trigger=trigger)
+            ctx = engine.run(template, params=params, trigger=trigger, run_id=run_id,
+                             on_progress=on_progress if run_id else None)
             status = "success"
             error = None
         except StepFailure as exc:
@@ -423,15 +550,36 @@ def create_app(
             error = str(exc)
             if ctx is None:
                 record: dict[str, Any] = {
-                    "id": secrets.token_hex(6), "template": template.name,
+                    "id": run_id or secrets.token_hex(6), "template": template.name,
                     "started_by": role,
                     "status": status, "error": error, "steps": [],
-                    "started_at": None,
+                    "started_at": None, "total": len(template.steps),
                 }
                 runs.add(record)
                 logger.info("run %s: template=%s started_by=%s status=%s",
                            record["id"], template.name, role, status)
                 return record
+        except Exception as exc:
+            # 進捗を追わせている（run_id がある）実行だけ、ここで食い止める。
+            # さもなければ画面が「実行中」のまま固まる——何かが起きたと
+            # 本物の例外で止める方が、黙って呑むより安全な範囲はここだけ。
+            # run_id が無い（webhook）経路は、今までどおり外へ投げる。
+            #
+            # Only swallowed when something is polling for progress
+            # (run_id given) — otherwise the UI would be stuck showing
+            # "running" forever. The webhook path (no run_id) still
+            # propagates, unchanged.
+            if run_id is None:
+                raise
+            record = {
+                "id": run_id, "template": template.name, "started_by": role,
+                "status": "failed", "error": str(exc), "steps": [],
+                "started_at": started_at.isoformat(), "total": len(template.steps),
+            }
+            runs.add(record)
+            logger.exception("run %s: template=%s started_by=%s crashed",
+                            run_id, template.name, role)
+            return record
 
         record = {
             "id": ctx.run_id,
@@ -440,6 +588,7 @@ def create_app(
             "status": status,
             "error": error,
             "started_at": ctx.started_at.isoformat(),
+            "total": len(template.steps),
             "steps": [
                 {
                     "id": step_id,
@@ -482,18 +631,42 @@ def create_app(
         except loader.TemplateError as exc:
             return JSONResponse(status_code=400, content={"detail": str(exc)})
 
-        record = _do_run(
-            template,
-            payload.get("params") or {},
-            payload.get("trigger") or {},
-            role
-        )
-        # 既存の API との互換性のため、failed 時に一部だけ 200 JSONResponse で返す挙動を維持する
-        # (MVP としては _do_run 側にまとめず、呼び出し側でラップするのが無難)
-        if record.get("status") == "failed" and not record.get("started_at"):
-            return JSONResponse(status_code=200, content=record)
+        # すぐに応答を返し、実際の実行はワーカー1本の待ち行列に乗せる——
+        # LLM を呼ぶ工程が重なって同時に走ることはなく、画面は run_id で
+        # `GET /api/runs/{id}` を読みに来て、待ち順→今のステップの順に追える。
+        # `GET /api/queue` では、列全体（今動いているものと待っているもの）
+        # が見える。
+        # Responds immediately and places the run on a single-worker queue:
+        # LLM-calling steps from different runs never overlap, and the UI
+        # polls `GET /api/runs/{id}` by this run_id to follow it from queue
+        # position through to the current step. `GET /api/queue` shows the
+        # whole line (what's running now, what's waiting).
+        run_id = uuid.uuid4().hex[:12]
+        total = len(template.steps)
+        queued_record: dict[str, Any] = {
+            "id": run_id, "template": template.name, "started_by": role,
+            "status": "queued", "error": None,
+            "started_at": None, "steps": [], "progress": None, "total": total,
+        }
+        runs.add(queued_record)
 
-        return record
+        def job() -> None:
+            runs.add({
+                "id": run_id, "template": template.name, "started_by": role,
+                "status": "running", "error": None,
+                "started_at": datetime.now(timezone.utc).isoformat(), "steps": [],
+                "progress": {"index": 0, "total": total, "step_id": None}, "total": total,
+            })
+            _do_run(template, payload.get("params") or {}, payload.get("trigger") or {},
+                    role, run_id)
+
+        run_queue.enqueue(run_id, job)
+        # 応答そのものを、台帳に置いた「待っている」行と同じにする——
+        # 呼び出し側は、ここで status / template / started_by を既に読める。
+        # The response body is the same "queued" record just stored, so a
+        # caller already has status / template / started_by without a
+        # follow-up GET.
+        return JSONResponse(status_code=202, content=_with_queue_position(queued_record))
 
     @app.post("/api/webhook")
     def webhook(

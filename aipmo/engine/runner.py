@@ -235,6 +235,8 @@ class Engine:
         template: Template,
         params: dict[str, Any] | None = None,
         trigger: dict[str, Any] | None = None,
+        run_id: str | None = None,
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> RunContext:
         merged = {**template.params, **(params or {})}
         ctx = RunContext(
@@ -242,11 +244,24 @@ class Engine:
             params=merged,
             trigger=trigger or {},
         )
+        if run_id:
+            ctx.run_id = run_id
         logger.info("run %s start (template=%s)", ctx.run_id, template.name)
         self._record_run_start(template, ctx)
 
+        total = len(template.steps)
         try:
-            for step in template.steps:
+            for index, step in enumerate(template.steps, start=1):
+                # 呼び出し元（Web 画面など）に「今どのステップか」を知らせるだけの合図。
+                # 失敗しても本来の実行は止めない。
+                # Just a signal to the caller (e.g. the web UI) about which step is
+                # running now; a failure here never aborts the actual run.
+                if on_progress is not None:
+                    try:
+                        on_progress(index, total, step.id)
+                    except Exception:
+                        logger.warning("run %s: progress callback failed", ctx.run_id,
+                                       exc_info=True)
                 result = self._run_step(step, ctx)
                 ctx.results[step.id] = result
                 if step.adapter:
