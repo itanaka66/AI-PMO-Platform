@@ -71,17 +71,46 @@ class FakeConnection:
         self.commits += 1
 
 
+class FakeQdrantHit:
+    def __init__(self, id: str, payload: dict[str, Any], score: float = 1.0) -> None:
+        self.id = id
+        self.payload = payload
+        self.score = score
+
+
 class FakeQdrantClient:
+    """実際に格納・フィルタする偽クライアント。
+
+    呼び出しの記録（upserts/searches）だけだった従来の形に、実際の格納と
+    フィルタ照合を足した——レビューフロー（list_candidates など）は
+    search() が自分の upsert した中身を本当に返してくることに依存するため。
+
+    Actually stores and filters, beyond the old call-recording-only shape:
+    the review workflow (list_candidates etc.) depends on search() genuinely
+    returning what was upserted.
+    """
+
     def __init__(self) -> None:
         self.upserts: list[tuple[str, Any]] = []
         self.searches: list[str] = []
+        self._points: dict[str, dict[str, Any]] = {}
 
     def upsert(self, collection_name: str, points: Any) -> None:
         self.upserts.append((collection_name, points))
+        bucket = self._points.setdefault(collection_name, {})
+        for point in points:
+            bucket[point.id] = point
 
-    def search(self, collection_name: str, **kwargs):
+    def search(self, collection_name: str, limit: int = 10, query_filter=None, **kwargs):
         self.searches.append(collection_name)
-        return []
+        hits = []
+        for point in self._points.get(collection_name, {}).values():
+            if query_filter is not None and not all(
+                point.payload.get(cond.key) == cond.match.value for cond in query_filter.must
+            ):
+                continue
+            hits.append(FakeQdrantHit(point.id, dict(point.payload)))
+        return hits[:limit]
 
 
 QUERIES = {
@@ -244,6 +273,100 @@ def test_private_scope_requires_tenant():
     adapter = QdrantAdapter(embedder=HashEmbedder(), client=FakeQdrantClient())
     with pytest.raises(AdapterError, match="tenant"):
         adapter.invoke("search", {"text": "x", "scope": "private"})
+
+
+# --- 人の承認フロー（list_candidates / edit_candidate / decide_candidate） ---
+# --- human review workflow -------------------------------------------------
+
+def test_list_candidates_returns_only_pending_sorted_by_score():
+    adapter, _ = build_qdrant()
+    adapter.invoke("submit_candidate", {"knowledge": {"text": "低い方"},
+                                        "publicability_score": 10})
+    adapter.invoke("submit_candidate", {"knowledge": {"text": "高い方"},
+                                        "publicability_score": 90})
+
+    items = adapter.list_candidates()
+
+    assert [item["payload"]["text"] for item in items] == ["高い方", "低い方"]
+
+
+def test_list_candidates_is_not_an_action_templates_cannot_reach_it():
+    """@action を付けていない = invoke 経由（テンプレート相当）では呼べない。"""
+    adapter, _ = build_qdrant()
+    with pytest.raises(AdapterError):
+        adapter.invoke("list_candidates", {})
+
+
+def test_edit_candidate_rewrites_pending_content_and_recomputes_the_vector():
+    adapter, client = build_qdrant()
+    adapter.invoke("submit_candidate", {"knowledge": {"text": "下書き"}})
+    candidate_id = client.upserts[0][1][0].id
+
+    adapter.edit_candidate(candidate_id, text="書き直した内容")
+
+    edited = adapter.get_candidate(candidate_id)
+    assert edited["payload"]["text"] == "書き直した内容"
+    assert edited["payload"]["review_status"] == "pending"
+
+
+def test_edit_candidate_refuses_an_already_decided_one():
+    adapter, client = build_qdrant()
+    adapter.invoke("submit_candidate", {"knowledge": {"text": "x"}})
+    candidate_id = client.upserts[0][1][0].id
+    adapter.decide_candidate(candidate_id, approve=True, reviewer="sato")
+
+    with pytest.raises(AdapterError, match="見つかりません"):
+        adapter.edit_candidate(candidate_id, text="あとから直したい")
+
+
+def test_decide_candidate_approve_promotes_to_public_and_records_the_decision():
+    adapter, client = build_qdrant()
+    adapter.invoke("submit_candidate", {
+        "knowledge": {"text": "主要担当者への依存はスケジュールリスクになる"},
+        "publicability_score": 80,
+    })
+    candidate_id = client.upserts[0][1][0].id
+
+    result = adapter.decide_candidate(candidate_id, approve=True, reviewer="sato",
+                                      note="良い一般化")
+
+    assert result == {"id": candidate_id, "status": "approved", "promoted": True}
+    # 私有側：判断が記録され、消えていない
+    private = adapter.get_candidate(candidate_id)
+    assert private["payload"]["review_status"] == "approved"
+    assert private["payload"]["reviewed_by"] == "sato"
+    assert private["payload"]["review_note"] == "良い一般化"
+    assert private["payload"]["reviewed_at"]
+    # 公開側：複製され、審査用の項目は持ち込まない
+    public_collection, public_points = next(
+        (c, p) for c, p in client.upserts if c == "public_pmo_knowledge")
+    assert public_points[0].id == candidate_id
+    assert public_points[0].payload["text"] == "主要担当者への依存はスケジュールリスクになる"
+    assert "review_status" not in public_points[0].payload
+    assert public_points[0].payload["promoted_from"] == candidate_id
+    # 一覧からは外れる（pending ではなくなった）
+    assert candidate_id not in [item["id"] for item in adapter.list_candidates()]
+
+
+def test_decide_candidate_reject_records_but_never_writes_public():
+    adapter, client = build_qdrant()
+    adapter.invoke("submit_candidate", {"knowledge": {"text": "x"}})
+    candidate_id = client.upserts[0][1][0].id
+
+    result = adapter.decide_candidate(candidate_id, approve=False, reviewer="sato",
+                                      note="識別情報が残っている")
+
+    assert result == {"id": candidate_id, "status": "rejected", "promoted": False}
+    assert all(c != "public_pmo_knowledge" for c, _ in client.upserts)
+    rejected = adapter.get_candidate(candidate_id)
+    assert rejected["payload"]["review_status"] == "rejected"
+    assert rejected["payload"]["review_note"] == "識別情報が残っている"
+
+
+def test_decide_candidate_refuses_an_unknown_id():
+    adapter, _ = build_qdrant()
+    with pytest.raises(AdapterError, match="見つかりません"):
+        adapter.decide_candidate("nope", approve=True, reviewer="sato")
 
 
 def test_upsert_id_is_stable_across_runs():

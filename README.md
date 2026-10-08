@@ -269,6 +269,7 @@ aipmo agents run KEY                 # 役割AIに、いま任せる / hand a ta
 aipmo agents review [KEY --accept|--reject --note 理由]  # 成果を人が確かめた記録 / record a human review of a result
 aipmo wbs status                     # PMO AI 自身の開発 WBS の状況 / this project's own WBS
 aipmo wbs check                      # 同じ WBS の検証（証拠の欠け・循環）/ validate it
+aipmo knowledge [show|edit|approve|reject ID]  # ナレッジ公開候補のレビュー / review knowledge candidates
 aipmo doctor                         # 接続確認 / connection check
 pytest                               # 1015 件
 ```

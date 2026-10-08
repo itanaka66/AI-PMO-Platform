@@ -81,6 +81,44 @@ The same regardless of which one you pick:
 
 ---
 
+## 人間の承認フロー（レビュー・修正・公開）/ The human review workflow
+
+`submit_candidate` が約束する「人間が承認するレビュー」の実体。候補の
+一覧・修正・承認（公開）・却下は、CLI（`aipmo knowledge`）か Web 画面
+（「ナレッジ」）からだけ行える——アダプタ側のこれらのメソッドには
+`@action` を付けていないため、テンプレートからは絶対に呼べない。
+
+```bash
+aipmo knowledge                              # 承認待ちの一覧（score 降順）
+aipmo knowledge show ID                      # 候補の中身と判定の根拠
+aipmo knowledge edit ID --text "書き直した内容"  # 承認待ちのものだけ修正できる
+aipmo knowledge approve ID [--note メモ]      # 承認 → public コレクションへ複製
+aipmo knowledge reject ID [--note メモ]       # 却下（public には何も書かない）
+```
+
+承認・却下のどちらも、private 側のその行に「誰が・いつ・どう判断したか」
+（`reviewed_by` / `reviewed_at` / `review_note`）を書き足して残す。**消さない。**
+これが「人間の判断の記録」そのもの。承認したときだけ、審査用の項目を
+除いた内容を `public` コレクションへ複製する（`promoted_from` / `promoted_at`
+だけは出どころとして残す）。決定済みの候補は編集できない——判断の記録を
+あとから書き換えさせないため。
+
+This is the actual "human-approved review" that `submit_candidate` promises.
+Listing, editing, approving, and rejecting candidates only happens through
+the CLI (`aipmo knowledge`) or the web screen ("Knowledge") — the adapter
+methods behind this are not `@action`-decorated, so no template can ever
+call them.
+
+Both approving and rejecting append who decided what and when
+(`reviewed_by` / `reviewed_at` / `review_note`) onto the private record —
+never deleting it. That record is the recorded human decision. Only on
+approval is a copy, stripped of review-only fields, written to the `public`
+collection (keeping just `promoted_from` / `promoted_at` as provenance).
+An already-decided candidate cannot be edited — that would let a recorded
+decision be rewritten after the fact.
+
+---
+
 ## Qdrant
 
 ```yaml

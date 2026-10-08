@@ -52,6 +52,7 @@ from __future__ import annotations
 import threading
 import uuid
 from abc import abstractmethod
+from datetime import datetime, timezone
 from typing import Any
 
 from ..knowledge import score_publicability
@@ -265,3 +266,113 @@ class VectorStoreAdapter(Adapter):
             "publicability_score": score,
             "publicability_reasons": scored.reasons,
         }
+
+    # -- 人の承認フロー（@action を付けない＝テンプレートからは呼べない）/
+    # human review workflow (not @action-decorated: templates cannot reach these) ---
+    #
+    # submit_candidate の docstring が約束する「人間が承認するレビューの
+    # ワークフロー」の実体。CLI（aipmo knowledge）と Web 画面（/api/knowledge）
+    # だけがここを呼ぶ。設計判断 2（公開コレクションへの書き込みをアダプタが
+    # 拒否する）はテンプレート向けの `upsert()` だけに効く制約であって、この
+    # 先で human reviewer のために公開コレクションへ書くのはその制約の抜け穴
+    # ではなく、制約がそもそも想定している唯一の書き込み経路。
+    #
+    # This is the actual "human approves it in the promotion workflow" that
+    # submit_candidate's docstring promises. Only the CLI (`aipmo knowledge`)
+    # and the web screen (`/api/knowledge`) call these. Design decision 2
+    # (the adapter refuses public-collection writes) constrains `upsert()`
+    # alone; writing to the public collection below is not a loophole in that
+    # rule, it is the one write path the rule was always meant to allow.
+
+    def list_candidates(self, *, status: str = "pending", limit: int = 100) -> list[dict[str, Any]]:
+        """レビュー待ち（既定）または決定済みの候補を一覧する。publicability_score の降順。
+
+        Lists candidates by review status (pending by default), or already
+        decided ones, sorted by publicability_score descending.
+        """
+        result = self.search(text="", scope=PRIVATE, limit=limit,
+                             filters={"review_status": status}, min_score=0.0)
+        return sorted(
+            result["items"],
+            key=lambda item: item["payload"].get("publicability_score", 0.0),
+            reverse=True,
+        )
+
+    def get_candidate(self, candidate_id: str) -> dict[str, Any] | None:
+        """状態を問わず id で1件引く（一覧より広い limit で全状態を探す）。"""
+        for status in ("pending", "approved", "rejected"):
+            for item in self.list_candidates(status=status, limit=500):
+                if item["id"] == candidate_id:
+                    return item
+        return None
+
+    def edit_candidate(self, candidate_id: str, *, text: str | None = None,
+                       fields: dict[str, Any] | None = None) -> dict[str, Any]:
+        """レビュー待ちの候補の内容を人が書き換える。決定済みのものは編集できない
+        （判断の記録を後から書き換えさせないため）。
+
+        A human edits a pending candidate's content. Already-decided
+        candidates cannot be edited — that would let a recorded decision be
+        rewritten after the fact.
+        """
+        candidate = self._get_pending(candidate_id)
+        payload = dict(candidate["payload"])
+        if fields:
+            payload.update(fields)
+        if text is not None:
+            payload["text"] = text
+        collection = self._collection(PRIVATE)
+        vector = self._vector(payload.get("text"), None)
+        with self._lock:
+            self._upsert_backend(self._connect(), collection,
+                                 [{"id": candidate_id, "vector": vector, "payload": payload}])
+        return {"id": candidate_id, "payload": payload}
+
+    def decide_candidate(self, candidate_id: str, *, approve: bool, reviewer: str,
+                         note: str | None = None) -> dict[str, Any]:
+        """レビュー待ちの候補を承認（公開コレクションへ昇格）または却下する。
+
+        どちらも私有側のその行へ、誰が・いつ・どう判断したかを書き足して
+        残す——削除はしない。これが「人間の判断の記録」そのもの。承認した
+        場合だけ、審査用の項目（review_status・reviewed_by など）を除いた
+        内容を公開コレクションへ複製する。
+
+        Approves (promotes to the public collection) or rejects a pending
+        candidate. Either way, who decided what and when is written onto the
+        private record rather than deleted — that record is the recorded
+        human decision. Only on approval is a copy, stripped of the
+        review-only fields, written to the public collection.
+        """
+        candidate = self._get_pending(candidate_id)
+        now = datetime.now(timezone.utc).isoformat()
+        decided_payload = dict(candidate["payload"])
+        decided_payload["review_status"] = "approved" if approve else "rejected"
+        decided_payload["reviewed_by"] = reviewer
+        decided_payload["reviewed_at"] = now
+        if note:
+            decided_payload["review_note"] = note
+
+        private_collection = self._collection(PRIVATE)
+        vector = self._vector(decided_payload.get("text"), None)
+        with self._lock:
+            client = self._connect()
+            self._upsert_backend(client, private_collection,
+                                 [{"id": candidate_id, "vector": vector, "payload": decided_payload}])
+            if approve:
+                skip = {"review_status", "reviewed_by", "reviewed_at", "review_note",
+                        "publicability_score", "publicability_reasons"}
+                public_payload = {k: v for k, v in decided_payload.items() if k not in skip}
+                public_payload["promoted_from"] = candidate_id
+                public_payload["promoted_at"] = now
+                self._upsert_backend(client, self.public_collection,
+                                     [{"id": candidate_id, "vector": vector, "payload": public_payload}])
+        return {"id": candidate_id, "status": decided_payload["review_status"], "promoted": approve}
+
+    def _get_pending(self, candidate_id: str) -> dict[str, Any]:
+        for item in self.list_candidates(status="pending", limit=500):
+            if item["id"] == candidate_id:
+                return item
+        raise AdapterError(
+            f"{self.name}: レビュー待ちの候補が見つかりません（提出済み・未決定のものだけ対象です） "
+            f"/ no such pending candidate: {candidate_id}"
+        )

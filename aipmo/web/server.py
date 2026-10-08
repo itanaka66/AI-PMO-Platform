@@ -74,6 +74,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from ..adapters.base import AdapterError
 from ..dsl import loader
 from ..engine.context import RunContext
 from ..engine.runner import Engine, StepFailure
@@ -1787,6 +1788,87 @@ def create_app(
     ) -> dict[str, Any]:
         note = (payload or {}).get("note")
         return _decide_wbs_proposal(request, proposal_id, "rejected", role, note)
+
+    # -- ナレッジ公開候補のレビュー（人間の承認フロー）/ knowledge candidate review ---
+    #
+    # `vector_store.submit_candidate`（generalize_knowledge などのテンプレート）
+    # が私有コレクションに置いた、公開コレクションへの昇格待ちの候補を見る・直す・
+    # 承認・却下する。アダプタ側の list_candidates / edit_candidate /
+    # decide_candidate には @action を付けていないため、テンプレートからは
+    # 呼べない——この画面（と CLI の `aipmo knowledge`）だけが呼ぶ。
+    # 閲覧は viewer にも許し、修正・承認・却下は operator のみ
+    # （WBS 変更提案と同じ役割分離）。
+    #
+    # Reviews candidates a template (e.g. generalize_knowledge) placed in the
+    # private collection via `vector_store.submit_candidate`, awaiting
+    # promotion to the public one. The adapter's list_candidates /
+    # edit_candidate / decide_candidate are not @action-decorated, so no
+    # template can call them — only this screen (and the CLI's `aipmo
+    # knowledge`) do. Viewing is open to viewer; editing, approving, and
+    # rejecting require operator (the same split as WBS proposals).
+
+    def _knowledge_adapter_or_503(backend: str | None) -> Any:
+        name = backend or "vector_store"
+        if not engine.adapters.has(name):
+            raise HTTPException(
+                status_code=503,
+                detail=f"{name} adapter is not configured / {name} アダプタが設定されていません",
+            )
+        return engine.adapters.get(name)
+
+    @app.get("/api/knowledge", dependencies=[guard])
+    def list_knowledge_candidates(status: str = "pending", backend: str | None = None) -> dict[str, Any]:
+        adapter = _knowledge_adapter_or_503(backend)
+        items = adapter.list_candidates(status=status)
+        return {"items": items}
+
+    @app.get("/api/knowledge/{candidate_id}", dependencies=[guard])
+    def get_knowledge_candidate(candidate_id: str, backend: str | None = None) -> Any:
+        adapter = _knowledge_adapter_or_503(backend)
+        item = adapter.get_candidate(candidate_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="no such candidate")
+        return item
+
+    @app.post("/api/knowledge/{candidate_id}/edit")
+    def edit_knowledge_candidate(
+        candidate_id: str, payload: dict[str, Any], role: str = operator_guard,
+    ) -> Any:
+        adapter = _knowledge_adapter_or_503(payload.get("backend"))
+        try:
+            result = adapter.edit_candidate(candidate_id, text=payload.get("text"),
+                                            fields=payload.get("fields"))
+        except AdapterError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        logger.info("knowledge candidate edited: %s by %s", candidate_id, role)
+        return result
+
+    def _decide_knowledge_candidate(
+        candidate_id: str, *, approve: bool, payload: dict[str, Any], role: str,
+    ) -> Any:
+        adapter = _knowledge_adapter_or_503(payload.get("backend"))
+        try:
+            result = adapter.decide_candidate(candidate_id, approve=approve, reviewer=role,
+                                              note=payload.get("note"))
+        except AdapterError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        logger.info("knowledge candidate decided: %s %s by %s", candidate_id,
+                   result["status"], role)
+        return result
+
+    @app.post("/api/knowledge/{candidate_id}/approve")
+    def approve_knowledge_candidate(
+        candidate_id: str, payload: dict[str, Any] | None = None, role: str = operator_guard,
+    ) -> Any:
+        return _decide_knowledge_candidate(candidate_id, approve=True, payload=payload or {},
+                                           role=role)
+
+    @app.post("/api/knowledge/{candidate_id}/reject")
+    def reject_knowledge_candidate(
+        candidate_id: str, payload: dict[str, Any] | None = None, role: str = operator_guard,
+    ) -> Any:
+        return _decide_knowledge_candidate(candidate_id, approve=False, payload=payload or {},
+                                           role=role)
 
     # -- Project Digital Twin（読み取り専用） -------------------------------
     #

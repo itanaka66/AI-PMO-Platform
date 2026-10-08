@@ -1521,6 +1521,116 @@ def cmd_wbs_proposals(args: argparse.Namespace) -> int:
         return 1
 
 
+def _knowledge_adapter(args: argparse.Namespace) -> Any | None:
+    """ベクトルストア・アダプタを解決する。設定エラーなら None（呼び出し側が終了コード1にする）。"""
+    try:
+        config = load_config(Path(args.config))
+        engine = build_engine(config)
+    except ConfigError as exc:
+        print(f"設定エラー / config error: {exc}", file=sys.stderr)
+        return None
+    name = args.backend or "vector_store"
+    if not engine.adapters.has(name):
+        hint = (
+            " 論理名 vector_store は、ベクトルストアがちょうど1つ設定されているときだけ"
+            "使えます。複数設定している場合は --backend でバックエンド名"
+            "（qdrant・pgvector・chroma・milvus・weaviate のいずれか）を指定してください"
+            if name == "vector_store" else ""
+        )
+        print(f"設定エラー / config error: アダプタ '{name}' が設定されていません。{hint}",
+              file=sys.stderr)
+        return None
+    return engine.adapters.get(name)
+
+
+def cmd_knowledge(args: argparse.Namespace) -> int:
+    """ナレッジ公開候補のレビュー（人間の承認フロー）/ review workflow for knowledge candidates.
+
+    `generalize_knowledge` のようなテンプレートが `vector_store.submit_candidate`
+    で提出した、公開コレクションへの昇格待ちの候補を見る・直す・承認（公開）・却下する。
+    承認・却下は、どちらも私有コレクションのその行に「誰が・いつ・どう判断したか」を
+    書き足して残す——これが「人間の判断の記録」。
+
+    `aipmo knowledge list`              … 承認待ちの一覧（publicability_score の降順）
+    `aipmo knowledge show ID`           … 候補の中身
+    `aipmo knowledge edit ID --text …`  … 承認待ちの内容を書き直す（決定済みは不可）
+    `aipmo knowledge approve ID`        … 承認して公開コレクションへ複製する
+    `aipmo knowledge reject ID`         … 却下する（公開コレクションには書かない）
+
+    Reviews knowledge candidates a template like `generalize_knowledge` submitted via
+    `vector_store.submit_candidate`, awaiting promotion to the public collection. Both
+    approving and rejecting append who decided what and when onto the private record —
+    that is the recorded human decision.
+    """
+    from .adapters.base import AdapterError
+
+    adapter = _knowledge_adapter(args)
+    if adapter is None:
+        return 1
+    command = args.knowledge_command or "list"
+    by = args.by or __import__("getpass").getuser()
+
+    try:
+        if command == "list":
+            items = adapter.list_candidates(status=args.status or "pending")
+            label = {"pending": "承認待ち", "approved": "承認済み", "rejected": "却下済み"}.get(
+                args.status or "pending", args.status)
+            print(f"{label}のナレッジ候補 / knowledge candidates ({len(items)})")
+            for item in items:
+                payload = item["payload"]
+                text = (payload.get("text") or "")[:80]
+                print(f"  {item['id']}  score={payload.get('publicability_score', 0):.0f}"
+                      f"  level={payload.get('knowledge_level', '?')}\n      {text}")
+            if items:
+                print("\n中身を見る: aipmo knowledge show ID   /   承認: aipmo knowledge approve ID"
+                      "   /   却下: aipmo knowledge reject ID")
+            return 0
+
+        if not args.ref:
+            print("候補の id を指定してください / give the candidate id", file=sys.stderr)
+            return 1
+
+        if command == "show":
+            item = adapter.get_candidate(args.ref)
+            if item is None:
+                print(f"見つかりません / no such candidate: {args.ref}", file=sys.stderr)
+                return 1
+            payload = item["payload"]
+            print(f"{item['id']}  状態 {payload.get('review_status')}  "
+                  f"score={payload.get('publicability_score', 0):.0f}  "
+                  f"level={payload.get('knowledge_level', '?')}")
+            print(f"\n{payload.get('text') or ''}")
+            if payload.get("publicability_reasons"):
+                print("\n根拠 / reasons:")
+                for reason in payload["publicability_reasons"]:
+                    print(f"  - {reason}")
+            if payload.get("review_status") != "pending":
+                print(f"\n判断 / decision: {payload.get('reviewed_by')}"
+                      f"（{payload.get('reviewed_at')}）"
+                      + (f" — {payload['review_note']}" if payload.get("review_note") else ""))
+            return 0
+
+        if command == "edit":
+            if not args.text:
+                print("--text で新しい内容を渡してください / give the new text with --text",
+                      file=sys.stderr)
+                return 1
+            adapter.edit_candidate(args.ref, text=args.text)
+            print(f"書き直しました / edited: {args.ref}")
+            return 0
+
+        approve = command == "approve"
+        adapter.decide_candidate(args.ref, approve=approve, reviewer=by, note=args.note)
+        if approve:
+            print(f"承認して公開コレクションへ複製しました / approved and promoted: {args.ref}")
+        else:
+            print(f"却下しました（公開コレクションには書いていません）/ rejected: {args.ref}")
+        return 0
+    except AdapterError as exc:
+        print(f"{exc}", file=sys.stderr)
+        return 1
+
+
 def cmd_demo(args: argparse.Namespace) -> int:
     """デモ用のサンプルデータを台帳（DB）に入れる／消す／確かめる（docs/DEMO.md）。
 
@@ -2285,6 +2395,23 @@ def main(argv: list[str] | None = None) -> int:
     p_props.add_argument("--force", action="store_true",
                          help="すでに反映した提案でも、もう一度反映する（apply）")
     p_wbs.set_defaults(func=cmd_wbs)
+
+    p_knowledge = sub.add_parser(
+        "knowledge", help="ナレッジ公開候補のレビュー（一覧・修正・承認・却下）"
+                          " / review knowledge candidates (list/edit/approve/reject)")
+    p_knowledge.add_argument("knowledge_command", nargs="?",
+                             choices=("list", "show", "edit", "approve", "reject"),
+                             default="list")
+    p_knowledge.add_argument("ref", nargs="?", help="候補の id")
+    p_knowledge.add_argument("--backend",
+                             help="使うアダプタ名（既定は論理名 vector_store。"
+                                  "複数のベクトルストアを設定している場合に指定）")
+    p_knowledge.add_argument("--status", choices=("pending", "approved", "rejected"),
+                             help="list で見る状態（既定 pending）")
+    p_knowledge.add_argument("--text", help="edit で書き直す新しい内容")
+    p_knowledge.add_argument("--by", help="決めた人の名前（既定はOSのユーザー名）")
+    p_knowledge.add_argument("--note", help="承認・却下のメモ")
+    p_knowledge.set_defaults(func=cmd_knowledge)
 
     p_setup = sub.add_parser("setup", help="初回セットアップ / first-run setup")
     p_setup.add_argument("--dir", default=".", help="設定の出力先 / where to write config")

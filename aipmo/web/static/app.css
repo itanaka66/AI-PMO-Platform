@@ -238,6 +238,21 @@ h2:first-of-type { margin-top: 4px; }
   font-size: 13px;
 }
 
+.knowledge-text {
+  width: 100%;
+  min-height: 5em;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  resize: vertical;
+}
+.knowledge-text[readonly] { background: var(--ground); }
+
 .btn {
   min-height: var(--tap);
   padding: 0 16px;

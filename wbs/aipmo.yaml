@@ -757,4 +757,17 @@ wbs:
             - "aipmo/web/static/app.js::function renderRunTimeline"
             - "aipmo/web/server.py::def _do_run"
           notes: "実行履歴（GET /api/runs、既存）に finished_at を追加し、開始〜終了の時刻から帯の位置・幅を計算。成功（緑）・失敗（赤）・実行中（いまへ伸びる縞模様の帯、prefers-reduced-motion で静止）を同じ時間軸に並べ、時刻を持たない処理予定（待ち行列）は軸の外に番号付きで列挙。新しいエンドポイントは追加していない（既存の /api/runs がそのまま使える）。実ブラウザで4状態すべての見た目を確認済み。ユーザー確認：時系列（タイムライン・ガント風）を選択（3択のうち）"
+        - id: "6.38"
+          name: "人間の判断（ナレッジ公開候補の承認）を記録・表示・修正できるようにする"
+          status: done
+          effort: 5
+          priority: Low
+          done_on: 2026-10-08
+          evidence:
+            - "aipmo/adapters/vector_store.py::def decide_candidate"
+            - "aipmo/cli.py::def cmd_knowledge"
+            - "aipmo/web/server.py::def list_knowledge_candidates"
+            - "tests/test_knowledge_review_cli.py"
+            - "tests/test_knowledge_review_web.py"
+          notes: "vector_store.submit_candidate の docstring が約束していた『人間が承認するレビューのワークフロー』が未実装だったので実装した（ユーザーに確認し、この承認フローのことだと確定）。list_candidates/edit_candidate/decide_candidate はアダプタに追加したが @action を付けていないため、テンプレートからは呼べない（adapter.actions() で確認）——CLI（aipmo knowledge list/show/edit/approve/reject）と Web 画面（ナレッジ、/api/knowledge）だけが呼ぶ。承認・却下はどちらも private 側のその行に reviewed_by/reviewed_at/review_note を書き足して残す（削除しない＝これが人間の判断の記録）。承認したときだけ、審査用の項目を除いた内容を public コレクションへ複製。決定済みの候補は編集できない。CLIもユーザー確認のうえ対象に含めた。実ブラウザで一覧・編集・承認の流れを確認"
 
