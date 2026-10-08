@@ -2497,6 +2497,144 @@ async function refreshProposals() {
   }
 }
 
+/* ---------- ナレッジ公開候補のレビュー / knowledge candidate review -------
+ *
+ * generalize_knowledge のようなテンプレートが vector_store.submit_candidate
+ * で私有コレクションに置いた、公開コレクションへの昇格待ちの候補。
+ * 承認・却下・内容の修正はここでだけ行える（テンプレートからは呼べない
+ * アダプタのメソッドを、この画面と CLI の aipmo knowledge だけが呼ぶ）。
+ *
+ * Candidates a template like generalize_knowledge placed in the private
+ * collection via vector_store.submit_candidate, awaiting promotion. Only
+ * this screen and the CLI's `aipmo knowledge` can approve, reject, or edit
+ * them — the adapter methods behind this are not reachable from a template.
+ */
+
+function renderKnowledge(items) {
+  const host = $("knowledge");
+  host.replaceChildren();
+
+  if (!items.length) {
+    host.append(empty(t("web_no_knowledge", "No pending knowledge candidates.")));
+    return;
+  }
+  for (const item of items) host.append(knowledgeCard(item));
+}
+
+function knowledgeCard(item) {
+  const payload = item.payload || {};
+  const card = document.createElement("div");
+  card.className = "proposal knowledge-card";
+
+  const head = document.createElement("div");
+  head.className = "card-head";
+  const score = document.createElement("span");
+  score.className = "tag tier";
+  score.textContent = `score ${Math.round(payload.publicability_score || 0)}`;
+  head.append(score);
+  if (payload.knowledge_level != null) {
+    head.append(el("span", "tag option", `level ${payload.knowledge_level}`));
+  }
+  card.append(head);
+
+  const textArea = document.createElement("textarea");
+  textArea.className = "knowledge-text";
+  textArea.value = payload.text || "";
+  textArea.readOnly = !canRun;
+  card.append(textArea);
+
+  if (payload.publicability_reasons && payload.publicability_reasons.length) {
+    card.append(jsonBlock(t("web_knowledge_reasons", "reasons"), payload.publicability_reasons));
+  }
+
+  if (canRun) {
+    card.append(knowledgeActions(item.id, textArea));
+  }
+  return card;
+}
+
+function knowledgeActions(id, textArea) {
+  const wrap = document.createElement("div");
+  wrap.className = "proposal-actions";
+
+  const note = document.createElement("input");
+  note.type = "text";
+  note.className = "note-input";
+  note.placeholder = t("web_proposal_note_placeholder", "Optional note");
+
+  const save = document.createElement("button");
+  save.className = "btn";
+  save.type = "button";
+  save.textContent = t("web_knowledge_save", "Save edit");
+  save.addEventListener("click", () => editKnowledgeCandidate(id, textArea.value, wrap));
+
+  const approve = document.createElement("button");
+  approve.className = "btn btn-approve";
+  approve.type = "button";
+  approve.textContent = t("web_approve", "Approve");
+  approve.addEventListener("click", () => decideKnowledgeCandidate(id, "approve", note.value, wrap));
+
+  const reject = document.createElement("button");
+  reject.className = "btn btn-reject";
+  reject.type = "button";
+  reject.textContent = t("web_reject", "Reject");
+  reject.addEventListener("click", () => decideKnowledgeCandidate(id, "reject", note.value, wrap));
+
+  wrap.append(save, note, approve, reject);
+  return wrap;
+}
+
+async function editKnowledgeCandidate(id, text, wrap) {
+  const buttons = wrap.querySelectorAll("button");
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    await api(`/api/knowledge/${encodeURIComponent(id)}/edit`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    toast(t("web_knowledge_saved", "Saved."));
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
+async function decideKnowledgeCandidate(id, decision, note, wrap) {
+  const buttons = wrap.querySelectorAll("button");
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    await api(`/api/knowledge/${encodeURIComponent(id)}/${decision}`, {
+      method: "POST",
+      body: JSON.stringify({ note: note || null }),
+    });
+    toast(decision === "approve"
+      ? t("web_knowledge_approved", "Approved and published.")
+      : t("web_proposal_rejected", "Rejected."));
+    await refreshKnowledge();
+  } catch (error) {
+    toast(error.message, "error");
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
+async function refreshKnowledge() {
+  // ベクトルストアが未設定の構成もある（この機能を使わないテナント）。
+  // その場合は 503 が返るので、エラーではなく「何も無い」として扱う。
+  //
+  // Some deployments have no vector store configured (not using this
+  // feature). That returns 503, treated as "nothing to show" rather than
+  // an error.
+  try {
+    const { items } = await api("/api/knowledge");
+    $("h-knowledge").hidden = false;
+    renderKnowledge(items);
+  } catch (error) {
+    $("h-knowledge").hidden = true;
+    $("knowledge").replaceChildren();
+  }
+}
+
 async function refreshHealth() {
   try {
     const { adapters } = await api("/api/health");
@@ -2518,6 +2656,7 @@ async function boot() {
     writableTrackers = new Set(session.writeback || []);
     $("h-pmo").textContent = t("web_pmo", "PMO Core");
     $("h-proposals").textContent = t("web_proposals", "WBS Proposals");
+    $("h-knowledge").textContent = t("web_knowledge", "Knowledge");
     $("h-templates").textContent = t("web_templates", "Templates");
     $("h-runs").textContent = t("web_runs", "Runs");
 
@@ -2526,6 +2665,7 @@ async function boot() {
     await refreshRuns();
     await refreshPmo();
     await refreshProposals();
+    await refreshKnowledge();
     await refreshWbs();
     // 受信箱が使える構成（PMO Core の台帳がある）なら、タブで切り替える。無ければ従来どおり。
     // With a PMO ledger the sections become tabs and the inbox leads; otherwise nothing changes.
@@ -2554,6 +2694,7 @@ function refreshEverything() {
   refreshRuns().catch(() => {});
   refreshPmo().catch(() => {});
   refreshProposals().catch(() => {});
+  refreshKnowledge().catch(() => {});
   refreshWbs();
   if (tabsEnabled) {
     refreshInbox(); refreshTasks(false); refreshReviews(); refreshMembers(); refreshIntegrations();
