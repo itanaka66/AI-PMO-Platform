@@ -346,6 +346,25 @@ function updateRunDialog(record) {
   }
 }
 
+function renderRunProgressQueue(status, selfRunId) {
+  const list = $("run-progress-queue");
+  const rows = [];
+  if (status.running) {
+    rows.push({ id: status.running.id, state: "running", label: status.running.template });
+  }
+  status.waiting.forEach((item, index) => {
+    rows.push({ id: item.id, state: "waiting", label: `${index + 1}. ${item.template}` });
+  });
+  list.replaceChildren(...rows.map((row) => {
+    const li = document.createElement("li");
+    li.dataset.state = row.state;
+    if (row.id === selfRunId) li.dataset.self = "true";
+    li.textContent = row.label;
+    return li;
+  }));
+  list.hidden = rows.length === 0;
+}
+
 async function watchRun(runId) {
   const dialog = $("run-progress");
   const supportsDialog = dialog && typeof dialog.showModal === "function";
@@ -375,9 +394,17 @@ async function watchRun(runId) {
         return record;
       }
       updateRunDialog(record);
+      try {
+        renderRunProgressQueue(await api("/api/queue"), runId);
+      } catch (error) {
+        // キュー一覧が読めなくても、本来の進捗表示は続ける。
+        // A failed queue read never interrupts the run's own progress.
+      }
     }
   } finally {
     if (supportsDialog && dialog.open) dialog.close();
+    $("run-progress-queue").replaceChildren();
+    $("run-progress-queue").hidden = true;
   }
 }
 
