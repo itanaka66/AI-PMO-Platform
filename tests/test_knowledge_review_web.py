@@ -98,6 +98,34 @@ def test_get_unknown_candidate_is_404(world):
     assert client.get("/api/knowledge/nope", headers=operator()).status_code == 404
 
 
+def test_stats_tally_similar_candidates_human_and_llm_decisions(world):
+    client, adapter, qdrant_client = world
+    for text, verdict, approve in [("似た課題A", "ok", True), ("似た課題B", "needs_fix", False)]:
+        adapter.invoke("submit_candidate", {"knowledge": {"text": text, "llm_verdict": verdict}})
+        cid = qdrant_client.upserts[-1][1][0].id
+        adapter.decide_candidate(cid, approve=approve, reviewer="sato")
+    submit(adapter, "いま判断する候補")
+    pending_id = qdrant_client.upserts[-1][1][0].id
+
+    response = client.get(f"/api/knowledge/{pending_id}/stats", headers=viewer())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_similar"] == 2
+    assert body["human_decisions"] == {
+        "approved": {"count": 1, "percent": 50.0},
+        "rejected": {"count": 1, "percent": 50.0},
+    }
+    assert body["llm_decisions"] == {
+        "ok": {"count": 1, "percent": 50.0},
+        "needs_fix": {"count": 1, "percent": 50.0},
+    }
+
+
+def test_stats_for_unknown_candidate_is_404(world):
+    client, _, _ = world
+    assert client.get("/api/knowledge/nope/stats", headers=operator()).status_code == 404
+
+
 def test_edit_rewrites_pending_content(world):
     client, adapter, qdrant_client = world
     submit(adapter, "下書き")

@@ -117,6 +117,35 @@ collection (keeping just `promoted_from` / `promoted_at` as provenance).
 An already-decided candidate cannot be edited — that would let a recorded
 decision be rewritten after the fact.
 
+### 判断の参考情報（似た過去の候補の内訳）/ Reference stats for the decision
+
+承認待ちの候補を見るとき（`aipmo knowledge show ID`・Web の「ナレッジ」）、
+テキストが似た過去の候補から、人間がどう判断したか・LLM がどう判定したか
+（`llm_verdict`。自己学習サイクルなどが付けたときだけ存在する）の内訳を
+件数・割合つきで一緒に表示する。選択肢は承認/却下の2択に決め打たない
+——実際に `review_status` / `llm_verdict` に現れた値をそのまま集計するので、
+3択以上でも自然文の指示がそのまま値でも同じように働く。決定済みの候補
+には出さない（判断はもう終わっているので、参考情報は不要）。
+
+```bash
+aipmo knowledge show ID
+# ...
+# 参考 / reference — 似た過去の候補 4 件
+#   人間の判断 / human decisions:
+#     approved: 3 件 (75.0%)
+#     rejected: 1 件 (25.0%)
+#   LLM の判断 / LLM verdicts:
+#     ok: 3 件 (75.0%)
+#     needs_fix: 1 件 (25.0%)
+```
+
+Shown when viewing a pending candidate (`aipmo knowledge show ID` / the web
+"Knowledge" screen): among past candidates with similar text, how humans
+decided and how an LLM verdicted (`llm_verdict`, present only when something
+like the self-learning cycle set it) — counts and percentages, never
+hard-coded to an approve/reject pair. Not shown on an already-decided
+candidate, since there is nothing left to reference it for.
+
 ---
 
 ## 自己学習サイクル（ローカル LLM・自己判断・別モデル検証）/ The self-learning cycle

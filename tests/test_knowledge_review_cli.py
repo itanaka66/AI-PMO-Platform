@@ -71,6 +71,35 @@ def test_show_unknown_id_fails_cleanly(tmp_path, monkeypatch, capsys):
     assert "見つかりません" in capsys.readouterr().err
 
 
+def test_show_a_pending_candidate_prints_reference_stats_from_similar_ones(tmp_path, monkeypatch, capsys):
+    config, adapter, client = cli_world(tmp_path, monkeypatch)
+    for text, verdict, approve in [("似た課題A", "ok", True), ("似た課題B", "needs_fix", False)]:
+        adapter.invoke("submit_candidate", {"knowledge": {"text": text, "llm_verdict": verdict}})
+        cid = client.upserts[-1][1][0].id
+        adapter.decide_candidate(cid, approve=approve, reviewer="sato")
+    adapter.invoke("submit_candidate", {"knowledge": {"text": "いま判断する候補"}})
+    pending_id = client.upserts[-1][1][0].id
+
+    assert cli.main(["--config", str(config), "knowledge", "show", pending_id]) == 0
+    out = capsys.readouterr().out
+    assert "参考" in out and "似た過去の候補 2 件" in out
+    assert "approved: 1 件" in out and "rejected: 1 件" in out
+    assert "ok: 1 件" in out and "needs_fix: 1 件" in out
+
+
+def test_show_a_decided_candidate_shows_the_decision_not_reference_stats(tmp_path, monkeypatch, capsys):
+    """すでに決定済みの候補には『今から判断する』参考情報は要らない。"""
+    config, adapter, client = cli_world(tmp_path, monkeypatch)
+    submit(adapter, "決定済みの候補")
+    candidate_id = client.upserts[0][1][0].id
+    adapter.decide_candidate(candidate_id, approve=True, reviewer="sato")
+
+    assert cli.main(["--config", str(config), "knowledge", "show", candidate_id]) == 0
+    out = capsys.readouterr().out
+    assert "判断 / decision" in out
+    assert "参考" not in out
+
+
 def test_edit_requires_text(tmp_path, monkeypatch, capsys):
     config, adapter, client = cli_world(tmp_path, monkeypatch)
     submit(adapter, "下書き")

@@ -1587,6 +1587,23 @@ def _knowledge_adapter(args: argparse.Namespace) -> Any | None:
     return engine.adapters.get(name)
 
 
+def _print_knowledge_reference_stats(adapter: Any, text: str, candidate_id: str) -> None:
+    """判断の参考情報：似た過去の候補で、人は／LLM はどう判断したか（WBS 6.40）。"""
+    stats = adapter.similar_candidates_stats(text, exclude_id=candidate_id)
+    print(f"\n参考 / reference — 似た過去の候補 {stats['total_similar']} 件")
+    if not stats["human_decisions"] and not stats["llm_decisions"]:
+        print("  （似た候補の判断記録はまだありません）")
+        return
+    if stats["human_decisions"]:
+        print("  人間の判断 / human decisions:")
+        for label, s in stats["human_decisions"].items():
+            print(f"    {label}: {s['count']} 件 ({s['percent']}%)")
+    if stats["llm_decisions"]:
+        print("  LLM の判断 / LLM verdicts:")
+        for label, s in stats["llm_decisions"].items():
+            print(f"    {label}: {s['count']} 件 ({s['percent']}%)")
+
+
 def cmd_knowledge(args: argparse.Namespace) -> int:
     """ナレッジ公開候補のレビュー（人間の承認フロー）/ review workflow for knowledge candidates.
 
@@ -1652,6 +1669,8 @@ def cmd_knowledge(args: argparse.Namespace) -> int:
                 print(f"\n判断 / decision: {payload.get('reviewed_by')}"
                       f"（{payload.get('reviewed_at')}）"
                       + (f" — {payload['review_note']}" if payload.get("review_note") else ""))
+            else:
+                _print_knowledge_reference_stats(adapter, payload.get("text") or "", item["id"])
             return 0
 
         if command == "edit":

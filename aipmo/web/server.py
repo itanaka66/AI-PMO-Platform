@@ -1875,6 +1875,16 @@ def create_app(
             raise HTTPException(status_code=404, detail="no such candidate")
         return item
 
+    @app.get("/api/knowledge/{candidate_id}/stats", dependencies=[guard])
+    def knowledge_candidate_stats(candidate_id: str, backend: str | None = None) -> Any:
+        """判断の参考情報：似た過去の候補で、人は／LLM はどう判断したか（WBS 6.40）。"""
+        adapter = _knowledge_adapter_or_503(backend)
+        item = adapter.get_candidate(candidate_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="no such candidate")
+        return adapter.similar_candidates_stats(item["payload"].get("text") or "",
+                                                exclude_id=candidate_id)
+
     @app.post("/api/knowledge/{candidate_id}/edit")
     def edit_knowledge_candidate(
         candidate_id: str, payload: dict[str, Any], role: str = operator_guard,

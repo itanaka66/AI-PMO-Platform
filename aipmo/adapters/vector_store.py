@@ -370,6 +370,53 @@ class VectorStoreAdapter(Adapter):
                                      [{"id": candidate_id, "vector": vector, "payload": public_payload}])
         return {"id": candidate_id, "status": decided_payload["review_status"], "promoted": approve}
 
+    def similar_candidates_stats(self, text: str, *, exclude_id: str | None = None,
+                                 limit: int = 50) -> dict[str, Any]:
+        """似た過去の候補から、人間の判断・LLM の判断の内訳を集める。
+
+        人がいま目の前の候補を判断するときの参考情報（WBS 6.40）。人間の
+        判断は `review_status`（決定済みのものだけ。pending は「まだ判断が
+        無い」なので数えない）、LLM の判断は `llm_verdict`（自己学習サイクル
+        などが付けたときだけ存在する。無ければ全体が 0 件になる——それは
+        「LLM の判断が記録されていない」という正直な結果であって、エラーでは
+        ない）。選択肢は固定の2択に決め打たない：実際に現れた値をそのまま
+        集計するので、3択以上でも自然文の指示がそのまま値でも同じように働く。
+        `@action` を付けていないので、テンプレートからは呼べない。
+
+        Reference stats for the human deciding the candidate in front of them
+        now. Human decisions come from `review_status` (decided rows only —
+        `pending` has no decision yet to count). LLM decisions come from
+        `llm_verdict` when present (e.g. set by the self-learning cycle);
+        absent entirely, this is zero, which honestly means "no LLM verdict
+        was recorded," not an error. Options are never hard-coded to a fixed
+        pair: whatever values actually occur are tallied as they are, so
+        three-or-more choices or free-text instructions work the same way.
+        Not `@action`-decorated — unreachable from a template.
+        """
+        collection = self._collection(PRIVATE)
+        query_vector = self._vector(text, None)
+        with self._lock:
+            hits = self._search_backend(self._connect(), collection, query_vector, limit, None, 0.0)
+        items = [h for h in hits if h["id"] != exclude_id and h["payload"].get("review_status")]
+
+        def tally(field: str, *, exclude: frozenset[str] = frozenset()) -> dict[str, dict[str, Any]]:
+            counts: dict[str, int] = {}
+            for item in items:
+                value = item["payload"].get(field)
+                if value and value not in exclude:
+                    counts[value] = counts.get(value, 0) + 1
+            decided = sum(counts.values())
+            return {
+                key: {"count": n, "percent": round(100 * n / decided, 1) if decided else 0.0}
+                for key, n in sorted(counts.items(), key=lambda kv: -kv[1])
+            }
+
+        return {
+            "total_similar": len(items),
+            "human_decisions": tally("review_status", exclude=frozenset({"pending"})),
+            "llm_decisions": tally("llm_verdict"),
+        }
+
     def _get_pending(self, candidate_id: str) -> dict[str, Any]:
         for item in self.list_candidates(status="pending", limit=500):
             if item["id"] == candidate_id:
