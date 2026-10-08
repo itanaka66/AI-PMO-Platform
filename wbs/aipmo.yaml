@@ -784,4 +784,17 @@ wbs:
             - "tests/test_self_learning.py"
             - "tests/test_learning_web.py"
           notes: "ユーザーに2点を事前確認：(1) 課題創出はデモ/練習用の架空の課題のみ（実トラッカーには書かない）、(2) RAGへの自動公開は既定オフで、運用者がUIチェックボックス（Webの『ナレッジ』欄・aipmo learning enable）で明示的に『包括的に信用する』と選んだときだけ、かついつでも無効化できる、という条件で合意。self_learning_cycle テンプレートが trigger: schedule で aipmo schedule が繰り返す：ローカル LLM（profile: self_learner）が架空課題を作り自己判断→別のローカル LLM（profile: self_verifier）が verdict: ok/needs_fix で検証→ok のときだけ vector_store.submit_candidate で提出（WBS 6.38 の承認待ち private 行として）。aipmo/self_learning.py の run_listener は、テンプレート名が self_learning_cycle のときだけ・制御の文書の learning_trust_rag が有効なときだけ、自動で decide_candidate(approve=True) を呼ぶ（ほかの経路の候補には一切触れない）。EchoProvider で全4ステップ・when分岐（ok/needs_fix）・自動承認の両方を手動で通し確認"
+        - id: "6.40"
+          name: "人間が判断する時の参考情報（類似課題の人間判断・LLM判断の件数・割合）を表示"
+          status: done
+          effort: 2
+          priority: Low
+          depends_on: ["6.38", "6.39"]
+          done_on: 2026-10-08
+          evidence:
+            - "aipmo/adapters/vector_store.py::def similar_candidates_stats"
+            - "aipmo/cli.py::def _print_knowledge_reference_stats"
+            - "aipmo/web/server.py::def knowledge_candidate_stats"
+            - "tests/test_data_adapters.py::test_similar_candidates_stats_tallies_human_and_llm_decisions"
+          notes: "ユーザーに事前確認：(1) 表示先は『人間判断が必要な時』全般という回答だったが、人間の判断とLLMの判断が両方存在するのはナレッジ候補の承認（WBS 6.38・6.39）だけなので、他の承認画面（WBS提案・判断ログ）はLLM判断という概念自体が無く対象外とした、と明示した上で実装。(2) 『人間判断a/b』『LLM判断a/b』は承認/却下などの固定2択ではなく『承認却下、及び他の選択肢、もしくは自然言語での指示』という回答だったため、固定の2値に決め打たず、実際に review_status / llm_verdict に現れた値をそのまま集計する設計にした（3択以上でも同じように動く）。similar_candidates_stats はテキストでベクトル検索した類似候補（review_status を持つ行だけ＝候補扱いのもの）から、pending を除いた human_decisions と、記録があれば llm_decisions（self_learning_cycle が llm_verdict を付与）を件数・%で集計。@action を付けていないためテンプレートからは呼べない。承認待ちの候補を見るときだけ表示（決定済みには出さない）。self_learning_cycle テンプレートの submit ステップに llm_verdict フィールドを追加。実ブラウザで表示を確認"
 

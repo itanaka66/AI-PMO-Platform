@@ -2547,10 +2547,50 @@ function knowledgeCard(item) {
     card.append(jsonBlock(t("web_knowledge_reasons", "reasons"), payload.publicability_reasons));
   }
 
+  card.append(knowledgeReferenceStats(item.id));
+
   if (canRun) {
     card.append(knowledgeActions(item.id, textArea));
   }
   return card;
+}
+
+/* 判断の参考情報：似た過去の候補で、人は／LLM はどう判断したか（WBS 6.40）。
+ * いま判断しようとしている人のために、カードを開いたときに読み込む。
+ *
+ * Reference stats for the person about to decide: how similar past
+ * candidates were decided, by a human and by an LLM verdict when recorded.
+ * Fetched as soon as the card renders. */
+function knowledgeReferenceStats(id) {
+  const box = el("div", "knowledge-stats");
+  box.textContent = t("web_knowledge_stats_loading", "Loading reference stats…");
+  api(`/api/knowledge/${encodeURIComponent(id)}/stats`).then((stats) => {
+    box.replaceChildren();
+    const head = el("div", "knowledge-stats-head",
+      t("web_knowledge_stats_title", "Reference: {n} similar past candidates")
+        .replace("{n}", String(stats.total_similar)));
+    box.append(head);
+    if (!Object.keys(stats.human_decisions).length && !Object.keys(stats.llm_decisions).length) {
+      box.append(el("div", "card-note", t("web_knowledge_stats_none", "No decisions on similar candidates yet.")));
+      return;
+    }
+    if (Object.keys(stats.human_decisions).length) {
+      box.append(knowledgeStatsRow(t("web_knowledge_stats_human", "Human decisions"), stats.human_decisions));
+    }
+    if (Object.keys(stats.llm_decisions).length) {
+      box.append(knowledgeStatsRow(t("web_knowledge_stats_llm", "LLM verdicts"), stats.llm_decisions));
+    }
+  }).catch(() => { box.replaceChildren(); });
+  return box;
+}
+
+function knowledgeStatsRow(label, breakdown) {
+  const row = el("div", "knowledge-stats-row");
+  row.append(el("span", "knowledge-stats-label", label));
+  for (const [key, s] of Object.entries(breakdown)) {
+    row.append(el("span", "tag option", `${key}: ${s.count} (${s.percent}%)`));
+  }
+  return row;
 }
 
 function knowledgeActions(id, textArea) {

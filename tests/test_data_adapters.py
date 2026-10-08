@@ -376,6 +376,64 @@ def test_decide_candidate_refuses_an_unknown_id():
         adapter.decide_candidate("nope", approve=True, reviewer="sato")
 
 
+# --- 判断の参考情報（similar_candidates_stats）/ decision reference stats ---
+
+def test_similar_candidates_stats_tallies_human_and_llm_decisions():
+    adapter, client = build_qdrant()
+    for text, verdict, decision in [
+        ("似た課題A", "ok", "approved"),
+        ("似た課題B", "ok", "approved"),
+        ("似た課題C", "needs_fix", "rejected"),
+    ]:
+        adapter.invoke("submit_candidate", {"knowledge": {"text": text, "llm_verdict": verdict}})
+        cid = client.upserts[-1][1][0].id
+        adapter.decide_candidate(cid, approve=(decision == "approved"), reviewer="sato")
+    # まだ判断されていない候補（pending）は human_decisions には数えない
+    adapter.invoke("submit_candidate", {"knowledge": {"text": "似た課題D", "llm_verdict": "ok"}})
+
+    stats = adapter.similar_candidates_stats("似た課題の判断")
+
+    assert stats["total_similar"] == 4
+    assert stats["human_decisions"] == {
+        "approved": {"count": 2, "percent": 66.7},
+        "rejected": {"count": 1, "percent": 33.3},
+    }
+    assert stats["llm_decisions"] == {
+        "ok": {"count": 3, "percent": 75.0},
+        "needs_fix": {"count": 1, "percent": 25.0},
+    }
+
+
+def test_similar_candidates_stats_excludes_the_given_id():
+    adapter, client = build_qdrant()
+    adapter.invoke("submit_candidate", {"knowledge": {"text": "この候補自身"}})
+    self_id = client.upserts[-1][1][0].id
+
+    stats = adapter.similar_candidates_stats("この候補自身", exclude_id=self_id)
+
+    assert stats["total_similar"] == 0
+
+
+def test_similar_candidates_stats_with_no_history_is_all_zero():
+    adapter, _ = build_qdrant()
+    stats = adapter.similar_candidates_stats("まだ何も無い")
+    assert stats == {"total_similar": 0, "human_decisions": {}, "llm_decisions": {}}
+
+
+def test_similar_candidates_stats_ignores_non_candidate_private_knowledge():
+    """`upsert` で直接入れた（review_status の無い）行は候補ではない。"""
+    adapter, _ = build_qdrant()
+    adapter.invoke("upsert", {"documents": [{"text": "候補ではない普通のナレッジ"}]})
+    stats = adapter.similar_candidates_stats("候補ではない")
+    assert stats["total_similar"] == 0
+
+
+def test_similar_candidates_stats_is_not_an_action():
+    adapter, _ = build_qdrant()
+    with pytest.raises(AdapterError):
+        adapter.invoke("similar_candidates_stats", {"text": "x"})
+
+
 def test_upsert_id_is_stable_across_runs():
     """同じ冪等キーなら同じ point ID になる = 再実行で重複しない。"""
     ids = []

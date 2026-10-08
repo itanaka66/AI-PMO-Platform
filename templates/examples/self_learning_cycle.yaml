@@ -78,5 +78,6 @@ steps:
           判断: {{ steps.self_judge.output }}
           検証した理由: {{ steps.verify.output.reason }}
         source: self_learning
+        llm_verdict: "{{ steps.verify.output.verdict }}"   # 人がレビューするときの参考（WBS 6.40）
       knowledge_level: 3
       idempotency_key: "self_learning:{{ run.id }}"
