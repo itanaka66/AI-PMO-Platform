@@ -6,6 +6,7 @@ Opening a listener makes auth and path handling the things worth testing.
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,27 @@ def client(templates: Path) -> TestClient:
 
 def auth(client: TestClient) -> dict[str, str]:
     return {"x-aipmo-token": TOKEN}
+
+def run_and_wait(client: TestClient, headers: dict[str, str], path: str,
+                  timeout: float = 5.0) -> dict:
+    """テンプレートを実行させ、待ち行列のワーカーが終えるまで待って最終の行を返す。
+
+    `/api/runs` はすぐに `status: queued` を返すだけなので（本物の実行は
+    1本のワーカーが待ち行列からさばく）、完了を見たいテストはここで待つ。
+
+    `/api/runs` now returns `status: queued` immediately — the actual run
+    happens on the single-worker queue — so tests that care about the
+    finished record poll for it here.
+    """
+    started = client.post("/api/runs", headers=headers, json={"path": path}).json()
+    run_id = started["id"]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        record = client.get(f"/api/runs/{run_id}", headers=headers).json()
+        if record["status"] not in ("queued", "running"):
+            return record
+        time.sleep(0.02)
+    raise AssertionError(f"run {run_id} did not finish within {timeout}s")
 
 # --- 認証 / authentication -------------------------------------------------
 
@@ -189,9 +211,7 @@ def test_discover_reports_industry_and_steps(templates):
 # --- 実行 / running --------------------------------------------------------
 
 def test_run_records_step_outcomes(client, templates):
-    response = client.post("/api/runs", headers=auth(client),
-                           json={"path": str(templates / "simple.yaml")})
-    record = response.json()
+    record = run_and_wait(client, auth(client), str(templates / "simple.yaml"))
 
     assert record["status"] == "success"
     assert [s["id"] for s in record["steps"]] == ["overdue", "notify"]
@@ -200,8 +220,7 @@ def test_run_records_step_outcomes(client, templates):
 
 def test_run_appears_in_history_newest_first(client, templates):
     for _ in range(2):
-        client.post("/api/runs", headers=auth(client),
-                    json={"path": str(templates / "simple.yaml")})
+        run_and_wait(client, auth(client), str(templates / "simple.yaml"))
 
     items = client.get("/api/runs", headers=auth(client)).json()["items"]
     assert len(items) == 2
@@ -215,8 +234,7 @@ def test_broken_template_returns_a_readable_error(client, templates):
 
 def test_a_run_is_written_to_the_audit_log(client, templates, caplog):
     with caplog.at_level("INFO", logger="aipmo.web"):
-        client.post("/api/runs", headers=auth(client),
-                    json={"path": str(templates / "simple.yaml")})
+        run_and_wait(client, auth(client), str(templates / "simple.yaml"))
 
     assert any("simple_demo" in r.message and "success" in r.message
                for r in caplog.records)
@@ -232,11 +250,11 @@ def test_rate_limiter_blocks_many_requests(templates):
                      tenant="acme_corp", lang="en", store=RunStore())
     client = TestClient(app)
 
-    # 既定の制限は10回。10回までは通る。
+    # 既定の制限は10回。10回までは通る（受け付けて待ち行列に乗せる＝202）。
     for _ in range(10):
         response = client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
                                json={"path": str(templates / "simple.yaml")})
-        assert response.status_code == 200
+        assert response.status_code == 202
 
     # 11回目はブロックされる。
     response = client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
@@ -267,7 +285,7 @@ def test_templates_in_subdirectories_can_be_run(client, templates):
 
     response = client.post("/api/runs", headers=auth(client),
                            json={"path": "examples/nested.yaml"})
-    assert response.status_code == 200
+    assert response.status_code == 202
     assert response.json()["template"] == "nested_demo"
 
 def test_symlink_out_of_the_root_is_refused(client, templates, tmp_path):
@@ -393,8 +411,7 @@ def test_failed_run_keeps_step_detail(client, templates):
         encoding="utf-8",
     )
 
-    record = client.post("/api/runs", headers=auth(client),
-                         json={"path": "fails.yaml"}).json()
+    record = run_and_wait(client, auth(client), "fails.yaml")
 
     assert record["status"] == "failed"
     steps = {s["id"]: s for s in record["steps"]}
@@ -474,7 +491,7 @@ def test_a_viewer_run_attempt_leaves_no_trace(two_role_client, templates):
 def test_an_operator_can_still_run(two_role_client, templates):
     response = two_role_client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
                                     json={"path": "simple.yaml"})
-    assert response.status_code == 200
+    assert response.status_code == 202
 
 def test_session_reports_the_role(two_role_client):
     as_viewer = two_role_client.get("/api/session",
@@ -516,7 +533,7 @@ def test_a_single_token_deployment_still_works(templates):
     client = TestClient(app)
 
     assert client.post("/api/runs", headers={"x-aipmo-token": TOKEN},
-                       json={"path": "simple.yaml"}).status_code == 200
+                       json={"path": "simple.yaml"}).status_code == 202
 
 def test_webhook_triggers_event_templates(client, templates):
     # Prepare a template with event trigger

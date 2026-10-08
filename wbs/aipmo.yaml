@@ -735,4 +735,16 @@ wbs:
             - "tests/test_messages.py::test_the_inbox_is_composed_in_the_servers_language"
             - "tests/test_tasks_screen.py::test_the_integrations_screen_reports_adapters_filing_wbs_and_accounts"
           notes: "原因：demo.load() が過去の周（3・2・1日前）を再生する際、月〜水に実行すると3日前が前のISO週にまたがり、週次レビューの定期タスクが今週分と合わせて2件できていた（本来は正しい挙動だが、デモの再現性を壊す）。各定期タスクにつき最新の期間だけを残すよう台帳から古い方を消す後処理を追加。test_messages.py・test_inbox.py・test_tasks_screen.py の計10件の失敗（14/15/16個のハードコードされた件数との不一致）がこれで解消し、フルスイート 1833 passed / 50 skipped（スキップは Postgres・実ブラウザのオプトイン分）"
+        - id: "6.36"
+          name: "Web 画面：実行中に何のステップが動いているかダイアログとプログレスバーで表示し、LLM の待ち行列も見せる"
+          status: done
+          effort: 3
+          priority: Low
+          done_on: 2026-10-08
+          evidence:
+            - "aipmo/engine/runner.py::def run"
+            - "aipmo/web/server.py::class RunQueue"
+            - "aipmo/web/static/app.js::function watchRun"
+            - "tests/test_web.py::test_run_records_step_outcomes"
+          notes: "POST /api/runs は即座に queued を返し、実行はワーカー1本の待ち行列（RunQueue）に乗せる——LLM を呼ぶ工程が複数の実行から同時に走らないようにし、待っている件数そのものを GET /api/queue で見せるため。GET /api/runs/{id} を0.5秒おきに読み、待ち順→今のステップ（index/total/step_id）の順にダイアログへ反映。8言語の文言を追加。既存テスト9件を、完了を待ってから確認する形に修正（run_and_wait ヘルパー）。実 Chrome でダイアログの見た目を確認済み。対象は Web 画面のみ（CLI の aipmo run は対象外、との事前確認どおり）"
 
