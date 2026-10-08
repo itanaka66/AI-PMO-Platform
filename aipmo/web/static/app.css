@@ -409,6 +409,27 @@ h2:first-of-type { margin-top: 4px; }
   color: var(--muted);
 }
 
+.run-progress-queue {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  max-height: 140px;
+  overflow-y: auto;
+}
+.run-progress-queue[hidden] { display: none; }
+.run-progress-queue li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+}
+.run-progress-queue li[data-self="true"] { color: var(--ink); font-weight: 600; }
+.run-progress-queue li[data-state="running"] { color: var(--accent); }
+
 .run-queue-status {
   font-family: var(--mono);
   font-size: 12px;
