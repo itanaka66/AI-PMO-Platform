@@ -423,6 +423,22 @@ def create_app(
     guard = Depends(principal)
     operator_guard = Depends(require_operator)
 
+    def _lang_for(request: Request) -> str:
+        """この利用者の画面表示言語。ログイン画面で選んで Cookie に残したものが
+        あればそれ、無ければサーバーの既定（設定の `lang` か、サーバー環境からの
+        推定）。アプリの中には変える手段を置いていない——変えたいときは
+        ログアウトしてログイン画面からやり直す、という決め事を、ここでは単に
+        「アプリ内に別の変更経路を作らない」ことで保っている。
+
+        The viewer's display language: the one chosen at login and kept in a
+        cookie, if any; otherwise the server's own default (config `lang`, or
+        inferred from the server's environment). Nothing inside the app itself
+        offers another way to change it — the "only at login" rule is kept
+        simply by never adding a second path.
+        """
+        cookie_lang = request.cookies.get("aipmo_lang")
+        return normalize(cookie_lang) if cookie_lang else ui_lang
+
     # -- 画面 / screens ----------------------------------------------------
 
     @app.get("/")
@@ -448,6 +464,19 @@ def create_app(
             secure=is_secure,
             max_age=60 * 60 * 24 * 30,
         )
+        # ログイン画面で選んだ表示言語を Cookie に残す。クエリに無ければ
+        # （ブックマーク済みの URL を token だけで開き直した場合など）、
+        # 前回までの選択をそのまま使う——上書きしない。
+        # Persists the display language chosen on the login screen. Without a
+        # `lang` query param (e.g. revisiting a bookmarked token-only URL),
+        # whatever was chosen before stays — never silently overwritten.
+        chosen_lang = request.query_params.get("lang")
+        if chosen_lang and chosen_lang in CATALOG:
+            response.set_cookie(
+                "aipmo_lang", chosen_lang, httponly=False, samesite="strict",
+                secure=is_secure,
+                max_age=60 * 60 * 24 * 30,
+            )
         return response
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -455,13 +484,14 @@ def create_app(
     # -- API ---------------------------------------------------------------
 
     @app.get("/api/session")
-    def session(role: str = guard) -> dict[str, Any]:
+    def session(request: Request, role: str = guard) -> dict[str, Any]:
+        lang = _lang_for(request)
         return {
             "role": role,
             "can_run": role == "operator",
             "tenant": tenant,
-            "lang": ui_lang,
-            "strings": {**CATALOG[DEFAULT_LANG], **CATALOG[ui_lang]},
+            "lang": lang,
+            "strings": {**CATALOG[DEFAULT_LANG], **CATALOG[lang]},
             "adapters": {
                 name: sorted(engine.adapters.get(name).actions())
                 for name in engine.adapters.names()
@@ -878,7 +908,8 @@ def create_app(
         return confined
 
     @app.get("/api/pmo", dependencies=[guard])
-    def pmo_view(project: str | None = None, role: str = guard) -> dict[str, Any]:
+    def pmo_view(request: Request, project: str | None = None, role: str = guard) -> dict[str, Any]:
+        lang = _lang_for(request)
         ledger = _pmo_ledger()
         present = _ledger_present(ledger)
         briefing_text: str | None = None if present else FileSide(ledger).read_doc(BRIEFING)
@@ -922,10 +953,10 @@ def create_app(
                                      "error": filing_state(t).get("error")}
                                     for t in sorted(waiting, key=lambda t: t.first_seen)]}
                 active = store.ranked(projects=allowed)
-                if not is_japanese(ui_lang):             # 点数の内訳は、構造（parts）から選んだ言語で
+                if not is_japanese(lang):             # 点数の内訳は、構造（parts）から選んだ言語で
                     learned = _learned_of(store)
                     reasons_by_task = {
-                        t.id: [f"{p['text']} {p['points']:+d}" for p in _parts_of(store, t, learned)]
+                        t.id: [f"{p['text']} {p['points']:+d}" for p in _parts_of(store, t, learned, lang)]
                         for t in active[:50]}
                 pending = [t for t in store.proposals()
                            if allowed is None or t.project.lower() in allowed]
@@ -945,15 +976,15 @@ def create_app(
         if briefing is not None and allowed is not None:
             briefing = scope_briefing(briefing, active, allowed, redact_org=confined)
         if briefing is not None:
-            briefing = localize_briefing(ui_lang, briefing, reasons_by_task)
+            briefing = localize_briefing(lang, briefing, reasons_by_task)
 
         tasks = [
-            {"id": t.id, "key": t.key, "title": task_title(ui_lang, t.title, t.payload), "score": t.score,
+            {"id": t.id, "key": t.key, "title": task_title(lang, t.title, t.payload), "score": t.score,
              "project": t.project, "tracker": tracker_of(t), "origin": t.origin,
              "dispatches": t.dispatches[-3:],
              "external_id": t.external_id or (t.key if tracker_of(t) == "jira" else None),
              "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
-             "suggestion_reason": suggestion_reason(ui_lang, t.suggestion_reason, t.payload),
+             "suggestion_reason": suggestion_reason(lang, t.suggestion_reason, t.payload),
              "due_date": t.due_date, "priority": t.priority, "status": t.status, "blocked": t.blocked,
              "reasons": (reasons_by_task or {}).get(t.id, t.reasons), "templates": t.templates}
             for t in active[:50]
@@ -966,7 +997,7 @@ def create_app(
                 "filing": filing_view, "agent_review": review_view}
 
     @app.get("/api/inbox", dependencies=[guard])
-    def inbox_view(project: str | None = None, role: str = guard) -> dict[str, Any]:
+    def inbox_view(request: Request, project: str | None = None, role: str = guard) -> dict[str, Any]:
         """人の判断を待っているものを、種類をまたいで 1 つの一覧にする（読むだけ）。
 
         決める操作は、各項目の `actions` が指す既存の API（権限・確認はこれまでどおり）。
@@ -994,12 +1025,12 @@ def create_app(
                 store, members=members or [], filing=filing, can_act=role != "viewer",
                 allowed=allowed, confined=confined, writable=writable_trackers(engine.adapters),
                 can_file=bool(filing is not None and engine.adapters.has(filing.tracker)),
-                replans=replans, lang=ui_lang)
+                replans=replans, lang=_lang_for(request))
         finally:
             _release(store)
 
     @app.get("/api/wbs", dependencies=[guard])
-    def wbs_screen(role: str = guard) -> dict[str, Any]:
+    def wbs_screen(request: Request, role: str = guard) -> dict[str, Any]:
         """WBS の木・進捗・予測・ずれ・次に着手できる作業（読むだけ）。
 
         WBS ファイルは組織全体のものなので、プロジェクトを限定された viewer には出さない。
@@ -1015,7 +1046,7 @@ def create_app(
             loaded, problems = load_wbs(file)
         except WbsError as exc:
             raise HTTPException(status_code=500, detail=f"cannot read the WBS: {exc}") from exc
-        result = wbs_analysis(loaded, root, problems=problems, lang=ui_lang)
+        result = wbs_analysis(loaded, root, problems=problems, lang=_lang_for(request))
         for key in ("tasks", "items", "summary_text"):       # 画面に要らない（重い）もの
             result.pop(key, None)
         result["can_edit"] = role != "viewer"
@@ -1135,7 +1166,7 @@ def create_app(
             return {}
         return doc if isinstance(doc, dict) else {}
 
-    def _parts_of(store: Any, task: Any, learned: dict[str, Any]) -> list[dict[str, Any]]:
+    def _parts_of(store: Any, task: Any, learned: dict[str, Any], lang: str) -> list[dict[str, Any]]:
         """点数の内訳（項目ごと）。合計は台帳の点数に必ず一致させる。
 
         学習のモデルが古い・読めないなどで差が出たら、隠さず「その他の補正」として出す。
@@ -1154,12 +1185,12 @@ def create_app(
         for part in parts:                              # 画面の言語の文章にする
             params = dict(part.get("params") or {})
             if part.get("key") == "s_priority" or part.get("key") == "s_priority_shift":
-                params["priority"] = params.get("priority") or translate(ui_lang, "s_unset")
-            part["text"] = translate(ui_lang, part["key"], **params)
+                params["priority"] = params.get("priority") or translate(lang, "s_unset")
+            part["text"] = translate(lang, part["key"], **params)
         return parts
 
-    def _task_row(t: Any, parts: list[dict[str, Any]]) -> dict[str, Any]:
-        return {"id": t.id, "key": t.key, "title": task_title(ui_lang, t.title, t.payload),
+    def _task_row(t: Any, parts: list[dict[str, Any]], lang: str) -> dict[str, Any]:
+        return {"id": t.id, "key": t.key, "title": task_title(lang, t.title, t.payload),
                 "score": t.score, "parts": parts,
                 "project": t.project, "tracker": tracker_of(t), "origin": t.origin,
                 "assignee": t.assignee, "suggested_assignee": t.suggested_assignee,
@@ -1168,14 +1199,15 @@ def create_app(
                 "proposed": t.proposed}
 
     @app.get("/api/tasks", dependencies=[guard])
-    def tasks_list(project: str | None = None, assignee: str | None = None, q: str | None = None,
-                   state: str = "active", sort: str = "score", limit: int = 50, offset: int = 0,
-                   role: str = guard) -> dict[str, Any]:
+    def tasks_list(request: Request, project: str | None = None, assignee: str | None = None,
+                   q: str | None = None, state: str = "active", sort: str = "score",
+                   limit: int = 50, offset: int = 0, role: str = guard) -> dict[str, Any]:
         """タスクの一覧（読むだけ）。絞り込み・並び・ページつき。点数は項目ごとの内訳つき。
 
         state: active（未完了。既定）| done | all。sort: score | due | priority。
         The task list, read-only: filters, sort, paging, and the score as per-item parts.
         """
+        lang = _lang_for(request)
         ledger = _pmo_ledger()
         if not _ledger_present(ledger):
             raise HTTPException(status_code=404, detail="no PMO data yet")
@@ -1210,15 +1242,16 @@ def create_app(
                 pool.sort(key=lambda t: (-t.score, t.due_date or "9999-99-99", t.id))
             page = pool[offset:offset + limit]
             learned = _learned_of(store)
-            rows = [_task_row(t, _parts_of(store, t, learned)) for t in page]
+            rows = [_task_row(t, _parts_of(store, t, learned, lang), lang) for t in page]
             return {"items": rows, "total": len(pool), "limit": limit, "offset": offset,
                     "projects": names, "assignees": people}
         finally:
             _release(store)
 
     @app.get("/api/tasks/{task_id}", dependencies=[guard])
-    def task_detail(task_id: str, role: str = guard) -> dict[str, Any]:
+    def task_detail(request: Request, task_id: str, role: str = guard) -> dict[str, Any]:
         """1 件の詳細（読むだけ）: 点数の内訳・由来・役割AIの実行・関係する警告と判断の履歴。"""
+        lang = _lang_for(request)
         ledger = _pmo_ledger()
         if not _ledger_present(ledger):
             raise HTTPException(status_code=404, detail="no PMO data yet")
@@ -1229,23 +1262,23 @@ def create_app(
             if task is None or task.origin == "judgment" or (
                     allowed is not None and task.project.lower() not in allowed):
                 raise HTTPException(status_code=404, detail="no such task")
-            parts = _parts_of(store, task, _learned_of(store))
+            parts = _parts_of(store, task, _learned_of(store), lang)
             briefing_text = store.side.read_doc(BRIEFING)
             history_lines = store.side.tail(DECISIONS, 2000)
-            detail = _task_row(task, parts)
+            detail = _task_row(task, parts, lang)
             detail.update({
                 "sources": task.sources[-10:], "dispatches": task.dispatches,
                 "generated_from": task.generated_from, "first_seen": task.first_seen,
                 "last_seen": task.last_seen, "started_at": task.started_at,
                 "status_since": task.status_since, "blocked_since": task.blocked_since,
                 "external_id": task.external_id or (task.key if tracker_of(task) == "jira" else None),
-                "suggestion_reason": suggestion_reason(ui_lang, task.suggestion_reason, task.payload),
+                "suggestion_reason": suggestion_reason(lang, task.suggestion_reason, task.payload),
                 "filing": (task.payload or {}).get("filing") or None})
         finally:
             _release(store)
         alerts: list[Any] = []
         try:
-            alerts = [localize_alert_text(ui_lang, a)
+            alerts = [localize_alert_text(lang, a)
                       for a in json.loads(briefing_text or "{}").get("alerts", [])
                       if a.get("task") == task_id]
         except ValueError:

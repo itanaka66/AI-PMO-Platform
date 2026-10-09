@@ -116,6 +116,21 @@ def test_the_inbox_is_composed_in_the_servers_language(base, lang):
     assert kinds == {"judgment", "followup", "wbs", "assignment", "review", "filing"}
 
 
+def test_the_per_login_language_cookie_overrides_the_servers_default(base):
+    """画面表示言語はログインで選んだ Cookie が勝つ。サーバーの既定（ここでは ja）は、
+    Cookie が無いとき（未ログイン・古いブックマーク）のためだけに残る。"""
+    client = client_for(base, "ja")                      # サーバーの既定は日本語
+    ja_items = get(client, "/api/inbox")["items"]
+    judgment = next(i for i in ja_items if i["kind"] == "judgment")
+    assert judgment["actions"][0]["label"] == "承認する"   # Cookie が無ければ従来どおり日本語
+
+    client.cookies.set("aipmo_lang", "en")                # ログイン画面で英語を選んだ想定
+    en_items = get(client, "/api/inbox")["items"]
+    judgment = next(i for i in en_items if i["kind"] == "judgment")
+    for text in composed_inbox_text(judgment):
+        assert no_cjk(text)
+
+
 def test_japanese_is_unchanged_and_each_language_differs(base):
     ja = get(client_for(base, "ja"), "/api/inbox")["items"]
     judgment = next(i for i in ja if i["kind"] == "judgment")

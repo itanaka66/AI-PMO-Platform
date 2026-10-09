@@ -133,6 +133,33 @@ def test_cookie_alone_authenticates(client):
     client.cookies.set("aipmo_token", TOKEN)
     assert client.get("/api/templates").status_code == 200
 
+def test_lang_in_the_login_url_is_moved_into_a_cookie(client):
+    """ログイン画面の言語選択が、トークンと同じように Cookie へ残ること。"""
+    response = client.get(f"/?token={TOKEN}&lang=zh")
+    assert response.status_code == 200
+    assert response.cookies.get("aipmo_lang") == "zh"
+    assert client.get("/api/session", headers=auth(client)).json()["lang"] == "zh"
+
+def test_revisiting_with_only_a_token_keeps_the_previously_chosen_language(client):
+    """再ログイン以外（token だけのブックマーク済み URL）では上書きしない。"""
+    client.get(f"/?token={TOKEN}&lang=fr")
+    response = client.get(f"/?token={TOKEN}")             # lang が無い
+    assert "aipmo_lang" not in response.cookies           # 新たに書き直さない
+    assert client.get("/api/session", headers=auth(client)).json()["lang"] == "fr"
+
+def test_an_unknown_lang_value_is_ignored_not_stored(client):
+    response = client.get(f"/?token={TOKEN}&lang=klingon")
+    assert "aipmo_lang" not in response.cookies
+
+def test_without_any_login_language_choice_the_server_default_is_used(client):
+    assert client.get("/api/session", headers=auth(client)).json()["lang"] == "en"  # client fixture's own lang="en"
+
+def test_re_login_with_a_different_language_changes_it(client):
+    client.get(f"/?token={TOKEN}&lang=de")
+    assert client.get("/api/session", headers=auth(client)).json()["lang"] == "de"
+    client.get(f"/?token={TOKEN}&lang=pt")                # re-login with a new choice
+    assert client.get("/api/session", headers=auth(client)).json()["lang"] == "pt"
+
 def test_secure_cookie_when_https(client):
     response = client.get(f"/?token={TOKEN}", headers={"x-forwarded-proto": "https"})
     assert response.status_code == 200

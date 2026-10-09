@@ -1,25 +1,68 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>AI-PMO</title>
 <link rel="stylesheet" href="/static/app.css">
+<style>
+  .login-form { display: flex; flex-direction: column; gap: 12px; max-width: 320px; }
+  .login-form label { font-size: 13px; color: var(--muted); }
+  .login-form input, .login-form select {
+    width: 100%; min-height: var(--tap); padding: 0 10px;
+    border: 1px solid var(--rule); border-radius: 3px;
+    background: var(--surface); color: inherit; font: inherit; font-size: 14px;
+  }
+  .login-form button {
+    min-height: var(--tap); border: 1px solid var(--accent); border-radius: 3px;
+    background: var(--accent); color: var(--on-fill); font: inherit; font-size: 14px;
+    cursor: pointer;
+  }
+</style>
 </head>
 <body>
 <header><span class="wordmark">AI-PMO</span></header>
 <main>
-  <h2>アクセスキーが必要です / Access key required</h2>
-  <div class="empty">
-    <p>サーバーを起動したときに表示された URL を開いてください。<br>
-       Open the URL shown when the server started.</p>
-    <p style="font-family:var(--mono);font-size:12px">
-      http://&lt;host&gt;:8765/?token=…
+  <h2>Access key required</h2>
+  <!--
+    The login screen stays English-only by design, regardless of the language
+    chosen below: it is the one screen a person sees before any per-user
+    preference (including this one) has been established.
+
+    ログイン画面は、下で選ぶ表示言語に関わらず英語のみにしている
+    （この設定を含め、利用者ごとの好みがまだ何も決まっていない唯一の画面のため）。
+  -->
+  <form class="login-form" action="/" method="get">
+    <div>
+      <label for="login-token">Access key (token)</label>
+      <input type="password" id="login-token" name="token" autocomplete="off" required
+             placeholder="Paste the token from the server's startup output">
+    </div>
+    <div>
+      <label for="login-lang">Display language</label>
+      <select id="login-lang" name="lang">
+        <option value="en" selected>English</option>
+        <option value="ja">Japanese (日本語)</option>
+        <option value="zh">Chinese (中文)</option>
+        <option value="ko">Korean (한국어)</option>
+        <option value="es">Spanish (Español)</option>
+        <option value="fr">French (Français)</option>
+        <option value="de">German (Deutsch)</option>
+        <option value="pt">Portuguese (Português)</option>
+      </select>
+    </div>
+    <button type="submit">Log in</button>
+  </form>
+  <div class="empty" style="margin-top:20px">
+    <p style="font-size:13px">
+      Don't have a token? Open the URL shown when the server started
+      (<code style="font-family:var(--mono)">http://&lt;host&gt;:8765/?token=…</code>),
+      or ask whoever runs the server to print it again with <code>aipmo serve</code>.
     </p>
     <p style="font-size:13px">
-      URL を忘れた場合は、サーバー側で <code>aipmo serve</code> を実行し直すと再表示されます。<br>
-      Lost it? Run <code>aipmo serve</code> again on the server to print it.
+      The display language can only be changed here, at login — there is no
+      switcher inside the app itself.
     </p>
   </div>
 </main>

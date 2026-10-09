@@ -29,6 +29,27 @@ to use it like an app.
 
 ---
 
+## 表示言語を選ぶ / Choosing the display language
+
+トークンが無い（または期限切れの）状態で開くと出るログイン画面で、8言語
+（日本語・英語・中文・한국어・Español・Français・Deutsch・Português）から選べます。
+選んだ言語は Cookie に残り、次にそのブラウザで開いたときもそのまま使われます。
+
+**アプリの中に言語を切り替える場所はありません。** 変えたいときは、ログイン
+画面まで戻って選び直してください（ログアウトする・トークンを変える・Cookie
+を消す、のいずれかで戻れます）。ログイン画面自体は、選ぶ言語に関わらず
+常に英語です——その選択がまだ決まっていない、唯一の画面だからです。
+
+The login screen (shown when there is no valid token yet) offers all 8
+languages. The choice is kept in a cookie and reused the next time that
+browser opens the app. **Nothing inside the app itself switches it** — to
+change it, go back to the login screen (log out, change the token, or clear
+the cookie) and pick again. The login screen itself always stays in English,
+regardless of which language gets picked, since it is the one screen where
+that choice has not been made yet.
+
+---
+
 ## 権限 / Roles
 
 URL は2種類表示されます。**渡す相手によって使い分けてください。**
