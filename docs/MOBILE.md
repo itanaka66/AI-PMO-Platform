@@ -50,6 +50,31 @@ that choice has not been made yet.
 
 ---
 
+## 操作が無いときの自動ログアウト / Auto-logout when idle
+
+マウス・キーボード・タッチの操作が **10分** 無いと、自動でログアウトして
+ログイン画面に戻ります。画面を開いたまま離席したときに、他人がそのまま
+触れる時間を限るためのものです。アクセスキーの Cookie だけを消し、選んだ
+表示言語は残ります。10分のうちに何か1つでも操作すれば、そこからまた
+10分数え直します。
+
+スマホを机に置いたまま離席したときにも同じように効きます。再び使うときは
+ログイン画面でトークンを入力し直してください（共有した URL に `?token=`
+が残っていれば、そこから開き直すだけで入れます——これは今までと同じ
+挙動です）。
+
+After **10 minutes** with no mouse, keyboard, or touch activity at all, the
+screen automatically logs out and returns to the login screen — limiting how
+long someone else could use an unattended, already-open screen. Only the
+access-key cookie is cleared; the chosen display language stays. Any single
+interaction within the 10 minutes restarts the countdown.
+
+The same applies to a phone left open on a desk. To use it again, enter the
+token on the login screen (or reopen a shared URL that still has `?token=`
+in it — that still works exactly as before).
+
+---
+
 ## 権限 / Roles
 
 URL は2種類表示されます。**渡す相手によって使い分けてください。**

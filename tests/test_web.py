@@ -160,6 +160,25 @@ def test_re_login_with_a_different_language_changes_it(client):
     client.get(f"/?token={TOKEN}&lang=pt")                # re-login with a new choice
     assert client.get("/api/session", headers=auth(client)).json()["lang"] == "pt"
 
+def test_logout_clears_the_token_cookie_so_the_app_is_locked_again(client):
+    """自動ログアウト（操作が無いときの画面側タイマー）が最終的に呼ぶ経路。"""
+    client.get(f"/?token={TOKEN}")
+    assert client.get("/api/templates", headers=auth(client)).status_code == 200
+
+    response = client.post("/api/logout")
+    assert response.status_code == 200
+    assert client.cookies.get("aipmo_token") is None
+    assert client.get("/").status_code == 401              # ロック画面に戻る
+
+def test_logout_keeps_the_chosen_language(client):
+    """言語の選択は『ログイン』の一部ではないので、ログアウトでは消さない。"""
+    client.get(f"/?token={TOKEN}&lang=fr")
+    client.post("/api/logout")
+    assert client.cookies.get("aipmo_lang") == "fr"
+
+def test_logout_without_being_logged_in_is_harmless(client):
+    assert client.post("/api/logout").status_code == 200
+
 def test_secure_cookie_when_https(client):
     response = client.get(f"/?token={TOKEN}", headers={"x-forwarded-proto": "https"})
     assert response.status_code == 200
