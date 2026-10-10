@@ -797,4 +797,16 @@ wbs:
             - "aipmo/web/server.py::def knowledge_candidate_stats"
             - "tests/test_data_adapters.py::test_similar_candidates_stats_tallies_human_and_llm_decisions"
           notes: "ユーザーに事前確認：(1) 表示先は『人間判断が必要な時』全般という回答だったが、人間の判断とLLMの判断が両方存在するのはナレッジ候補の承認（WBS 6.38・6.39）だけなので、他の承認画面（WBS提案・判断ログ）はLLM判断という概念自体が無く対象外とした、と明示した上で実装。(2) 『人間判断a/b』『LLM判断a/b』は承認/却下などの固定2択ではなく『承認却下、及び他の選択肢、もしくは自然言語での指示』という回答だったため、固定の2値に決め打たず、実際に review_status / llm_verdict に現れた値をそのまま集計する設計にした（3択以上でも同じように動く）。similar_candidates_stats はテキストでベクトル検索した類似候補（review_status を持つ行だけ＝候補扱いのもの）から、pending を除いた human_decisions と、記録があれば llm_decisions（self_learning_cycle が llm_verdict を付与）を件数・%で集計。@action を付けていないためテンプレートからは呼べない。承認待ちの候補を見るときだけ表示（決定済みには出さない）。self_learning_cycle テンプレートの submit ステップに llm_verdict フィールドを追加。実ブラウザで表示を確認"
+        - id: "6.41"
+          name: "ログイン画面でUI表示言語（8言語）を選べるようにし、再ログイン時のみ変更可能にする"
+          status: done
+          effort: 3
+          priority: Low
+          done_on: 2026-10-09
+          evidence:
+            - "aipmo/web/static/locked.html"
+            - "aipmo/web/server.py::def _lang_for"
+            - "tests/test_web.py::test_lang_in_the_login_url_is_moved_into_a_cookie"
+            - "tests/test_messages.py::test_the_per_login_language_cookie_overrides_the_servers_default"
+          notes: "従来、画面表示言語（ui_lang）はサーバー起動時に config の lang か、サーバーの環境（OS ロケール）から1回だけ決まる、サーバー全体で1つの値だった——利用者ごとに選べる仕組みがそもそも無かった。locked.html に、トークン入力欄と8言語の <select>（ラベルは英語固定、値は ja/en/zh/ko/es/fr/de/pt）を持つログインフォームを追加し、GET /?token=…&lang=… で送信。index() がトークンと同じやり方で aipmo_lang を Cookie に残す（lang パラメータが無いアクセス＝token だけのブックマーク済み URL では上書きしない＝前回の選択を保つ）。サーバー側は _lang_for(request) が Cookie を読み、無ければサーバーの既定にフォールバックする形にし、/api/session・/api/pmo・/api/inbox・/api/wbs・/api/tasks・/api/tasks/{id} の計7か所で、クロージャで捕まえていた ui_lang 直参照をこの関数呼び出しに置き換えた（_parts_of/_task_row は lang を引数で受け取るよう変更）。アプリ内に言語を変える手段は一切追加していない＝変更は『ログイン画面でログインし直す』ときだけ、という指示をそのまま満たす。ログイン画面自体（ラベル・見出し・ボタン）は指示どおり英語のみ固定（lang の選択値に関わらず）。実ブラウザでドイツ語を選んでログイン→画面全体がドイツ語になること、token だけで再訪しても保持されること、Cookie 自体（aipmo_lang）を確認"
 
