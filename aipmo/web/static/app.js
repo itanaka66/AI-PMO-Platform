@@ -2826,3 +2826,37 @@ async function checkPulse() {
 }
 
 setInterval(checkPulse, PULSE_SECONDS * 1000);
+
+/* ---------- 操作が無いときの自動ログアウト / idle auto-logout --------------
+ *
+ * マウス・キーボード・タッチの操作が IDLE_LOGOUT_MS の間ずっと無ければ、
+ * ログアウトしてロック画面に戻す。アクセスキーの Cookie（aipmo_token）は
+ * httponly なので JS からは消せず、サーバーの /api/logout を呼んで消して
+ * もらう——消えた状態で再読み込みすれば、サーバーが 401 でロック画面を返す。
+ *
+ * Logs out and returns to the lock screen after IDLE_LOGOUT_MS with no
+ * mouse/keyboard/touch activity at all. The access-key cookie is httponly
+ * and cannot be cleared from JS directly, so this calls the server's
+ * /api/logout to clear it; reloading afterward gets the 401 lock screen.
+ */
+const IDLE_LOGOUT_MS = 10 * 60 * 1000;
+let idleTimer;
+
+async function idleLogout() {
+  try {
+    await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+  } catch (error) {
+    /* オフラインでも、とにかく再読み込みしてロック画面に委ねる */
+  }
+  location.reload();
+}
+
+function resetIdleTimer() {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(idleLogout, IDLE_LOGOUT_MS);
+}
+
+["mousemove", "mousedown", "keydown", "touchstart", "scroll"].forEach((type) => {
+  document.addEventListener(type, resetIdleTimer, { passive: true });
+});
+resetIdleTimer();

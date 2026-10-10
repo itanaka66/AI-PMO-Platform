@@ -479,6 +479,24 @@ def create_app(
             )
         return response
 
+    @app.post("/api/logout")
+    def logout(request: Request) -> Response:
+        """アクセスキーの Cookie を消す（表示言語は残す）。
+
+        `aipmo_token` は httponly なので、JS 側からは消せない——操作が無く
+        なったときの自動ログアウト（画面側のタイマー）も、結局ここを呼ぶ。
+        未ログインで呼んでも実害は無いので、認証は求めない。
+
+        Clears the access-key cookie (the display language stays). `aipmo_token`
+        is httponly, so client JS cannot clear it directly — the idle-timeout
+        auto-logout (the screen's own timer) ends up calling this too. Calling
+        it while not logged in is harmless, so no auth is required.
+        """
+        is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
+        response = JSONResponse({"ok": True})
+        response.delete_cookie("aipmo_token", samesite="strict", secure=is_secure)
+        return response
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # -- API ---------------------------------------------------------------
