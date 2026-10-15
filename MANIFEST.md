@@ -17,18 +17,22 @@ A template-driven runtime for automating PMO work.
 | `aipmo/adapters/` | Teams / Jira / Jira Agile / GitHub Projects / Plane / OpenProject / Azure DevOps / Slack / PostgreSQL / ベクトルストア5種 |
 | `aipmo/llm/` | 提供元プリセット（OpenAI・Gemini・Groq・OpenRouter・ローカル） |
 | `aipmo/web/` | スマホ向け画面（権限分離つき、WBS再計画の承認 API を含む） |
-| `templates/examples/` | ソフトウェア開発向けテンプレート 7本 |
+| `templates/examples/` | 汎用テンプレート 23本（会議・WBS・Project Digital Twin・ナレッジのレビュー/自己学習サイクルなど） |
 | `templates/roles/` | 役割特化エージェント（開発・テスト・調査・文書・営業）5本 |
-| `templates/industries/` | 建設・マーケティング等、10業界向けテンプレート |
-| `prompts/` | 業務ごとのプロンプト 8本 |
+| `templates/industries/` | 建設・マーケティング・法務等、11業界向けテンプレート |
+| `prompts/` | 業務ごとのプロンプト 24本 |
 | `docs/` | 機能ごとの手引き（日英併記） |
 | `docs/guide/` | 入門ガイド 8言語 |
 | `scripts/` `installer/` | インストーラ（Windows / Mac / Linux / Docker） |
 | `deploy/oracle/` | Oracle Cloud Always Free + Aiven 構成 |
 | `deploy/generic/` | GCP / Azure / AWS / VPS 共通のデプロイ構成 |
-| `tests/` | テスト 1015件 |
+| `tests/` | テスト 1899件 |
 
 ## 対応している PMO 業務 / What it automates
+
+`templates/examples/` の23本（`templates/roles/` の役割特化エージェント5本・
+`templates/industries/` の11業界向けテンプレートは別掲。いずれも
+[README.md](README.md) に詳しい説明がある）:
 
 | テンプレート | 内容 |
 |---|---|
@@ -37,13 +41,24 @@ A template-driven runtime for automating PMO work.
 | `meeting_task_update` | 会議の内容から既存課題を更新（確信度で選別） |
 | `overdue_chase` | 期限超過の担当者へ個別に催促 |
 | `overdue_triage` | 遅延状況をエージェントが調査して報告 |
+| `portfolio_investigation` | 複数プロジェクトを独立したサブエージェントで並行調査 |
 | `sprint_health` | スプリントの状況確認（問題があるときだけ通知） |
+| `self_development` | PMO AI 自身の開発を、自身の WBS（wbs/aipmo.yaml）で週次管理 |
 | `wbs_from_meeting` | 会議の決定事項から WBS の草案 |
 | `wbs_risk_forecast` | WBS の遅延予測・ドリフト検出、承認待ち提案の記録 |
+| `portfolio_risk_forecast` | 複数 WBS を横断して遅延リスクを決定論的に採点、危険なものだけ週次報告 |
 | `wbs_replan` | WBS の遅延を踏まえ、AI が実際の再計画案を考え承認待ちの提案として記録 |
 | `wbs_replan_jira` | wbs_replan と同じだが、タスク一覧を実際の Jira スプリントから取得 |
+| `wbs_file_replan` | wbs_replan と同じ判定だが、WBS ファイルへ反映できる決まった形の変更を提案 |
 | `wbs_replan_options` | wbs_replan と同じだが、依存関係・クリティカルパスを踏まえた2つの代替案（A/B）を記録 |
 | `wbs_proposal_cleanup` | 承認待ちのまま放置された WBS 再計画提案を定期的に無効化 |
+| `digital_twin_sync` | Jira から Project Digital Twin（プロジェクト・WBS・タスク）を毎日同期 |
+| `digital_twin_diagnose` | 5軸を決定論的に採点し、AI が所見と推奨アクションを記述 |
+| `model_comparison` | 同じプロンプトを複数の AI 提供元に同時投稿し、書きぶりを比較 |
+| `parallel_notify` | 独立した通知を同時に送り、実行時間を縮める |
+| `crawl_watch` | 外部サイトの1ページを取得し、見出し・リンク・メタデータを Slack へ通知 |
+| `generalize_knowledge` | 社内知見を匿名化・一般化し、レビュー待ちの候補として提出 |
+| `self_learning_cycle` | ローカル LLM で架空の課題を作り自己判断、別モデルで検証してナレッジ候補として提出（デモ・練習用） |
 | `construction/site_meeting` | 工程会議 → 議事録・是正起票・安全指摘の即時通知 |
 | `marketing/campaign_check` | キャンペーン進行確認（承認待ちを分けて扱う） |
 
@@ -51,7 +66,7 @@ A template-driven runtime for automating PMO work.
 
 ```bash
 pip install -e ".[dev]"
-pytest                                   # 1015件
+pytest                                   # 1899件
 aipmo setup                              # 初回設定
 aipmo validate templates/examples/meeting_to_tasks.yaml
 aipmo serve --host 0.0.0.0               # スマホ向け画面

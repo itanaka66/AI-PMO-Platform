@@ -273,7 +273,7 @@ aipmo wbs check                      # 同じ WBS の検証（証拠の欠け・
 aipmo knowledge [show|edit|approve|reject ID]  # ナレッジ公開候補のレビュー / review knowledge candidates
 aipmo learning [enable|disable]      # 自己学習サイクルの RAG 信用設定 / self-learning cycle's trust-RAG setting
 aipmo doctor                         # 接続確認 / connection check
-pytest                               # 1015 件
+pytest                               # 1899 件
 ```
 
 ---
@@ -647,15 +647,16 @@ are each recorded individually.
 
 ## テスト / Tests
 
-1015 件。境界の保証と、黙って壊れる形を潰すことが主眼。
+1899 件。境界の保証と、黙って壊れる形を潰すことが主眼。
 
-1015 tests, aimed at the guarantees and at the failure shapes that look like
+1899 tests, aimed at the guarantees and at the failure shapes that look like
 success:
 
 - テンプレートから生 SQL を渡せない / raw SQL cannot be passed from a template
 - テンプレートが `tenant` やコレクション名を上書きできない
-- 公開コレクションへの直接書き込みが拒否される
+- 公開コレクションへの直接書き込みが拒否される。昇格は人の承認フロー（`aipmo knowledge`）だけが行い、テンプレートからは呼べない
 - 閲覧用トークンでは実行できない（画面ではなくサーバーが拒否する）
+- 操作が無ければ10分で自動ログアウトする。表示言語の選択はログアウトでも消えない
 - Slack の `200 + ok:false` を成功として扱わない
 - エージェントが許可外の道具を呼べない、上限で必ず止まる
 - 前方参照・ID 重複・不正な cron はロード時に検出される
