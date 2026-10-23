@@ -798,10 +798,8 @@ main.wide { max-width: 1240px; }
 /* ---------- WBS ---------- */
 .wbs-head { background: var(--surface); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px;
   margin-bottom: var(--gap); }
-.wbs-head-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
-  flex-wrap: wrap; margin-bottom: 4px; }
-.wbs-name-h { margin: 0; font-size: 16px; }
-.wbs-actions { display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
+.wbs-name-h { margin: 0 0 4px; font-size: 16px; }
+.wbs-page-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: var(--gap); }
 .wbs-action-btn { font-size: 12px; padding: 4px 10px; min-height: 0; }
 .wbs-meter { display: flex; align-items: center; gap: 10px; margin: 4px 0; }
 .wbs-pct { font-weight: 700; font-variant-numeric: tabular-nums; }
