@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from aipmo.wbs import analyse, load_wbs
-from aipmo.wbs_excel import export, export_bytes, import_from_excel, make_template
+from aipmo.wbs_excel import export, export_bytes, import_from_excel, make_template, merge_import
 
 pytest.importorskip("openpyxl")
 
@@ -271,6 +271,170 @@ def test_import_leaf_status(tmp_path: Path) -> None:
     node_11 = _find_node(re_wbs.nodes, "1.1")
     assert node_11 is not None
     assert node_11.status == "done"
+
+
+# ---------- merge_import ----------
+
+MERGE_BASE_WBS = """\
+    wbs:
+      id: test-wbs
+      name: テスト WBS
+      nodes:
+        - id: "1"
+          name: 企画
+          children:
+            - id: "1.1"
+              name: 要件定義
+              status: done
+              effort: 3
+              evidence:
+                - https://example.com/evidence
+              depends_on: ["0.1"]
+            - id: "1.2"
+              name: 画面設計
+              status: in_progress
+              effort: 2
+        - id: "2"
+          name: 実装
+          children:
+            - id: "2.1"
+              name: ログイン
+              status: todo
+              effort: 5
+              depends_on: ["1.1", "1.2"]
+"""
+
+
+def test_merge_keeps_same_id(tmp_path: Path) -> None:
+    """同一 ID のノードは Excel フィールドで上書きされ、evidence は保持される。"""
+    wbs_path = write_wbs(tmp_path, MERGE_BASE_WBS)
+    wbs, _ = load_wbs(wbs_path)
+    xlsx = export_bytes(wbs)
+
+    merged_yaml, log = merge_import(MERGE_BASE_WBS, io.BytesIO(xlsx))
+    re_wbs, _ = _load_yaml_str(tmp_path, merged_yaml, "merged.yaml")
+
+    node_11 = _find_node(re_wbs.nodes, "1.1")
+    assert node_11 is not None
+    assert node_11.status == "done"
+    assert node_11.evidence == ["https://example.com/evidence"]
+
+    action_ids = {c["id"] for c in log}
+    assert "1.1" not in action_ids   # 変更なし → ログに出ない
+
+
+def test_merge_deleted_node_logged(tmp_path: Path) -> None:
+    """Excel で削除されたノードは change_log に deleted として記録される。"""
+    # 1.2 を除いた Excel を作る
+    deleted_wbs_yaml = """\
+wbs:
+  id: test-wbs
+  name: テスト WBS
+  nodes:
+    - id: "1"
+      name: 企画
+      children:
+        - id: "1.1"
+          name: 要件定義
+          status: done
+          effort: 3
+    - id: "2"
+      name: 実装
+      children:
+        - id: "2.1"
+          name: ログイン
+          status: todo
+          effort: 5
+"""
+    del_path = tmp_path / "deleted.yaml"
+    del_path.write_text(deleted_wbs_yaml, encoding="utf-8")
+    wbs_del, _ = load_wbs(del_path)
+    xlsx = export_bytes(wbs_del)
+
+    _, log = merge_import(MERGE_BASE_WBS, io.BytesIO(xlsx))
+    deleted_ids = {c["id"] for c in log if c["action"] == "deleted"}
+    assert "1.2" in deleted_ids
+
+
+def test_merge_added_node_logged(tmp_path: Path) -> None:
+    """Excel で追加されたノードは change_log に added として記録される。"""
+    added_wbs_yaml = """\
+wbs:
+  id: test-wbs
+  name: テスト WBS
+  nodes:
+    - id: "1"
+      name: 企画
+      children:
+        - id: "1.1"
+          name: 要件定義
+          status: done
+          effort: 3
+        - id: "1.2"
+          name: 画面設計
+          status: in_progress
+          effort: 2
+        - id: "1.3"
+          name: 新規追加タスク
+          status: todo
+          effort: 1
+    - id: "2"
+      name: 実装
+      children:
+        - id: "2.1"
+          name: ログイン
+          status: todo
+          effort: 5
+"""
+    add_path = tmp_path / "added.yaml"
+    add_path.write_text(added_wbs_yaml, encoding="utf-8")
+    wbs_add, _ = load_wbs(add_path)
+    xlsx = export_bytes(wbs_add)
+
+    _, log = merge_import(MERGE_BASE_WBS, io.BytesIO(xlsx))
+    added_ids = {c["id"] for c in log if c["action"] == "added"}
+    assert "1.3" in added_ids
+
+
+def test_merge_depends_resolved_when_dep_deleted(tmp_path: Path) -> None:
+    """削除された ID への depends_on は自動解消され change_log に記録される。"""
+    # 1.2 を削除 → 2.1 の depends_on["1.2"] が解消されるはず
+    deleted_wbs_yaml = """\
+wbs:
+  id: test-wbs
+  name: テスト WBS
+  nodes:
+    - id: "1"
+      name: 企画
+      children:
+        - id: "1.1"
+          name: 要件定義
+          status: done
+          effort: 3
+    - id: "2"
+      name: 実装
+      children:
+        - id: "2.1"
+          name: ログイン
+          status: todo
+          effort: 5
+"""
+    del_path = tmp_path / "dep_test.yaml"
+    del_path.write_text(deleted_wbs_yaml, encoding="utf-8")
+    wbs_del, _ = load_wbs(del_path)
+    xlsx = export_bytes(wbs_del)
+
+    merged_yaml, log = merge_import(MERGE_BASE_WBS, io.BytesIO(xlsx))
+
+    resolved = [c for c in log if c["action"] == "depends_resolved"]
+    resolved_ids = {c["id"] for c in resolved}
+    assert "2.1" in resolved_ids
+    # 解消後の YAML では 2.1 の depends_on に 1.2 が含まれない
+    re_wbs, _ = _load_yaml_str(tmp_path, merged_yaml, "dep_merged.yaml")
+    node_21 = _find_node(re_wbs.nodes, "2.1")
+    assert node_21 is not None
+    deps = node_21.depends_on or []
+    assert "1.2" not in deps
 
 
 def test_import_parent_has_no_leaf_fields(tmp_path: Path) -> None:

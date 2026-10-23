@@ -1161,7 +1161,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="WBS is not configured")
         file_path, root = wbs_view
         try:
-            from ..wbs_excel import import_from_excel, _XLSX_MIME
+            from ..wbs_excel import merge_import, _XLSX_MIME
         except ImportError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
 
@@ -1169,9 +1169,15 @@ def create_app(
         if not raw:
             raise HTTPException(status_code=400, detail="ファイルが空です / empty file")
 
+        # 既存 WBS を読み込む（マージのベース）
+        try:
+            existing_yaml = file_path.read_text(encoding="utf-8")
+        except OSError:
+            existing_yaml = ""   # ファイルが無い場合は空扱い → 全件追加
+
         import io as _io
         try:
-            yaml_text = import_from_excel(_io.BytesIO(raw))
+            yaml_text, change_log = merge_import(existing_yaml, _io.BytesIO(raw))
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=422,
                                 detail=f"Excel を読めません / cannot parse Excel: {exc}") from exc
@@ -1200,7 +1206,7 @@ def create_app(
                            for p in errors],
             })
 
-        # WBS ファイルへ書き込む（上書き前に変更確認はしない ─ インポートは全置換）
+        # WBS ファイルへ書き込む（マージ結果で上書き）
         try:
             file_path.write_text(yaml_text, encoding="utf-8")
         except OSError as exc:
@@ -1208,6 +1214,10 @@ def create_app(
                                 detail=f"ファイルを書けません / cannot write file: {exc}") from exc
 
         warnings = [p for p in problems if p.level == "warning"]
+        added   = [c for c in change_log if c["action"] == "added"]
+        deleted = [c for c in change_log if c["action"] == "deleted"]
+        resolved = [c for c in change_log if c["action"] == "depends_resolved"]
+
         ledger = pmo_ledger
         if ledger is not None and _ledger_present(ledger):
             store = _open_store(ledger, sync=False)
@@ -1216,14 +1226,23 @@ def create_app(
                     {"at": datetime.now(timezone.utc).isoformat(), "kind": "wbs_imported",
                      "file": str(file_path), "by": role,
                      "nodes": len(wbs_obj.all_nodes()),
+                     "added": [{"id": c["id"], "name": c["name"]} for c in added],
+                     "deleted": [{"id": c["id"], "name": c["name"]} for c in deleted],
+                     "depends_resolved": [{"id": c["id"], "removed": c["removed_deps"]}
+                                          for c in resolved],
                      "warnings": len(warnings)}, ensure_ascii=False))
             finally:
                 _release(store)
-        logger.info("wbs imported by %s from %s (%d nodes, %d warnings)",
-                    role, _client_ip(request), len(wbs_obj.all_nodes()), len(warnings))
+        logger.info("wbs imported (merge) by %s from %s: +%d -%d nodes, %d dep-resolved, %d warnings",
+                    role, _client_ip(request),
+                    len(added), len(deleted), len(resolved), len(warnings))
         return {
             "ok": True,
             "nodes": len(wbs_obj.all_nodes()),
+            "added": len(added),
+            "deleted": len(deleted),
+            "depends_resolved": len(resolved),
+            "changes": change_log,
             "warnings": len(warnings),
             "warning_details": [{"node": p.node, "code": p.code, "message": p.message}
                                  for p in warnings],

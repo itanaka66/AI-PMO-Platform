@@ -448,3 +448,111 @@ def import_from_excel(src: "Union[Path, io.IOBase]") -> str:
 
     return yaml.dump({"wbs": wbs_doc}, allow_unicode=True,
                      default_flow_style=False, sort_keys=False)
+
+
+# ---------- merge import ----------
+
+def _flatten(nodes: list[dict[str, Any]], out: dict[str, dict[str, Any]]) -> None:
+    """ノードツリーをフラットな id → dict マップに展開（参照を保持）。"""
+    for node in nodes:
+        nid = node.get("id")
+        if nid is not None:
+            out[str(nid)] = node
+        _flatten(node.get("children", []), out)
+
+
+def merge_import(existing_yaml: str, src: "Union[Path, io.IOBase]") -> tuple[str, list[dict[str, Any]]]:
+    """Excel を既存 WBS にマージして返す。
+
+    Rules:
+    - 同一 ID: Excel のフィールド（名前・ステータス等）を上書き。
+      evidence・depends_on は既存値を引き継ぐ。
+    - ID 削除: ノードを削除し change_log に記録。
+    - ID 追加: そのまま追加し change_log に記録。
+    - depends_on: 削除された ID への参照を自動解消し change_log に記録。
+
+    Returns:
+        (merged_yaml_str, change_log)
+        change_log は {"action", "id", "name", ...} の list。
+    """
+    import yaml
+
+    # 既存 WBS をパース
+    existing_data = yaml.safe_load(existing_yaml)
+    existing_wbs: dict[str, Any] = existing_data.get("wbs", {}) if isinstance(existing_data, dict) else {}
+    existing_flat: dict[str, dict[str, Any]] = {}
+    _flatten(existing_wbs.get("nodes", []), existing_flat)
+
+    # Excel → 新ツリー（import_from_excel を再利用）
+    new_yaml = import_from_excel(src)
+    new_data = yaml.safe_load(new_yaml)
+    new_wbs: dict[str, Any] = new_data.get("wbs", {}) if isinstance(new_data, dict) else {}
+    new_flat: dict[str, dict[str, Any]] = {}
+    _flatten(new_wbs.get("nodes", []), new_flat)
+
+    existing_ids = set(existing_flat)
+    new_ids = set(new_flat)
+    kept_ids = existing_ids & new_ids
+    deleted_ids = existing_ids - new_ids
+    added_ids = new_ids - existing_ids
+
+    change_log: list[dict[str, Any]] = []
+
+    # 削除ログ
+    for nid in sorted(deleted_ids):
+        change_log.append({
+            "action": "deleted",
+            "id": nid,
+            "name": existing_flat[nid].get("name", ""),
+        })
+
+    # 追加ログ
+    for nid in sorted(added_ids):
+        change_log.append({
+            "action": "added",
+            "id": nid,
+            "name": new_flat[nid].get("name", ""),
+        })
+
+    # 同一 ID: Excel にない保存フィールドを引き継ぐ
+    _PRESERVED = ("evidence", "depends_on")
+    for nid in kept_ids:
+        existing_node = existing_flat[nid]
+        new_node = new_flat[nid]
+        for field in _PRESERVED:
+            if field in existing_node and field not in new_node:
+                new_node[field] = existing_node[field]
+
+    # depends_on: 削除された ID への参照を解消
+    for nid in sorted(new_flat):
+        node = new_flat[nid]
+        deps = node.get("depends_on")
+        if not deps:
+            continue
+        cleaned = [d for d in deps if str(d) in new_ids]
+        removed = sorted(set(str(d) for d in deps) - new_ids)
+        if removed:
+            change_log.append({
+                "action": "depends_resolved",
+                "id": nid,
+                "name": node.get("name", ""),
+                "removed_deps": removed,
+            })
+            if cleaned:
+                node["depends_on"] = cleaned
+            else:
+                del node["depends_on"]
+
+    # WBS メタ: Excel の値を優先、なければ既存値
+    wbs_doc: dict[str, Any] = {
+        "id": new_wbs.get("id") or existing_wbs.get("id", "imported"),
+        "name": new_wbs.get("name") or existing_wbs.get("name", "WBS"),
+        "nodes": new_wbs.get("nodes", []),
+    }
+    deadline = new_wbs.get("deadline") or existing_wbs.get("deadline")
+    if deadline:
+        wbs_doc["deadline"] = deadline
+
+    merged_yaml = yaml.dump({"wbs": wbs_doc}, allow_unicode=True,
+                            default_flow_style=False, sort_keys=False)
+    return merged_yaml, change_log
