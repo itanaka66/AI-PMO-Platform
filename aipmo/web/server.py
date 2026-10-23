@@ -69,9 +69,9 @@ from typing import Any
 # `from __future__ import annotations` they are strings, so a function-local
 # import leaves Request unresolvable and it gets treated as a query parameter.
 # Hence these imports live at module level.
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..adapters.base import AdapterError
@@ -1108,6 +1108,126 @@ def create_app(
                 _release(store)
         logger.info("wbs edited by %s from %s (%d change(s))", role, _client_ip(request), len(plan.report))
         return out
+
+    @app.get("/api/wbs/export", dependencies=[guard])
+    def wbs_export(request: Request, role: str = guard) -> Response:
+        """WBS を Excel ファイルとしてダウンロードする（全ロール可）。
+        Export the WBS as an Excel workbook; available to all roles.
+        """
+        if wbs_view is None:
+            raise HTTPException(status_code=404, detail="WBS is not configured")
+        if role == "viewer" and scoped_projects is not None:
+            raise HTTPException(status_code=403, detail="WBS is not available to a scoped viewer")
+        file, root = wbs_view
+        try:
+            from ..wbs_excel import export_bytes, _XLSX_MIME
+        except ImportError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        try:
+            loaded, problems = load_wbs(file)
+        except WbsError as exc:
+            raise HTTPException(status_code=500, detail=f"cannot read the WBS: {exc}") from exc
+        from ..wbs import analyse
+        analysis = analyse(loaded, root, problems=problems)
+        data = export_bytes(loaded, analysis)
+        fname = file.stem + ".xlsx"
+        return Response(content=data, media_type=_XLSX_MIME,
+                        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+    @app.get("/api/wbs/template", dependencies=[guard])
+    def wbs_template(role: str = guard) -> Response:
+        """WBS インポート用 Excel テンプレートをダウンロードする（全ロール可）。
+        Download the Excel import template; available to all roles.
+        """
+        try:
+            from ..wbs_excel import make_template, _XLSX_MIME
+        except ImportError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+        data = make_template()
+        return Response(content=data, media_type=_XLSX_MIME,
+                        headers={"Content-Disposition": 'attachment; filename="wbs-template.xlsx"'})
+
+    @app.post("/api/wbs/import")
+    async def wbs_import(request: Request, file: UploadFile = File(...),
+                         role: str = operator_guard) -> dict[str, Any]:
+        """Excel ファイルを受け取り、WBS YAML に変換して書き込む（operator のみ）。
+
+        検証で error があっても、強制インポートは行わない（クライアントが `force=true` の
+        クエリを付けた場合のみ warning のある WBS でも受け付ける）。
+        Receives an Excel file, converts to WBS YAML and writes it (operator only).
+        Import is refused when there are errors; warnings are OK by default.
+        """
+        if wbs_view is None:
+            raise HTTPException(status_code=404, detail="WBS is not configured")
+        file_path, root = wbs_view
+        try:
+            from ..wbs_excel import import_from_excel, _XLSX_MIME
+        except ImportError as exc:
+            raise HTTPException(status_code=501, detail=str(exc)) from exc
+
+        raw = await file.read()
+        if not raw:
+            raise HTTPException(status_code=400, detail="ファイルが空です / empty file")
+
+        import io as _io
+        try:
+            yaml_text = import_from_excel(_io.BytesIO(raw))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=422,
+                                detail=f"Excel を読めません / cannot parse Excel: {exc}") from exc
+
+        # 変換後の YAML を検証する
+        from ..wbs import WbsError, load_wbs as _load
+        import tempfile, os
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
+                                         encoding="utf-8", delete=False) as tmp:
+            tmp.write(yaml_text)
+            tmp_path = tmp.name
+        try:
+            try:
+                wbs_obj, problems = _load(Path(tmp_path))
+            except WbsError as exc:
+                raise HTTPException(status_code=422,
+                                    detail=f"変換後の WBS に誤りがあります / invalid WBS: {exc}") from exc
+        finally:
+            os.unlink(tmp_path)
+
+        errors = [p for p in problems if p.level == "error"]
+        if errors:
+            raise HTTPException(status_code=422, detail={
+                "message": "WBS に誤りがあります / WBS has errors",
+                "errors": [{"node": p.node, "code": p.code, "message": p.message}
+                           for p in errors],
+            })
+
+        # WBS ファイルへ書き込む（上書き前に変更確認はしない ─ インポートは全置換）
+        try:
+            file_path.write_text(yaml_text, encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(status_code=500,
+                                detail=f"ファイルを書けません / cannot write file: {exc}") from exc
+
+        warnings = [p for p in problems if p.level == "warning"]
+        ledger = pmo_ledger
+        if ledger is not None and _ledger_present(ledger):
+            store = _open_store(ledger, sync=False)
+            try:
+                store.side.append(DECISIONS, json.dumps(
+                    {"at": datetime.now(timezone.utc).isoformat(), "kind": "wbs_imported",
+                     "file": str(file_path), "by": role,
+                     "nodes": len(wbs_obj.all_nodes()),
+                     "warnings": len(warnings)}, ensure_ascii=False))
+            finally:
+                _release(store)
+        logger.info("wbs imported by %s from %s (%d nodes, %d warnings)",
+                    role, _client_ip(request), len(wbs_obj.all_nodes()), len(warnings))
+        return {
+            "ok": True,
+            "nodes": len(wbs_obj.all_nodes()),
+            "warnings": len(warnings),
+            "warning_details": [{"node": p.node, "code": p.code, "message": p.message}
+                                 for p in warnings],
+        }
 
     @app.get("/api/pulse", dependencies=[guard])
     def pulse() -> dict[str, Any]:

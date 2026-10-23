@@ -2075,6 +2075,54 @@ function wbsDetail(host) {
   }
 }
 
+/* ---------- WBS ダウンロード / インポート ---------- */
+
+function wbsDownload(path, filename) {
+  const a = document.createElement("a");
+  a.href = path;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function importWbs() {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  input.style.display = "none";
+  document.body.appendChild(input);
+  input.onchange = async () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const result = await fetch("/api/wbs/import", {
+        method: "POST",
+        credentials: "same-origin",
+        body: form,
+      }).then(async (r) => {
+        if (!r.ok) {
+          const body = await r.json().catch(() => ({}));
+          throw new Error(body.detail?.message || body.detail || r.statusText);
+        }
+        return r.json();
+      });
+      const warn = result.warnings > 0
+        ? ` (warning ${result.warnings})`
+        : "";
+      toast(`${t("web_wbs_import_ok", "インポートしました")} — ${result.nodes} nodes${warn}`);
+      await refreshWbs();
+    } catch (err) {
+      toast(String(err.message || err), "error");
+    }
+  };
+  input.click();
+}
+
 function renderWbs() {
   const host = $("wbs-screen");
   const data = wbsState.data;
@@ -2082,7 +2130,31 @@ function renderWbs() {
   if (!data) return;
   const summary = data.summary;
   const head = el("div", "wbs-head");
-  head.append(el("h3", "wbs-name-h", data.wbs.name));
+
+  // WBS 名と右寄せのアクションボタン群
+  const headTop = el("div", "wbs-head-top");
+  headTop.append(el("h3", "wbs-name-h", data.wbs.name));
+  const actions = el("div", "wbs-actions");
+  const btnTemplate = el("button", "btn wbs-action-btn", t("web_wbs_template", "テンプレート"));
+  btnTemplate.type = "button";
+  btnTemplate.title = t("web_wbs_template_tip", "Excel インポート用テンプレートをダウンロード");
+  btnTemplate.onclick = () => wbsDownload("/api/wbs/template", "wbs-template.xlsx");
+  actions.append(btnTemplate);
+  const btnExport = el("button", "btn wbs-action-btn", t("web_wbs_export", "エクスポート"));
+  btnExport.type = "button";
+  btnExport.title = t("web_wbs_export_tip", "現在の WBS を Excel でダウンロード");
+  btnExport.onclick = () => wbsDownload("/api/wbs/export", "wbs.xlsx");
+  actions.append(btnExport);
+  if (data.can_edit) {
+    const btnImport = el("button", "btn wbs-action-btn", t("web_wbs_import", "インポート"));
+    btnImport.type = "button";
+    btnImport.title = t("web_wbs_import_tip", "Excel ファイルから WBS を読み込む（現在の WBS を置き換えます）");
+    btnImport.onclick = importWbs;
+    actions.append(btnImport);
+  }
+  headTop.append(actions);
+  head.append(headTop);
+
   const meter = el("div", "wbs-meter");
   const bar = el("div", "bar");
   const fill = el("div", "bar-fill");

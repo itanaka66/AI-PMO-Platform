@@ -1349,6 +1349,8 @@ def cmd_wbs(args: argparse.Namespace) -> int:
         return cmd_wbs_proposals(args)
     if args.wbs_command == "notify":
         return cmd_wbs_notify(args)
+    if args.wbs_command == "excel":
+        return cmd_wbs_excel(args)
 
     root = Path(args.root).resolve() if args.root else Path.cwd()
     target = (root / args.file).resolve()
@@ -1379,6 +1381,44 @@ def cmd_wbs(args: argparse.Namespace) -> int:
     failed = analysis["error_count"] > 0 or (
         args.wbs_command == "check" and args.strict and analysis["warning_count"] > 0)
     return 1 if failed else 0
+
+
+def cmd_wbs_excel(args: argparse.Namespace) -> int:
+    """WBS を Excel ファイルへ書き出す / export the WBS to an Excel workbook.
+
+    aipmo wbs excel wbs-demo.yaml --root demo --out wbs-demo.xlsx
+    """
+    from datetime import date
+
+    from .wbs import WbsError, analyse, load_wbs
+    from .wbs_excel import export
+
+    root = Path(args.root).resolve() if args.root else Path.cwd()
+    target = (root / args.file).resolve()
+    try:
+        wbs, problems = load_wbs(target)
+    except WbsError as exc:
+        print(f"WBS を読めません / cannot load the WBS: {exc}", file=sys.stderr)
+        return 1
+    try:
+        as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+    except ValueError:
+        print(f"--as-of は YYYY-MM-DD で / bad date: {args.as_of}", file=sys.stderr)
+        return 1
+
+    out = Path(args.out) if args.out else Path(target.stem + ".xlsx")
+    analysis = analyse(wbs, root, as_of, problems)
+    try:
+        export(wbs, out, analysis)
+    except ImportError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    s = analysis["summary"]
+    print(f"書き出しました / exported: {out}  "
+          f"（{s['done']}/{s['leaves']} 件完了、error {analysis['error_count']}、"
+          f"warning {analysis['warning_count']}）")
+    return 0
 
 
 def cmd_wbs_notify(args: argparse.Namespace) -> int:
@@ -2441,6 +2481,13 @@ def main(argv: list[str] | None = None) -> int:
                                   help="warning があっても失敗にする")
         else:
             p_action.add_argument("--json", action="store_true", help="JSON で出力")
+    p_excel = wbs_actions.add_parser(
+        "excel", help="WBS を Excel ファイルへ書き出す（openpyxl が必要）")
+    p_excel.add_argument("file", nargs="?", default="wbs/aipmo.yaml",
+                         help="WBS ファイル（既定 wbs/aipmo.yaml）")
+    p_excel.add_argument("--root", help="証拠のパスの基準（既定はカレントディレクトリ）")
+    p_excel.add_argument("--as-of", help="基準日 YYYY-MM-DD（既定は今日）")
+    p_excel.add_argument("--out", help="出力先 .xlsx（既定は <WBSファイル名>.xlsx）")
     p_notify = wbs_actions.add_parser(
         "notify", help="WBS の更新漏れ・証拠の欠けを PR のコメントにする（--post で書く）")
     p_notify.add_argument("file", nargs="?", default="wbs/aipmo.yaml",
