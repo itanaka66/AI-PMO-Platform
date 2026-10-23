@@ -23,7 +23,7 @@ dependencies = ["pyyaml>=6.0"]
 [project.optional-dependencies]
 cloud = ["openai>=1.30", "anthropic>=0.40"]
 data = ["psycopg[binary]>=3.1", "qdrant-client>=1.9"]
-web = ["fastapi>=0.110", "uvicorn[standard]>=0.29"]
+web = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9"]
 # ベクトルストアはどれか1つを選ぶ想定。qdrant は data に含まれる。
 # Pick exactly one vector store; qdrant already ships with data.
 vector-pgvector = ["psycopg[binary]>=3.1", "pgvector>=0.3"]
