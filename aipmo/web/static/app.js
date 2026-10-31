@@ -1,7 +1,5 @@
-/* AI-PMO — スマホ向け画面の挙動 / mobile interface behaviour.
+/* AI-PMO — mobile interface behaviour.
  *
- * ビルド工程を持たない。自前で立てるサーバーに Node のツールチェーンを
- * 要求したくないので、素の JS のまま置く。
  * No build step: a self-hosted server should not require a Node toolchain.
  */
 
@@ -14,11 +12,11 @@ const t = (key, fallback) => strings[key] || fallback;
 async function api(path, options) {
   const response = await fetch(path, {
     headers: { "content-type": "application/json" },
-    credentials: "same-origin",
+    credentials: "include",
     ...options,
   });
   if (response.status === 401) {
-    location.reload();          // Cookie 失効 → 施錠画面へ / expired, show lock
+    location.reload();          // expired — redirect to lock screen
     throw new Error("unauthorized");
   }
   if (!response.ok) {
@@ -49,12 +47,11 @@ function clock(iso) {
   });
 }
 
-/* ---------- WBS 再計画提案 / WBS replan proposals ----------
- * WBS再計画AIが作った差分は、ここでしか人が見て決められない。
- * diff の中身はテンプレートによって形が異なるため（生の予測値の場合も、
- * AIが考えた再計画差分の場合もある）、スキーマを決め打ちせず整形JSONの
- * まま見せる — 判断するPMが実際に何を承認するかそのまま読めることを
- * 優先する。
+/* ---------- WBS replan proposals ----------
+ * The diff produced by the WBS replan AI can only be reviewed and decided here.
+ * The diff shape varies by template (raw forecast values or AI-generated replan diff),
+ * so it is shown as formatted JSON without a fixed schema — the PM reviewing it
+ * needs to see exactly what they are approving.
  *
  * A proposal's diff is the only place a human sees and decides on what the
  * WBS-replanning AI produced. Its shape varies by template (a raw forecast,
@@ -97,8 +94,6 @@ function proposalCard(item) {
   wbs.textContent = item.wbs_version_from || item.id.slice(0, 8);
   head.append(wbs);
 
-  // A/B の複数案がある場合、どの案かを示す。単一案（option_label 無し）
-  // では何も表示しない -- 従来通りの見た目を保つ。
   // When multiple alternatives exist for the same wbs/tier, this shows
   // which one. A single-option proposal (no option_label) shows nothing,
   // keeping the previous appearance unchanged.
@@ -143,13 +138,13 @@ function proposalCard(item) {
   return card;
 }
 
-/* 承認したらファイルがどう変わるか。開いたときに読む（読むだけ。何も書かない）。
+/* Preview how the file changes on approval. Read on open (read-only, no writes).
  * What approving would do to the file; fetched when opened, read-only. */
 function previewBlock(item) {
   const details = document.createElement("details");
   details.className = "proposal-json proposal-preview";
   const summary = document.createElement("summary");
-  summary.textContent = t("web_preview", "承認したらどうなるか（反映後の差分）");
+  summary.textContent = t("web_preview", "Preview changes on approval (diff after applying)");
   details.append(summary);
   const body = document.createElement("div");
   details.append(body);
@@ -162,10 +157,10 @@ function previewBlock(item) {
       body.replaceChildren();
       if (!p.applicable) {
         body.append(el("div", "card-note error", (p.problems && p.problems.length)
-          ? p.problems.join(" / ") : t("web_preview_none", "この提案はファイルに反映できません")));
+          ? p.problems.join(" / ") : t("web_preview_none", "This proposal cannot be applied to the file")));
         return;
       }
-      if (p.already_applied) body.append(el("div", "card-note", t("web_preview_applied", "すでに反映済みです")));
+      if (p.already_applied) body.append(el("div", "card-note", t("web_preview_applied", "Already applied")));
       for (const line of p.report) body.append(el("div", "pmo-meta", line));
       const pre = document.createElement("pre");
       pre.className = "preview-diff";
@@ -226,7 +221,6 @@ async function decideProposal(id, decision, note, wrap) {
       method: "POST",
       body: JSON.stringify({ note: note || null }),
     });
-    // 反映先の WBS ファイルがあるとき、承認は反映までひと続き。結果を伝える。
     // With a target WBS file, approving also applies; say what happened.
     if (decision === "approve" && result && result.applied === true) {
       toast(t("web_proposal_applied", "Approved and applied to the WBS file."));
@@ -244,7 +238,7 @@ async function decideProposal(id, decision, note, wrap) {
   }
 }
 
-/* ---------- テンプレート / templates ---------- */
+/* ---------- templates ---------- */
 
 function renderTemplates(items) {
   const host = $("templates");
@@ -262,8 +256,6 @@ function renderTemplates(items) {
   for (const item of items) {
     const card = document.createElement("button");
     card.className = "card";
-    // 閲覧のみの相手には押せない見た目にする。ただしこれは案内であって
-    // 権限管理ではない。拒否はサーバー側が行う。
     // Viewers see it as untappable — but this is a courtesy, not access
     // control. The refusal happens on the server.
     card.disabled = !item.valid || !canRun;
@@ -287,7 +279,6 @@ function renderTemplates(items) {
     const note = document.createElement("div");
     if (item.valid) {
       note.className = "card-note";
-      // 工程数は、押す前に規模がわかる唯一の手がかり
       // The step count is the only cue to a template's size before running it.
       note.textContent = item.description
         || `${item.steps.length} steps · ${item.trigger}`;
@@ -304,12 +295,12 @@ function renderTemplates(items) {
   }
 }
 
-/* ---------- 実行中ダイアログ / run-progress dialog -------------------------
+/* ---------- run-progress dialog -------------------------
  *
- * `/api/runs` はすぐ `status: queued` を返すだけで、実際の実行は1本の
- * ワーカーが待ち行列からさばく（LLM を呼ぶ工程が重ならないため）。
- * ここでは `GET /api/runs/{id}` を数百 ms おきに読みに行き、待ち順→
- * 今のステップの順にダイアログへ映す。
+ * `/api/runs` immediately returns `status: queued`; actual execution is
+ * handled by a single worker queue (so LLM steps never overlap).
+ * This polls `GET /api/runs/{id}` every few hundred ms and shows
+ * queue position → current step in the dialog.
  *
  * `/api/runs` only returns `status: queued` right away; the actual run is
  * drained from a single-worker queue (so LLM-calling steps never overlap).
@@ -371,9 +362,6 @@ async function watchRun(runId) {
   if (supportsDialog && !dialog.open) dialog.showModal();
 
   try {
-    // ポーリングは、この実行自体が本人の操作で始まったものなので許される
-    // （常時バックグラウンドで回すものではない）。止まったときに必ず抜ける
-    // よう、何度か失敗したら諦める。
     //
     // Polling here is fine because this run was started by the person
     // watching it (not a standing background loop). Gives up after
@@ -397,7 +385,6 @@ async function watchRun(runId) {
       try {
         renderRunProgressQueue(await api("/api/queue"), runId);
       } catch (error) {
-        // キュー一覧が読めなくても、本来の進捗表示は続ける。
         // A failed queue read never interrupts the run's own progress.
       }
     }
@@ -436,10 +423,11 @@ async function run(item, card, note) {
   }
 }
 
-/* ---------- 実行履歴の時系列 / run timeline (Gantt-style) ------------------
+/* ---------- run timeline (Gantt-style) ------------------
  *
- * 処理済み（成功・失敗）は開始〜終了の帯、処理中は「いま」まで伸びる縞模様の
- * 帯、処理予定（待ち行列）は時刻を持たないので軸の外に番号付きで並べる。
+ * Completed runs (success/failure) are start–end bars, in-progress runs
+ * extend to "now" with a striped bar, and queued runs (no timestamps)
+ * are listed numerically outside the axis.
  *
  * Done (success/failed) runs get a bar from start to finish; the running one
  * gets a striped bar stretching to "now"; queued runs have no timestamp yet,
@@ -466,7 +454,7 @@ function renderRunTimeline(items) {
     if (s < start) start = s;
     if (e > end) end = e;
   }
-  if (end - start < 60000) start = end - 60000;   // 帯が見えなくなるほど短い幅を避ける
+  if (end - start < 60000) start = end - 60000;   // avoid bars too narrow to see
   const span = end - start;
 
   $("run-timeline-axis").replaceChildren(
@@ -497,7 +485,7 @@ function renderRunTimeline(items) {
   upcoming.hidden = queued.length === 0;
 }
 
-/* ---------- 実行履歴 / run history ---------- */
+/* ---------- run history ---------- */
 
 function renderRuns(items) {
   renderRunTimeline(items);
@@ -560,7 +548,6 @@ function runRow(record) {
     summary.setAttribute("aria-expanded", String(!detail.hidden));
   });
 
-  // 失敗した実行は開いた状態で出す。確認したいのはそこなので。
   // Failed runs open by default: that is what the reader came for.
   if (record.status === "failed") {
     detail.hidden = false;
@@ -573,7 +560,6 @@ function stepBar(steps) {
   const bar = document.createElement("div");
   bar.className = "bar";
 
-  // 所要時間に比例させる。ただし短い工程が消えないよう下限を置く。
   // Proportional to duration, with a floor so brief steps stay visible.
   const total = steps.reduce((sum, s) => sum + Math.max(s.duration_ms, 1), 0) || 1;
   for (const step of steps) {
@@ -623,10 +609,10 @@ function empty(message) {
 }
 
 /* ---------- PMO Core ----------
- * 台帳とブリーフィングを読んで見せる。画面から周を回したり通知したりは
- * しない。できる操作は「担当の提案を確定する」だけ（operator のみ。
- * ボタンを隠すのは権限制御ではなく、サーバーが 403 を返す）。
- * 文字列はすべて textContent で入れる — 課題名などは外部由来で信用できない。
+ * Reads the ledger and briefing. Does not trigger cycles or notifications.
+ * The only write action is confirming an assignment proposal (operator only).
+ * Hiding the button is not access control — the server returns 403.
+ * All strings are set via textContent — issue titles etc. come from external sources.
  *
  * Shows the ledger and briefing; it never runs a cycle or notifies. The one
  * action is confirming an assignment proposal (operator only; hiding the
@@ -634,8 +620,8 @@ function empty(message) {
  * through textContent because issue titles come from outside.
  */
 
-let writableTrackers = new Set();   // 担当を書き戻せるトラッカー / trackers we can write to
-let pmoProject = "";          // 選択中のプロジェクト。空は「すべて」 / "" means all
+let writableTrackers = new Set();   // trackers we can write back assignees to
+let pmoProject = "";          // selected project; "" means all
 const STALE_SECONDS = 15 * 60;
 
 function el(tag, className, text) {
@@ -674,8 +660,6 @@ function taskRow(task) {
   if (task.blocked) list.append(el("li", null, "blocked"));
   row.append(list);
 
-  // 役割AIに任せた記録。直近の 1 件だけ（状態と、結果または理由）。
-  // 外部由来の文字列なので textContent で入れる。
   // What a role AI did for this task: the latest run only, with its result or
   // reason. Goes in through textContent, since it is text from outside.
   const last = (task.dispatches || []).slice(-1)[0];
@@ -694,8 +678,6 @@ function taskRow(task) {
   return row;
 }
 
-// そのタスクのトラッカーに書き戻せるか。宛先（トラッカーと識別子）が分かり、
-// そのアダプタが更新できるときだけ。
 // Whether the task's own tracker can be written to: its destination is known
 // and that adapter can update issues.
 function canWriteBack(task) {
@@ -733,8 +715,6 @@ function generatedRow(item) {
   return row;
 }
 
-// 承認したタスクを課題管理ツールに起票する(operator のみ)。起票は外の世界に課題を作る
-// ので、ボタンを押したときだけ。見送ると、この一覧から消える。
 // Filing a task into the tracker (operator only): it creates an issue in the outside
 // world, so only on a click. Skipping removes it from this list.
 function filingRow(item, tracker, canFile) {
@@ -769,8 +749,6 @@ function filingRow(item, tracker, canFile) {
   return row;
 }
 
-// 役割AIの成果を、人が確かめて「認める／差し戻す」(operator のみ)。差し戻しには理由が要る。
-// 外部由来の文字列は textContent で入れる。
 // A human checks a role AI's result: accept, or send back with a reason (operator only).
 function reviewRow(item) {
   const row = el("div", "pmo-proposal");
@@ -841,8 +819,6 @@ function renderPmo(data, decisions) {
   host.replaceChildren();
   const { briefing, tasks } = data;
 
-  // プロジェクトが2つ以上見えるときだけ、絞り込みを出す。閲覧者を1つに
-  // 限定しているなら、選ぶ余地が無いので出さない。
   // The filter appears only when two or more projects are visible; a viewer
   // confined to one has nothing to choose.
   if ((data.projects || []).length > 1) {
@@ -902,9 +878,7 @@ function renderPmo(data, decisions) {
     }
   }
 
-  // PMO Core が警告から起こした対応タスクの提案。承認されるまで仕事ではない。
   // Follow-up tasks the PMO Core proposed from an alert; not work until approved.
-  // PMO Core の自律的な判断: いまの診断と、直近の判断。見るだけ(承認は上の提案から)。
   // The Core's autonomous judgment: current diagnoses and recent decisions, read-only
   // (approving is done from the proposals above).
   const judgment = briefing && briefing.judgment;
@@ -997,7 +971,6 @@ function renderPmo(data, decisions) {
       block.append(el("div", "pmo-meta", `${level}: ${delta > 0 ? "+" : ""}${delta}`));
     }
     if (pace.team) {
-      // 見積りが当たっていないときは、ペースを順位に使っていないことを明記する。
       // When the estimates have not proved accurate, say the pace is not used.
       const used = pace.reliable ? "" : ` · ${t("web_pmo_pace_unused", "not used")}`;
       block.append(el("div", "pmo-meta",
@@ -1021,8 +994,6 @@ function renderPmo(data, decisions) {
 let pmoData = null;
 
 async function refreshPmo() {
-  // PMO のデータが無い構成（台帳が無い・未設定）は 404。エラーではなく
-  // 「使っていない機能」として、見出しごと隠す。
   // A deployment with no PMO data answers 404; that is an unused feature,
   // not an error, so the heading is hidden rather than toasting each refresh.
   try {
@@ -1042,9 +1013,9 @@ async function refreshPmo() {
   }
 }
 
-/* ---------- 今日 / today ----------
- * /api/pmo のブリーフィングと受信箱の件数を、1 画面に組み替える。新しい API も計算も持たない
- * （数えるのは画面で、台帳の判断はサーバーが済ませたもの）。文字は textContent で入れる。
+/* ---------- today ----------
+ * Combines /api/pmo briefing and inbox counts in one view. No new APIs or calculations
+ * (counting is done client-side; ledger decisions are already made by the server). Strings via textContent.
  *
  * One screen recomposed from the briefing /api/pmo already returns plus the inbox count; no new
  * API and no new decision logic.
@@ -1070,7 +1041,7 @@ function renderToday() {
   host.replaceChildren();
   const briefing = pmoData && pmoData.briefing;
   if (!briefing) {
-    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    host.append(empty(t("web_today_none", "No PMO data yet")));
     return;
   }
   const waiting = inboxState.data ? inboxState.data.total : 0;
@@ -1086,16 +1057,16 @@ function renderToday() {
 
   const kpis = el("div", "kpis");
   kpis.append(
-    kpi(t("web_today_active", "進行中"), briefing.active_count),
-    kpi(t("web_today_alerts", "警告"), (briefing.alerts || []).length,
+    kpi(t("web_today_active", "Active"), briefing.active_count),
+    kpi(t("web_today_alerts", "Alerts"), (briefing.alerts || []).length,
         (briefing.alerts || []).length ? "warn" : ""),
-    kpi(t("web_today_waiting", "判断待ち"), waiting, waiting ? "do" : ""),
-    kpi(t("web_today_overloaded", "過負荷"), overloaded, overloaded ? "warn" : ""),
+    kpi(t("web_today_waiting", "Awaiting decision"), waiting, waiting ? "do" : ""),
+    kpi(t("web_today_overloaded", "Overloaded"), overloaded, overloaded ? "warn" : ""),
   );
   host.append(kpis);
 
   if (waiting) {
-    const go = el("button", "btn today-go", `${t("web_today_open_inbox", "受信箱で決める")} (${waiting})`);
+    const go = el("button", "btn today-go", `${t("web_today_open_inbox", "Decide in inbox")} (${waiting})`);
     go.type = "button";
     go.addEventListener("click", () => showTab("inbox"));
     host.append(go);
@@ -1104,7 +1075,7 @@ function renderToday() {
   const cols = el("div", "today-cols");
   const left = el("div"), right = el("div");
 
-  const top = todaySection(t("web_today_top", "まず手を付けるもの"), null);
+  const top = todaySection(t("web_today_top", "Top priorities"), null);
   for (const item of (briefing.top_priorities || []).slice(0, 5)) {
     const row = el("div", "today-task");
     row.append(el("span", "today-score", String(item.score)));
@@ -1122,7 +1093,7 @@ function renderToday() {
 
   const projects = briefing.projects || [];
   if (projects.length) {
-    const block = todaySection(t("web_today_projects", "プロジェクト"), projects.length);
+    const block = todaySection(t("web_today_projects", "Projects"), projects.length);
     for (const p of projects) {
       const row = el("div", "today-project");
       const tag = el("span", "tag level", p.level);
@@ -1136,7 +1107,7 @@ function renderToday() {
 
   const loads = briefing.member_loads || [];
   if (loads.length) {
-    const block = todaySection(t("web_today_load", "メンバーの負荷"), null);
+    const block = todaySection(t("web_today_load", "Member load"), null);
     for (const m of loads) {
       const row = el("div", "today-load");
       const ratio = m.capacity ? m.load / m.capacity : 0;
@@ -1154,9 +1125,9 @@ function renderToday() {
 
   const j = briefing.judgment;
   if (j && j.enabled) {
-    const block = todaySection(t("web_today_judgment", "自律的な判断"), null);
-    const state = j.tripped ? t("web_today_tripped", "遮断器が作動")
-      : j.paused ? t("web_today_paused", "一時停止中") : t("web_today_running", "動作中");
+    const block = todaySection(t("web_today_judgment", "Autonomous judgment"), null);
+    const state = j.tripped ? t("web_today_tripped", "Circuit breaker tripped")
+      : j.paused ? t("web_today_paused", "Paused") : t("web_today_running", "Running");
     const modes = Object.values(j.autonomy || {});
     const autos = modes.filter((m) => m === "auto").length;
     block.append(el("div", "pmo-meta", `${state} · auto ${autos}/${modes.length}`));
@@ -1170,9 +1141,10 @@ function renderToday() {
   host.append(cols);
 }
 
-/* ---------- メンバーと学習 / members & learning ----------
- * /api/learning/members（読むだけ）。上限がなぜ補正されたかを、実績（期限内の割合・平均の遅れ・件数）で見せる。
- * 実績が少ない人は補正しない（係数 ×1.00）ことも、そのまま出す。
+/* ---------- members & learning ----------
+ * /api/learning/members (read-only). Shows why the capacity was adjusted,
+ * using outcomes (on-time rate, average delay, count). Members with too few
+ * outcomes are not adjusted (factor ×1.00) — that is shown as-is.
  *
  * Why each capacity was adjusted, from the track record; members with too few samples are shown uncorrected.
  */
@@ -1182,7 +1154,7 @@ async function refreshMembers() {
   try {
     membersState.data = await api("/api/learning/members");
   } catch (error) {
-    membersState.data = null;                       // 403（範囲を限られた閲覧）や台帳なし
+    membersState.data = null;                       // 403 (scoped viewer) or no ledger
   }
   renderMembers();
 }
@@ -1211,13 +1183,13 @@ function memberCard(m) {
   }
   const facts = [];
   if (m.on_time_rate != null) {
-    facts.push(`${t("web_members_ontime", "期限内")} ${Math.round(m.on_time_rate * 100)}%`);
-    facts.push(`${t("web_members_late", "平均の遅れ")} ${m.avg_late_days} d`);
+    facts.push(`${t("web_members_ontime", "On time")} ${Math.round(m.on_time_rate * 100)}%`);
+    facts.push(`${t("web_members_late", "Avg delay")} ${m.avg_late_days} d`);
   }
-  if (m.pace != null) facts.push(`${t("web_members_pace", "ペース")} ${m.pace} d/pt`);
-  facts.push(`${t("web_members_samples", "実績")} ${m.samples}`);
+  if (m.pace != null) facts.push(`${t("web_members_pace", "Pace")} ${m.pace} d/pt`);
+  facts.push(`${t("web_members_samples", "Outcomes")} ${m.samples}`);
   card.append(el("div", "pmo-meta", facts.join(" · ")));
-  if (m.samples < 5) card.append(el("div", "pmo-meta", t("web_members_few", "実績が少ないので補正していません")));
+  if (m.samples < 5) card.append(el("div", "pmo-meta", t("web_members_few", "Too few outcomes to adjust")));
   return card;
 }
 
@@ -1227,17 +1199,17 @@ function renderMembers() {
   host.replaceChildren();
   const data = membersState.data;
   if (!data) {
-    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    host.append(empty(t("web_today_none", "No PMO data yet")));
     return;
   }
   const grid = el("div", "members-grid");
   for (const m of data.members) grid.append(memberCard(m));
   host.append(grid);
 
-  const side = todaySection(t("web_members_learned", "学習した補正"), null);
+  const side = todaySection(t("web_members_learned", "Learned adjustments"), null);
   const base = data.baseline_late_rate != null ? `${Math.round(data.baseline_late_rate * 100)}%` : "—";
   side.append(el("div", "pmo-meta",
-    `${t("web_members_samples", "実績")} ${data.samples} · ${t("web_members_baseline", "全体の遅れ率")} ${base}`));
+    `${t("web_members_samples", "Outcomes")} ${data.samples} · ${t("web_members_baseline", "Overall delay rate")} ${base}`));
   for (const l of data.labels) {
     side.append(el("div", "pmo-meta", `${l.label}: +${l.bonus}${l.samples ? ` (${l.samples})` : ""}`));
   }
@@ -1246,15 +1218,15 @@ function renderMembers() {
       `${p.priority}: ${p.delta > 0 ? "+" : ""}${p.delta}${p.samples ? ` (${p.samples})` : ""}`));
   }
   side.append(el("div", "pmo-meta", data.pace.reliable
-    ? t("web_members_pace_ok", "見積りは当たっているので、順位に使います")
-    : t("web_members_pace_no", "見積りの当たりが確かめられないので、順位には使いません")));
+    ? t("web_members_pace_ok", "Estimates reliable — used in ranking")
+    : t("web_members_pace_no", "Estimates not reliable — not used in ranking")));
   host.append(side);
 }
 
-/* ---------- 連携 / integrations ----------
- * /api/integrations（読むだけ）。アダプタの疎通・書き戻せるか・収集の直近の結果・WBS ファイルの検査・
- * 起票の設定・メンバーのアカウント。名前からの引き当ては外部への問い合わせなので、ここでは行わない
- * （`aipmo members`）。
+/* ---------- integrations ----------
+ * /api/integrations (read-only). Shows adapter ping, writeback flag, latest collection result,
+ * WBS file check, filing config, and member accounts. Name-based lookup queries external services
+ * so it is not done here — use `aipmo members` instead.
  *
  * State of the integrations, read-only. Name lookups call the tracker and are not done here.
  */
@@ -1291,7 +1263,7 @@ function renderIntegrations() {
   host.replaceChildren();
   const d = integState.data;
   if (!d) {
-    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    host.append(empty(t("web_today_none", "No PMO data yet")));
     return;
   }
   const grid = el("div", "members-grid");
@@ -1300,16 +1272,16 @@ function renderIntegrations() {
     card.dataset.healthy = String(a.healthy);
     const head = el("div", "member-head");
     head.append(el("span", "pmo-title", a.name),
-      el("span", "tag", a.healthy ? t("web_integ_ok", "疎通") : t("web_integ_down", "不通")));
+      el("span", "tag", a.healthy ? t("web_integ_ok", "Connected") : t("web_integ_down", "Unreachable")));
     card.append(head);
     card.append(el("div", "pmo-meta", a.writeback
-      ? t("web_integ_writeback", "担当・起票を書き戻せる") : t("web_integ_readonly", "読むだけ")));
+      ? t("web_integ_writeback", "Can write back assignee and file issues") : t("web_integ_readonly", "Read-only")));
     grid.append(card);
   }
   host.append(grid);
 
   if (canRun) {
-    const run = el("button", "btn", t("web_integ_check", "接続を確かめる"));
+    const run = el("button", "btn", t("web_integ_check", "Check connection"));
     run.type = "button";
     run.id = "integ-check";
     const results = el("div", "integ-results");
@@ -1317,7 +1289,7 @@ function renderIntegrations() {
     results.setAttribute("aria-live", "polite");
     run.addEventListener("click", async () => {
       run.disabled = true;
-      results.replaceChildren(el("div", "pmo-meta", t("web_integ_checking", "確かめています…")));
+      results.replaceChildren(el("div", "pmo-meta", t("web_integ_checking", "Checking…")));
       try {
         const { reports } = await api("/api/integrations/check", { method: "POST", body: "{}" });
         results.replaceChildren(...reports.map(renderProbe));
@@ -1330,9 +1302,9 @@ function renderIntegrations() {
     host.append(run, results);
   }
 
-  const col = todaySection(t("web_integ_collect", "進捗の収集"), null);
+  const col = todaySection(t("web_integ_collect", "Progress collection"), null);
   if (!d.collection) {
-    col.append(el("div", "pmo-meta", t("web_integ_collect_none", "収集は設定されていないか、まだ動いていません")));
+    col.append(el("div", "pmo-meta", t("web_integ_collect_none", "Collection is not configured or has not run yet")));
   } else {
     const c = d.collection;
     col.append(el("div", "pmo-meta", `${clock(c.at)} · ${c.refreshed} refreshed · ${c.failed} failed · ${c.completed} completed`));
@@ -1345,37 +1317,37 @@ function renderIntegrations() {
   }
   host.append(col);
 
-  const wbs = todaySection(t("web_integ_wbs", "WBS ファイルの検査"), null);
+  const wbs = todaySection(t("web_integ_wbs", "WBS file check"), null);
   if (!d.wbs) {
     wbs.append(el("div", "pmo-meta", "—"));
   } else {
     wbs.append(el("div", "pmo-meta", `${clock(d.wbs.checked_at)} · ${d.wbs.file}`));
     wbs.append(d.wbs.error ? el("div", "card-note error", d.wbs.error)
-      : el("div", "pmo-meta", `${t("web_integ_drift", "ずれ")} ${d.wbs.found}`));
+      : el("div", "pmo-meta", `${t("web_integ_drift", "Drift")} ${d.wbs.found}`));
   }
   host.append(wbs);
 
   if (d.filing) {
-    const f = todaySection(t("web_integ_filing", "起票"), d.filing.pending);
+    const f = todaySection(t("web_integ_filing", "Filing"), d.filing.pending);
     f.append(el("div", "pmo-meta",
-      `${d.filing.tracker} · auto: ${d.filing.auto.length ? d.filing.auto.join(", ") : "—"} · ${d.filing.can_file ? t("web_integ_ok", "疎通") : t("web_integ_down", "不通")}`));
+      `${d.filing.tracker} · auto: ${d.filing.auto.length ? d.filing.auto.join(", ") : "—"} · ${d.filing.can_file ? t("web_integ_ok", "Connected") : t("web_integ_down", "Unreachable")}`));
     host.append(f);
   }
 
-  const acc = todaySection(t("web_integ_accounts", "メンバーのアカウント"), d.accounts.length);
+  const acc = todaySection(t("web_integ_accounts", "Member accounts"), d.accounts.length);
   for (const m of d.accounts) {
     const pairs = Object.entries(m.accounts).map(([k, v]) => `${k}: ${v}`);
     acc.append(el("div", "pmo-meta", `${m.member}${m.is_agent ? " (AI)" : ""} — ${pairs.length ? pairs.join(", ") : "—"}`));
   }
   acc.append(el("div", "pmo-meta", d.lookup_assignees
-    ? t("web_integ_lookup_on", "書いていない人は、名前でトラッカーから引き当てます（aipmo members で確認）")
-    : t("web_integ_lookup_off", "名前の引き当ては無効です")));
+    ? t("web_integ_lookup_on", "Members without an explicit account are looked up by name (check with aipmo members)")
+    : t("web_integ_lookup_off", "Name-based lookup is disabled")));
   host.append(acc);
 }
 
-/* ---------- 成果レビュー / reviews ----------
- * 役割AIの成果を人が確かめた履歴（/api/agents/reviews、読むだけ）と、いま待っているもの。
- * 認める／差し戻すは受信箱で行う（書き込みの入口を増やさない）。
+/* ---------- reviews ----------
+ * Review history for role-AI results (/api/agents/reviews, read-only) and currently pending.
+ * Accept/reject is done from the inbox (no new write entry points).
  *
  * Human reviews of role-AI results (read-only history) and what still waits. Deciding happens in the inbox.
  */
@@ -1397,7 +1369,7 @@ function renderReviews() {
   const briefing = pmoData && pmoData.briefing;
   const data = reviewsState.data;
   if (!briefing || !data) {
-    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    host.append(empty(t("web_today_none", "No PMO data yet")));
     return;
   }
   const cards = el("div", "kpis");
@@ -1405,12 +1377,12 @@ function renderReviews() {
     const total = c.accepted + c.rejected;
     cards.append(kpi(agent, total ? `${Math.round((c.accepted / total) * 100)}%` : "—"));
     cards.lastChild.append(el("div", "pmo-meta",
-      `${t("web_review_accepted", "認めた")} ${c.accepted} / ${t("web_review_rejected", "差し戻し")} ${c.rejected}`));
+      `${t("web_review_accepted", "Accepted")} ${c.accepted} / ${t("web_review_rejected", "Rejected")} ${c.rejected}`));
   }
   if (cards.children.length) host.append(cards);
 
   const pending = (briefing.agent_review && briefing.agent_review.pending) || [];
-  const wait = todaySection(t("web_review_pending", "確認待ち"), pending.length);
+  const wait = todaySection(t("web_review_pending", "Awaiting review"), pending.length);
   for (const p of pending) {
     const row = el("div", "today-task");
     const body = el("div", "today-task-body");
@@ -1420,7 +1392,7 @@ function renderReviews() {
     wait.append(row);
   }
   if (pending.length) {
-    const go = el("button", "btn today-go", t("web_today_open_inbox", "受信箱で決める"));
+    const go = el("button", "btn today-go", t("web_today_open_inbox", "Decide in inbox"));
     go.type = "button";
     go.addEventListener("click", () => { inboxState.filter = "review"; showTab("inbox"); renderInbox(); });
     wait.append(go);
@@ -1429,11 +1401,11 @@ function renderReviews() {
   }
   host.append(wait);
 
-  const history = todaySection(t("web_review_history", "確かめた履歴"), data.total);
+  const history = todaySection(t("web_review_history", "Review history"), data.total);
   for (const e of data.items) {
     const row = el("div", "review-row");
     row.dataset.decision = e.decision;
-    const label = e.decision === "accepted" ? t("web_review_accepted", "認めた") : t("web_review_rejected", "差し戻し");
+    const label = e.decision === "accepted" ? t("web_review_accepted", "Accepted") : t("web_review_rejected", "Rejected");
     row.append(el("span", "tag", label), el("span", "pmo-title", e.title || e.task),
       el("div", "pmo-meta", [e.project, e.agent, e.by, clock(e.at)].filter(Boolean).join(" · ")));
     if (e.note) row.append(el("div", "pmo-meta", e.note));
@@ -1443,9 +1415,10 @@ function renderReviews() {
   host.append(history);
 }
 
-/* ---------- 自律的な判断 / judgment ----------
- * 状態・自律度・診断・直近の判断（ブリーフィングから）。operator は、止める／再開／遮断器を戻すだけできる
- * （POST /api/judgment/*）。自律度の変更は設定ファイルのまま — 画面からは変えられない。
+/* ---------- judgment ----------
+ * Status, autonomy levels, diagnoses, and recent judgments (from briefing).
+ * Operators can pause / resume / reset the circuit breaker (POST /api/judgment/*).
+ * Autonomy level changes are not possible from the UI — they stay as configured.
  *
  * State, autonomy, diagnoses and recent actions from the briefing. An operator may pause, resume or reset
  * the breaker; autonomy levels stay in the config file.
@@ -1469,7 +1442,7 @@ async function judgmentControl(action, button) {
   try {
     const result = await api(`/api/judgment/${action}`, { method: "POST", body: "{}" });
     judgmentCtl = result.control || {};
-    toast(t("web_judgment_next_cycle", "依頼しました。常駐が次の周で反映します"));
+    toast(t("web_judgment_next_cycle", "Request sent. The scheduler will apply it next cycle."));
     await refreshPmo();
   } catch (error) {
     toast(error.message, "error");
@@ -1484,22 +1457,20 @@ function renderJudgment() {
   host.replaceChildren();
   const j = pmoData && pmoData.briefing && pmoData.briefing.judgment;
   if (!j || !j.enabled) {
-    host.append(empty(t("web_judgment_off", "自律的な判断は設定されていません")));
+    host.append(empty(t("web_judgment_off", "Autonomous judgment is not configured")));
     return;
   }
-  // 画面の「止める」は依頼。常駐が次の周で読むまで、ブリーフィングの状態は変わらない。
-  // 依頼済みの状態（control）を出して、押したのに何も起きないように見えないようにする。
   // A pause is a request the resident reads next cycle; show the requested state so a press is visible.
   const wantPaused = judgmentCtl.paused === undefined ? j.paused : Boolean(judgmentCtl.paused);
   const head = el("div", "today-head");
-  const state = j.tripped ? t("web_today_tripped", "遮断器が作動")
-    : j.paused ? t("web_today_paused", "一時停止中") : t("web_today_running", "動作中");
+  const state = j.tripped ? t("web_today_tripped", "Circuit breaker tripped")
+    : j.paused ? t("web_today_paused", "Paused") : t("web_today_running", "Running");
   const chip = el("span", "tag level", state);
   chip.dataset.level = j.tripped ? "critical" : j.paused ? "high" : "low";
-  head.append(chip, el("span", "pmo-meta", `${t("web_today_waiting", "判断待ち")} ${j.pending}`));
+  head.append(chip, el("span", "pmo-meta", `${t("web_today_waiting", "Awaiting decision")} ${j.pending}`));
   if (wantPaused !== j.paused) {
-    const note = el("span", "tag", wantPaused ? t("web_judgment_req_pause", "一時停止を依頼済み（次の周で反映）")
-      : t("web_judgment_req_resume", "再開を依頼済み（次の周で反映）"));
+    const note = el("span", "tag", wantPaused ? t("web_judgment_req_pause", "Pause requested (applied next cycle)")
+      : t("web_judgment_req_resume", "Resume requested (applied next cycle)"));
     note.id = "judgment-requested";
     head.append(note);
   }
@@ -1507,9 +1478,9 @@ function renderJudgment() {
 
   if (canRun) {
     const bar = el("div", "judgment-controls");
-    for (const [action, label] of [["pause", t("web_judgment_pause", "一時停止")],
-                                   ["resume", t("web_judgment_resume", "再開")],
-                                   ["reset", t("web_judgment_reset", "遮断器を戻す")]]) {
+    for (const [action, label] of [["pause", t("web_judgment_pause", "Pause")],
+                                   ["resume", t("web_judgment_resume", "Resume")],
+                                   ["reset", t("web_judgment_reset", "Reset circuit breaker")]]) {
       const hidden = (action === "pause" && wantPaused) || (action === "resume" && !wantPaused)
         || (action === "reset" && !j.tripped);
       if (hidden) continue;
@@ -1522,7 +1493,7 @@ function renderJudgment() {
     host.append(bar);
   }
 
-  const levels = todaySection(t("web_judgment_autonomy", "自律度"), null);
+  const levels = todaySection(t("web_judgment_autonomy", "Autonomy levels"), null);
   const rank = { off: 0, propose: 1, auto: 2 };
   for (const [kind, shown] of Object.entries(j.autonomy || {})) {
     const base = (judgmentAuto.config && judgmentAuto.config[kind]) || (j.autonomy_config || {})[kind] || shown;
@@ -1530,8 +1501,8 @@ function renderJudgment() {
     row.append(el("span", "pmo-title", kind));
     const changed = judgmentAuto.override && judgmentAuto.override[kind];
     if (changed) {
-      const mark = el("span", "tag", t("web_auto_changed", "変更済み"));
-      mark.title = t("web_auto_config", "設定ファイルの値: {x}").replace("{x}", base);
+      const mark = el("span", "tag", t("web_auto_changed", "Changed"));
+      mark.title = t("web_auto_config", "Config file value: {x}").replace("{x}", base);
       row.append(mark);
     }
     if (canRun) {
@@ -1551,7 +1522,7 @@ function renderJudgment() {
         select.disabled = true;
         try {
           await api("/api/judgment/autonomy", { method: "POST", body: JSON.stringify({ remedy: kind, level: select.value }) });
-          toast(t("web_judgment_next_cycle", "依頼しました。常駐が次の周で反映します"));
+          toast(t("web_judgment_next_cycle", "Request sent. The scheduler will apply it next cycle."));
           await refreshJudgmentControl();
         } catch (error) {
           toast(error.message, "error");
@@ -1568,10 +1539,10 @@ function renderJudgment() {
     }
     levels.append(row);
   }
-  levels.append(el("div", "pmo-meta", t("web_auto_hint", "自律度は画面から下げる・止めることができます。")));
+  levels.append(el("div", "pmo-meta", t("web_auto_hint", "You can lower or pause autonomy levels from this screen.")));
   host.append(levels);
 
-  const diagnoses = todaySection(t("web_judgment_diagnoses", "いまの診断"), (j.diagnoses || []).length);
+  const diagnoses = todaySection(t("web_judgment_diagnoses", "Current diagnoses"), (j.diagnoses || []).length);
   for (const d of j.diagnoses || []) {
     const row = el("div", "today-task");
     row.append(el("span", "today-score", String(d.severity)));
@@ -1583,7 +1554,7 @@ function renderJudgment() {
   }
   host.append(diagnoses);
 
-  const recent = todaySection(t("web_judgment_recent", "直近の判断"), (j.recent || []).length);
+  const recent = todaySection(t("web_judgment_recent", "Recent judgments"), (j.recent || []).length);
   for (const r of j.recent || []) {
     const row = el("div", "review-row");
     row.append(el("span", "tag", r.state), el("span", "pmo-title", r.title),
@@ -1593,9 +1564,9 @@ function renderJudgment() {
   host.append(recent);
 }
 
-/* ---------- タスク / tasks ----------
- * /api/tasks（読むだけ）の一覧と、/api/tasks/{id} の詳細。点数は項目ごとの内訳（parts）を棒で見せる。
- * 担当の確定・起票などの操作は、受信箱と PMO Core にある（この画面には書き込みが無い）。
+/* ---------- tasks ----------
+ * List and detail from /api/tasks (read-only). Score shown as per-component bars (parts).
+ * Assignment confirmation, filing, etc. are in the inbox and PMO Core — no writes from this screen.
  *
  * The task table (read-only /api/tasks) and a detail pane (/api/tasks/{id}); the score is drawn from its
  * per-item parts. No write happens here — deciding stays in the inbox.
@@ -1637,8 +1608,8 @@ function tasksFilters(data) {
   const search = document.createElement("input");
   search.type = "search";
   search.id = "tasks-q";
-  search.placeholder = t("web_tasks_search", "検索");
-  search.setAttribute("aria-label", t("web_tasks_search", "検索"));
+  search.placeholder = t("web_tasks_search", "Search");
+  search.setAttribute("aria-label", t("web_tasks_search", "Search"));
   search.value = tasksState.query.q;
   let timer = null;
   search.addEventListener("input", () => {
@@ -1658,18 +1629,18 @@ function tasksFilters(data) {
     node.addEventListener("change", () => onChange(node.value));
     return node;
   };
-  const all = t("web_tasks_all", "すべて");
+  const all = t("web_tasks_all", "All");
   wrap.append(
     search,
-    select("tasks-project", t("web_today_projects", "プロジェクト"), tasksState.query.project,
+    select("tasks-project", t("web_today_projects", "Projects"), tasksState.query.project,
       [["", all], ...data.projects.map((p) => [p, p])],
       (v) => { tasksState.query.project = v; refreshTasks(true); }),
-    select("tasks-assignee", t("web_tasks_assignee", "担当"), tasksState.query.assignee,
-      [["", all], ["-", t("web_tasks_unassigned", "担当なし")], ...data.assignees.map((p) => [p, p])],
+    select("tasks-assignee", t("web_tasks_assignee", "Assignee"), tasksState.query.assignee,
+      [["", all], ["-", t("web_tasks_unassigned", "Unassigned")], ...data.assignees.map((p) => [p, p])],
       (v) => { tasksState.query.assignee = v; refreshTasks(true); }),
-    select("tasks-sort", t("web_tasks_sort", "並び"), tasksState.query.sort,
-      [["score", t("web_tasks_sort_score", "点数")], ["due", t("web_tasks_sort_due", "期限")],
-       ["priority", t("web_tasks_sort_priority", "優先度")]],
+    select("tasks-sort", t("web_tasks_sort", "Sort"), tasksState.query.sort,
+      [["score", t("web_tasks_sort_score", "Score")], ["due", t("web_tasks_sort_due", "Due date")],
+       ["priority", t("web_tasks_sort_priority", "Priority")]],
       (v) => { tasksState.query.sort = v; refreshTasks(true); }),
   );
   return wrap;
@@ -1683,7 +1654,7 @@ function tasksRow(item) {
   const score = el("span", "task-score", String(item.score));
   const body = el("span", "task-body");
   body.append(el("span", "pmo-title", item.title),
-    el("span", "pmo-meta", [item.project, item.key, item.assignee || t("web_tasks_unassigned", "担当なし"),
+    el("span", "pmo-meta", [item.project, item.key, item.assignee || t("web_tasks_unassigned", "Unassigned"),
       item.due_date].filter(Boolean).join(" · ")),
     scoreBar(item.parts, item.score));
   row.append(score, body);
@@ -1713,14 +1684,14 @@ function renderTaskDetail(pane) {
   pane.replaceChildren();
   const d = tasksState.detail;
   if (!d) {
-    pane.append(el("p", "lead", t("web_tasks_pick", "タスクを選ぶと、点数の内訳が出ます")));
+    pane.append(el("p", "lead", t("web_tasks_pick", "Select a task to see its score breakdown")));
     return;
   }
   pane.append(el("h3", "wbs-dh", d.title));
   pane.append(el("div", "pmo-meta", [d.project, d.key || d.id, d.status, d.assignee, d.due_date,
     d.priority].filter(Boolean).join(" · ")));
   const parts = el("div", "task-parts");
-  parts.append(el("h4", "wbs-eh", `${t("web_tasks_parts", "点数の内訳")} — ${d.score}`));
+  parts.append(el("h4", "wbs-eh", `${t("web_tasks_parts", "Score breakdown")} — ${d.score}`));
   for (const part of d.parts) {
     const line = el("div", "task-part");
     const seg = el("span", "score-seg");
@@ -1731,7 +1702,7 @@ function renderTaskDetail(pane) {
   pane.append(parts);
   if (d.alerts.length) {
     const block = el("div");
-    block.append(el("h4", "wbs-eh", t("web_today_alerts", "警告")));
+    block.append(el("h4", "wbs-eh", t("web_today_alerts", "Alerts")));
     for (const a of d.alerts) {
       const line = el("div", "wbs-msg", `${a.title} — ${a.message}`);
       line.dataset.level = a.severity === "critical" || a.severity === "high" ? "error" : "warn";
@@ -1741,7 +1712,7 @@ function renderTaskDetail(pane) {
   }
   if (d.dispatches.length) {
     const block = el("div");
-    block.append(el("h4", "wbs-eh", t("web_tasks_runs", "役割AIの実行")));
+    block.append(el("h4", "wbs-eh", t("web_tasks_runs", "Role AI runs")));
     for (const r of d.dispatches.slice(-5)) {
       block.append(el("div", "pmo-meta", `${r.agent || ""} · ${r.status} · ${clock(r.at)}`));
     }
@@ -1749,7 +1720,7 @@ function renderTaskDetail(pane) {
   }
   if (d.history.length) {
     const block = el("div");
-    block.append(el("h4", "wbs-eh", t("web_tasks_history", "判断の履歴")));
+    block.append(el("h4", "wbs-eh", t("web_tasks_history", "Decision history")));
     for (const h of d.history.slice(0, 8)) {
       block.append(el("div", "pmo-meta", `${clock(h.at)} ${h.kind}`));
     }
@@ -1763,7 +1734,7 @@ function renderTasks() {
   const keepSearch = document.activeElement && document.activeElement.id === "tasks-q";
   host.replaceChildren();
   if (!data) {
-    host.append(empty(t("web_today_none", "PMO のデータがまだありません")));
+    host.append(empty(t("web_today_none", "No PMO data yet")));
     return;
   }
   host.append(tasksFilters(data));
@@ -1773,7 +1744,7 @@ function renderTasks() {
   for (const item of data.items) list.append(tasksRow(item));
   if (data.total > data.items.length) {
     const more = el("button", "btn tasks-more",
-      `${t("web_tasks_more", "さらに表示")} (${data.items.length}/${data.total})`);
+      `${t("web_tasks_more", "Show more")} (${data.items.length}/${data.total})`);
     more.type = "button";
     more.addEventListener("click", () => { tasksState.query.limit += 50; refreshTasks(false); });
     list.append(more);
@@ -1802,10 +1773,10 @@ async function refreshTasks(reset) {
 }
 
 /* ---------- WBS ----------
- * /api/wbs（読むだけ）の木を、表と工程バーで見せる。WBS ファイルを変える操作は、この画面には無い
- * （変更の提案は下の「再計画提案」から、人が承認する）。工程バーは日付だけから描く：
- * 終わり = 完了日、無ければ期限。始まり = 依存先の終わりの最も遅い日、無ければ軸の左端。
- * 日付の無い作業にはバーを描かない。文字は textContent で入れる。
+ * Shows the /api/wbs tree as a table and timeline bars (read-only). No writes from this screen
+ * (changes are proposed via the replan section below and approved by a human).
+ * Bar end = completion date or deadline. Bar start = latest end among dependencies or left axis.
+ * Tasks without dates have no bar. Strings are set via textContent.
  *
  * The WBS tree as a table with schedule bars, from the read-only /api/wbs. Bars come from dates alone:
  * end = done_on else due; start = the latest end among dependencies, else the axis start. No dates, no bar.
@@ -1865,8 +1836,8 @@ function wbsBar(node, axis) {
   return cell;
 }
 
-/* 依存の矢印: 依存先の棒の右端から、依存する作業の棒の左端へ。表の上に SVG を重ねる（読むだけ）。
- * 開いている行どうしだけを結ぶ。矢印は日付の無い作業には描かない（棒が無いので）。
+/* Dependency arrows: from the right edge of a prerequisite bar to the left edge of the dependent bar.
+ * SVG overlaid on the table (read-only). Only links expanded rows. No arrow if a task has no bar.
  * Dependency arrows from a dependency's bar end to the dependent's bar start, as an SVG overlay. */
 function drawWbsArrows(table) {
   table.querySelector("svg.wbs-arrows")?.remove();
@@ -1989,7 +1960,7 @@ function wbsEditForm(node) {
     const out = [];
     for (const [name, kind] of EDIT_FIELDS) {
       const input = inputs[name];
-      if (input.value === input.dataset.original || input.value === "") continue;   // 空にする操作はここでは扱わない
+      if (input.value === input.dataset.original || input.value === "") continue;
       out.push({ op: "set", node: node.id, field: name, value: kind === "number" ? Number(input.value) : input.value });
     }
     return out;
@@ -1997,11 +1968,11 @@ function wbsEditForm(node) {
   const send = async (apply) => {
     const list = changes();
     result.replaceChildren();
-    if (!list.length) { result.append(el("div", "pmo-meta", t("web_wbs_nochange", "変更はありません"))); return; }
+    if (!list.length) { result.append(el("div", "pmo-meta", t("web_wbs_nochange", "No changes"))); return; }
     try {
       const r = await api("/api/wbs/edit", { method: "POST", body: JSON.stringify({ changes: list, apply }) });
       if (apply) {
-        toast(t("web_wbs_applied", "WBS ファイルに反映しました"));
+        toast(t("web_wbs_applied", "Applied to the WBS file"));
         await refreshWbs();
         return;
       }
@@ -2016,18 +1987,18 @@ function wbsEditForm(node) {
       apply_.hidden = true;
     }
   };
-  const preview = el("button", "btn", t("web_wbs_preview_btn", "差分を見る"));
+  const preview = el("button", "btn", t("web_wbs_preview_btn", "Preview diff"));
   preview.type = "button";
   preview.addEventListener("click", () => send(false));
-  const apply_ = el("button", "btn btn-approve", t("web_wbs_apply", "WBS ファイルに反映する"));
+  const apply_ = el("button", "btn btn-approve", t("web_wbs_apply", "Apply to WBS file"));
   apply_.type = "button";
   apply_.hidden = true;
   apply_.addEventListener("click", () => send(true));
-  const cancel = el("button", "btn", t("web_wbs_cancel", "やめる"));
+  const cancel = el("button", "btn", t("web_wbs_cancel", "Cancel"));
   cancel.type = "button";
   cancel.addEventListener("click", () => { form.remove(); });
   form.addEventListener("input", () => { apply_.hidden = true; result.replaceChildren(); });
-  form.append(el("div", "pmo-meta", t("web_wbs_edit_hint", "先に差分を確かめてから反映します。")),
+  form.append(el("div", "pmo-meta", t("web_wbs_edit_hint", "Preview the diff before applying.")),
     el("div", "wbs-form-actions"), result);
   form.querySelector(".wbs-form-actions").append(preview, apply_, cancel);
   return form;
@@ -2037,16 +2008,16 @@ function wbsDetail(host) {
   host.replaceChildren();
   const node = wbsState.nodes.get(wbsState.selected);
   if (!node) {
-    host.append(el("p", "lead", t("web_wbs_pick", "作業を選ぶと、証拠と依存が出ます")));
+    host.append(el("p", "lead", t("web_wbs_pick", "Select a task to see its evidence and dependencies")));
     return;
   }
   const messages = (wbsState.data.problems || []).filter((p) => p.node === node.id);
   host.append(el("h3", "wbs-dh", `${node.id} ${node.name}`));
-  const facts = [node.owner, node.priority, node.due && `${t("web_wbs_deadline", "期限")} ${node.due}`,
+  const facts = [node.owner, node.priority, node.due && `${t("web_wbs_deadline", "Deadline")} ${node.due}`,
     node.done_on && `done ${node.done_on}`, node.effort != null && `${node.effort} pt`].filter(Boolean);
   if (facts.length) host.append(el("div", "pmo-meta", facts.join(" · ")));
   if (node.depends_on && node.depends_on.length) {
-    host.append(el("div", "pmo-meta", `${t("web_wbs_depends", "依存")}: ${node.depends_on.join(", ")}`));
+    host.append(el("div", "pmo-meta", `${t("web_wbs_depends", "Depends on")}: ${node.depends_on.join(", ")}`));
   }
   for (const p of messages) {
     const note = el("div", "wbs-msg", p.message);
@@ -2055,7 +2026,7 @@ function wbsDetail(host) {
   }
   if (node.leaf) {
     const block = el("div", "wbs-evidence");
-    block.append(el("h4", "wbs-eh", t("web_wbs_evidence", "証拠")));
+    block.append(el("h4", "wbs-eh", t("web_wbs_evidence", "Evidence")));
     if (!node.evidence.length) block.append(el("div", "pmo-meta", "—"));
     for (const ev of node.evidence) {
       const line = el("div", "wbs-ev");
@@ -2068,14 +2039,14 @@ function wbsDetail(host) {
   }
   if (node.notes) host.append(el("p", "pmo-meta", node.notes));
   if (node.leaf && wbsState.data.can_edit) {
-    const edit = el("button", "btn wbs-edit-btn", t("web_wbs_edit", "編集"));
+    const edit = el("button", "btn wbs-edit-btn", t("web_wbs_edit", "Edit"));
     edit.type = "button";
     edit.addEventListener("click", () => { edit.replaceWith(wbsEditForm(node)); });
     host.append(edit);
   }
 }
 
-/* ---------- WBS ダウンロード / インポート ---------- */
+/* ---------- WBS download / import ---------- */
 
 function wbsDownload(path, filename) {
   const a = document.createElement("a");
@@ -2102,7 +2073,7 @@ async function importWbs() {
     try {
       const result = await fetch("/api/wbs/import", {
         method: "POST",
-        credentials: "same-origin",
+        credentials: "include",
         body: form,
       }).then(async (r) => {
         if (!r.ok) {
@@ -2114,7 +2085,7 @@ async function importWbs() {
       const warn = result.warnings > 0
         ? ` (warning ${result.warnings})`
         : "";
-      toast(`${t("web_wbs_import_ok", "インポートしました")} — ${result.nodes} nodes${warn}`);
+      toast(`${t("web_wbs_import_ok", "Import successful")} — ${result.nodes} nodes${warn}`);
       await refreshWbs();
     } catch (err) {
       toast(String(err.message || err), "error");
@@ -2138,11 +2109,11 @@ function renderWbs() {
   fill.style.width = `${summary.percent_by_effort}%`;
   bar.append(fill);
   meter.append(bar, el("span", "wbs-pct", `${summary.percent_by_effort}%`));
-  head.append(el("div", "pmo-meta", t("web_wbs_progress", "進捗（見積りの重み）")), meter);
+  head.append(el("div", "pmo-meta", t("web_wbs_progress", "Progress (estimate weight)")), meter);
   const facts = [
     `${summary.done}/${summary.leaves} done`, `${summary.in_progress} doing`, `${summary.blocked} blocked`,
-    data.wbs.deadline && `${t("web_wbs_deadline", "期限")} ${data.wbs.deadline}`,
-    data.velocity.per_day != null && `${t("web_wbs_velocity", "速度")} ${data.velocity.per_day}/d`,
+    data.wbs.deadline && `${t("web_wbs_deadline", "Deadline")} ${data.wbs.deadline}`,
+    data.velocity.per_day != null && `${t("web_wbs_velocity", "Velocity")} ${data.velocity.per_day}/d`,
   ].filter(Boolean);
   head.append(el("div", "pmo-meta", facts.join(" · ")));
   if (data.forecast) {
@@ -2151,26 +2122,25 @@ function renderWbs() {
     head.append(el("div", "pmo-meta", `${f.projected_finish || f.finish_date || ""} ${drift}`.trim()));
   } else if (data.error_count) {
     head.append(el("div", "card-note error",
-      t("web_wbs_forecast_off", "予測は出せません（先に誤りを直してください）")));
+      t("web_wbs_forecast_off", "Forecast unavailable (fix errors first)")));
   }
   host.append(head);
 
-  // WBS テーブル上部のアクションバー（インポート / エクスポート / テンプレート）
   const pageBar = el("div", "wbs-page-bar");
-  const btnTemplate = el("button", "btn wbs-action-btn", t("web_wbs_template", "テンプレート"));
+  const btnTemplate = el("button", "btn wbs-action-btn", t("web_wbs_template", "Template"));
   btnTemplate.type = "button";
-  btnTemplate.title = t("web_wbs_template_tip", "Excel インポート用テンプレートをダウンロード");
+  btnTemplate.title = t("web_wbs_template_tip", "Download blank Excel template for import");
   btnTemplate.onclick = () => wbsDownload("/api/wbs/template", "wbs-template.xlsx");
   pageBar.append(btnTemplate);
-  const btnExport = el("button", "btn wbs-action-btn", t("web_wbs_export", "エクスポート"));
+  const btnExport = el("button", "btn wbs-action-btn", t("web_wbs_export", "Export"));
   btnExport.type = "button";
-  btnExport.title = t("web_wbs_export_tip", "現在の WBS を Excel でダウンロード");
+  btnExport.title = t("web_wbs_export_tip", "Download current WBS as Excel");
   btnExport.onclick = () => wbsDownload("/api/wbs/export", "wbs.xlsx");
   pageBar.append(btnExport);
   if (data.can_edit) {
-    const btnImport = el("button", "btn wbs-action-btn", t("web_wbs_import", "インポート"));
+    const btnImport = el("button", "btn wbs-action-btn", t("web_wbs_import", "Import"));
     btnImport.type = "button";
-    btnImport.title = t("web_wbs_import_tip", "Excel ファイルから WBS を読み込む（現在の WBS を置き換えます）");
+    btnImport.title = t("web_wbs_import_tip", "Load WBS from an Excel file (replaces the current WBS)");
     btnImport.onclick = importWbs;
     pageBar.append(btnImport);
   }
@@ -2185,7 +2155,6 @@ function renderWbs() {
   wbsDetail(side);
   grid.append(table, side);
   host.append(grid);
-  // 配置が落ち着いてから描く（フォント・スクロールバーで幅が変わる）。大きさが変わるたびに描き直す。
   requestAnimationFrame(() => drawWbsArrows(table));
   if (typeof ResizeObserver !== "undefined") {
     let last = 0;
@@ -2197,14 +2166,14 @@ function renderWbs() {
 
   const lower = el("div", "wbs-lower");
   if (data.ready && data.ready.length) {
-    const block = todaySection(t("web_wbs_ready", "次に着手できる"), data.ready.length);
+    const block = todaySection(t("web_wbs_ready", "Ready to start"), data.ready.length);
     for (const r of data.ready.slice(0, 6)) {
       block.append(el("div", "pmo-meta", `${r.id} ${r.name}${r.effort != null ? ` · ${r.effort} pt` : ""}`));
     }
     lower.append(block);
   }
   if (data.problems && data.problems.length) {
-    const block = todaySection(t("web_wbs_problems", "ずれ・注意"), data.problems.length);
+    const block = todaySection(t("web_wbs_problems", "Drift & warnings"), data.problems.length);
     for (const p of data.problems) {
       const line = el("div", "wbs-msg", `${p.node || ""} ${p.message}`.trim());
       line.dataset.level = p.level;
@@ -2223,26 +2192,26 @@ async function refreshWbs() {
     if (!wbsState.nodes.has(wbsState.selected)) wbsState.selected = null;
     renderWbs();
     return true;
-  } catch (error) {                       // 設定が無い(404)・権限が無い(403)は「使わない画面」
+  } catch (error) {                       // 404 (not configured) or 403 (no permission) means unused feature
     wbsState.data = null;
     $("wbs-screen").replaceChildren();
     return false;
   }
 }
 
-/* ---------- 受信箱 / inbox ----------
- * 人の判断を待っているもの（判断・提案・担当・成果のレビュー・起票・再計画案）を、種類をまたいで
- * 1 つの一覧に集める。一覧は /api/inbox（読むだけ）。決める操作は、各項目の actions が指す
- * 既存の API を、そのまま呼ぶ — 書き込みの入口は増やさない。文字は外から来るので textContent で入れる。
+/* ---------- inbox ----------
+ * Aggregates all items awaiting a human decision (judgments, proposals, assignments,
+ * reviews, filing, replan) across types. List is from /api/inbox (read-only).
+ * Actions call the existing APIs each item points to — no new write entry points.
+ * Strings come from external sources so they are set via textContent.
  *
  * The inbox gathers everything waiting for a human decision. The list comes from /api/inbox (read-only);
  * deciding calls the existing endpoint each item's `actions` names, so no new write path exists.
  */
 const KIND_FALLBACK = {
-  judgment: "判断", followup: "対応", wbs: "WBS", assignment: "担当",
-  review: "成果", filing: "起票", replan: "再計画",
+  judgment: "Judgment", followup: "Followup", wbs: "WBS", assignment: "Assignment",
+  review: "Review", filing: "Filing", replan: "Replan",
 };
-// スマホの下タブには主な 4 つだけを並べ、残りは「その他」にまとめる（広い画面は全部を並べる）。
 const PRIMARY_TABS = ["today", "inbox", "tasks", "wbs"];
 const TAB_ORDER = ["today", "inbox", "tasks", "wbs", "reviews", "judgment", "members", "integrations", "tools"];
 const SECONDARY_TABS = TAB_ORDER.filter((n) => !PRIMARY_TABS.includes(n));
@@ -2253,10 +2222,10 @@ const kindLabel = (kind) => t(`web_inbox_kind_${kind}`, KIND_FALLBACK[kind] || k
 
 function ageLabel(seconds) {
   const days = Math.floor(seconds / 86400);
-  if (days >= 1) return t("web_inbox_days_ago", "{n} 日前").replace("{n}", String(days));
+  if (days >= 1) return t("web_inbox_days_ago", "{n} days ago").replace("{n}", String(days));
   const hours = Math.floor(seconds / 3600);
-  if (hours >= 1) return t("web_inbox_hours_ago", "{n} 時間前").replace("{n}", String(hours));
-  return t("web_inbox_just_now", "いま");
+  if (hours >= 1) return t("web_inbox_hours_ago", "{n} hours ago").replace("{n}", String(hours));
+  return t("web_inbox_just_now", "just now");
 }
 
 function showTab(name) {
@@ -2269,7 +2238,7 @@ function showTab(name) {
     button.setAttribute("aria-pressed", String(button.dataset.target === name));
   }
   const more = document.getElementById("tabs-more-button");
-  if (more) {                                   // 「その他」の中の画面を見ているときは、「その他」を選択中にする
+  if (more) {                                   // when viewing a "more" screen, mark "more" as selected
     more.setAttribute("aria-pressed", String(SECONDARY_TABS.includes(name)));
     more.setAttribute("aria-expanded", "false");
   }
@@ -2281,14 +2250,14 @@ function showTab(name) {
 function setupTabs(enabled) {
   tabsEnabled = enabled;
   const nav = $("tabs");
-  if (!enabled) {                       // 受信箱が使えない構成は、従来どおり全部を並べる
+  if (!enabled) {                       // when inbox is not available, show all tabs as before
     nav.hidden = true;
     return;
   }
   const labels = {
-    today: t("web_today", "今日"), inbox: t("web_inbox", "受信箱"), tasks: t("web_tasks", "タスク"), reviews: t("web_reviews", "成果"),
-    judgment: t("web_judgment", "判断"), members: t("web_members", "メンバー"),
-    integrations: t("web_integrations", "連携"), tools: t("web_tools", "ツール"),
+    today: t("web_today", "Today"), inbox: t("web_inbox", "Inbox"), tasks: t("web_tasks", "Tasks"), reviews: t("web_reviews", "Reviews"),
+    judgment: t("web_judgment", "Judgment"), members: t("web_members", "Members"),
+    integrations: t("web_integrations", "Integrations"), tools: t("web_tools", "Tools"),
     wbs: wbsState.data ? "WBS" : t("web_proposals", "WBS Proposals"),
   };
   nav.replaceChildren();
@@ -2311,8 +2280,7 @@ function setupTabs(enabled) {
     if (PRIMARY_TABS.includes(name)) nav.append(makeButton(name));
     else sheet.append(makeButton(name));
   }
-  // 「その他」: 狭い画面だけに出る。押すと残りの画面の一覧が開く。
-  const more = el("button", "tabs-more", t("web_tabs_more", "その他"));
+  const more = el("button", "tabs-more", t("web_tabs_more", "More"));
   more.type = "button";
   more.id = "tabs-more-button";
   more.setAttribute("aria-controls", "tabs-sheet");
@@ -2359,8 +2327,8 @@ function renderInbox() {
   updateInboxCount();
   if (!data || !data.total) {
     const box = el("div", "inbox-empty");
-    box.append(el("strong", null, t("web_inbox_empty", "判断を待つものはありません")),
-      el("span", null, t("web_inbox_empty_hint", "新しい提案や警告が出ると、ここに集まります")));
+    box.append(el("strong", null, t("web_inbox_empty", "Nothing awaiting a decision")),
+      el("span", null, t("web_inbox_empty_hint", "New proposals and alerts will appear here")));
     host.append(box);
     return;
   }
@@ -2373,8 +2341,8 @@ function renderInbox() {
   const left = el("div");
   const filters = el("div", "inbox-filters");
   filters.setAttribute("role", "group");
-  filters.setAttribute("aria-label", t("web_inbox_filter", "種類"));
-  const choices = [["all", t("web_inbox_all", "すべて"), data.total]]
+  filters.setAttribute("aria-label", t("web_inbox_filter", "Type"));
+  const choices = [["all", t("web_inbox_all", "All"), data.total]]
     .concat(Object.entries(data.by_kind).filter(([, n]) => n > 0)
       .map(([kind, n]) => [kind, kindLabel(kind), n]));
   for (const [kind, label, n] of choices) {
@@ -2437,7 +2405,7 @@ function renderInboxDetail() {
   pane.replaceChildren();
   const item = (inboxState.data ? inboxState.data.items : []).find((i) => i.id === inboxState.selected);
   if (!item) {
-    pane.append(el("div", "inbox-empty", t("web_inbox_select", "項目を選ぶと、理由と操作が出ます")));
+    pane.append(el("div", "inbox-empty", t("web_inbox_select", "Select an item to see its details and actions")));
     return;
   }
   const chip = el("span", "kind-chip", kindLabel(item.kind));
@@ -2455,13 +2423,13 @@ function renderInboxDetail() {
 
   const canAct = inboxState.data.can_act && item.actions.length;
   if (!canAct) {
-    pane.append(el("p", "lead", t("web_inbox_viewer", "閲覧用のトークンでは、決められません")));
+    pane.append(el("p", "lead", t("web_inbox_viewer", "The viewer token cannot make decisions")));
     return;
   }
   let note = null;
   if (item.actions.some((a) => a.needs_note)) {
     const wrap = el("div", "inbox-note");
-    const label = el("label", null, t("web_inbox_note", "理由（差し戻すときは必須）"));
+    const label = el("label", null, t("web_inbox_note", "Note (required when rejecting)"));
     note = el("textarea");
     note.id = "inbox-note";
     label.htmlFor = "inbox-note";
@@ -2481,7 +2449,7 @@ function renderInboxDetail() {
 async function runInboxAction(item, action, note, bar) {
   const text = note ? note.value.trim() : "";
   if (action.needs_note && !text) {
-    toast(t("web_inbox_need_note", "理由を書いてください"), "error");
+    toast(t("web_inbox_need_note", "Please enter a note"), "error");
     if (note) note.focus();
     return;
   }
@@ -2493,7 +2461,7 @@ async function runInboxAction(item, action, note, bar) {
   const at = visible.indexOf(item.id);
   try {
     await api(action.path, { method: action.method, body: JSON.stringify(body) });
-    toast(t("web_inbox_done", "決めました"));
+    toast(t("web_inbox_done", "Decision recorded"));
     inboxState.selected = visible[at + 1] || visible[at - 1] || null;
     await refreshInbox();
     refreshPmo().catch(() => {});
@@ -2514,7 +2482,7 @@ async function refreshInbox() {
   }
 }
 
-/* ---------- 起動 / boot ---------- */
+/* ---------- boot ---------- */
 
 async function refreshRuns() {
   const { items } = await api("/api/runs");
@@ -2523,8 +2491,6 @@ async function refreshRuns() {
 }
 
 async function refreshQueueStatus() {
-  // 画面を開く／戻るたびに1回だけ読む。常時のポーリングはしない
-  // （電池を使うので、既存の画面更新と同じ考え方に合わせる）。
   //
   // Read once per visit to the screen, same as the rest of this file's
   // refreshes — no standing poll, to keep with the no-battery-drain rule
@@ -2541,7 +2507,7 @@ async function refreshQueueStatus() {
       parts.push(t("web_queue_waiting", "Waiting: {n}")
         .replace("{n}", String(status.waiting.length)));
     }
-    host.textContent = parts.join(" ・ ");
+    host.textContent = parts.join(" · ");
     host.hidden = parts.length === 0;
   } catch (error) {
     host.hidden = true;
@@ -2549,9 +2515,6 @@ async function refreshQueueStatus() {
 }
 
 async function refreshProposals() {
-  // postgres アダプタが未設定の構成もある（承認フローを使わないテナント）。
-  // その場合は 503 が返るので、エラーではなく「何も無い」として扱う —
-  // 使っていない機能のために毎回トーストでエラーを出すのは邪魔になる。
   //
   // Some deployments run without the postgres adapter (no approval
   // workflow in use), which returns 503. That is treated as "nothing to
@@ -2567,12 +2530,12 @@ async function refreshProposals() {
   }
 }
 
-/* ---------- ナレッジ公開候補のレビュー / knowledge candidate review -------
+/* ---------- knowledge candidate review -------
  *
- * generalize_knowledge のようなテンプレートが vector_store.submit_candidate
- * で私有コレクションに置いた、公開コレクションへの昇格待ちの候補。
- * 承認・却下・内容の修正はここでだけ行える（テンプレートからは呼べない
- * アダプタのメソッドを、この画面と CLI の aipmo knowledge だけが呼ぶ）。
+ * Candidates placed in the private collection by `vector_store.submit_candidate`
+ * (generalize_knowledge and similar templates) awaiting promotion to the public collection.
+ * Approving, rejecting, and editing can only be done here (the adapter methods are not
+ * callable from templates; only this UI and `aipmo knowledge` call them).
  *
  * Candidates a template like generalize_knowledge placed in the private
  * collection via vector_store.submit_candidate, awaiting promotion. Only
@@ -2625,8 +2588,8 @@ function knowledgeCard(item) {
   return card;
 }
 
-/* 判断の参考情報：似た過去の候補で、人は／LLM はどう判断したか（WBS 6.40）。
- * いま判断しようとしている人のために、カードを開いたときに読み込む。
+/* Reference information for a decision: how similar past candidates were decided by humans and the LLM.
+ * Loaded when a card is opened, for the person about to make a decision.
  *
  * Reference stats for the person about to decide: how similar past
  * candidates were decided, by a human and by an LLM verdict when recorded.
@@ -2729,8 +2692,6 @@ async function decideKnowledgeCandidate(id, decision, note, wrap) {
 }
 
 async function refreshKnowledge() {
-  // ベクトルストアが未設定の構成もある（この機能を使わないテナント）。
-  // その場合は 503 が返るので、エラーではなく「何も無い」として扱う。
   //
   // Some deployments have no vector store configured (not using this
   // feature). That returns 503, treated as "nothing to show" rather than
@@ -2745,12 +2706,12 @@ async function refreshKnowledge() {
   }
 }
 
-/* ---------- 自己学習サイクルの「RAG を信用する」設定 / trust-RAG toggle ----
+/* ---------- trust-RAG toggle ----
  *
- * self_learning_cycle が提出した候補だけを対象にした、オプトインの自動承認
- * （aipmo/self_learning.py）。既定は無効。台帳が無い構成では 404 が返るので、
- * その場合はチェックボックス自体を出さない。operator だけが切り替えられる
- * （viewer には readonly で見せる）。
+ * Opt-in auto-approval for candidates submitted by self_learning_cycle only
+ * (aipmo/self_learning.py). Disabled by default. Returns 404 when there is no ledger,
+ * so the checkbox is hidden entirely in that case. Only operators can toggle it
+ * (viewers see it read-only).
  *
  * Opt-in auto-approval (aipmo/self_learning.py) for candidates from
  * self_learning_cycle specifically. Off by default; hidden entirely when
@@ -2784,7 +2745,7 @@ async function setLearningTrustRag(enabled) {
       ? t("web_learning_enabled", "Enabled: future candidates from self_learning_cycle are auto-approved.")
       : t("web_learning_disabled", "Disabled: future candidates await a human again."));
   } catch (error) {
-    box.checked = !enabled;         // 反映できなかったので元に戻す / revert on failure
+    box.checked = !enabled;         // revert on failure
     toast(error.message, "error");
   } finally {
     box.disabled = !canRun;
@@ -2827,7 +2788,6 @@ async function boot() {
       setLearningTrustRag(event.target.checked);
     });
     await refreshWbs();
-    // 受信箱が使える構成（PMO Core の台帳がある）なら、タブで切り替える。無ければ従来どおり。
     // With a PMO ledger the sections become tabs and the inbox leads; otherwise nothing changes.
     setupTabs(await refreshInbox());
     if (tabsEnabled) { refreshTasks(true); refreshReviews(); refreshJudgmentControl(); refreshMembers(); refreshIntegrations(); }
@@ -2839,7 +2799,6 @@ async function boot() {
 
 boot();
 
-// 戻るボタンやリンクでハッシュが変わったら、その画面を出す。
 // Show the screen the hash names when it changes (back button, links).
 const followHash = () => {
   const wanted = location.hash.slice(1);
@@ -2848,7 +2807,6 @@ const followHash = () => {
 window.addEventListener("hashchange", followHash);
 window.addEventListener("popstate", followHash);
 
-// 画面に戻ったときだけ更新する。定期ポーリングは電池を消費するので避ける。
 // Refresh on return to the screen; polling on a timer would drain the battery.
 function refreshEverything() {
   refreshRuns().catch(() => {});
@@ -2871,8 +2829,8 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-/* 自動更新: 見えている間だけ、安い目印（/api/pulse）を 30 秒ごとに見て、変わったときだけ全体を読み直す。
- * 隠れているタブでは動かさない（電池）。入力中・編集中の画面は壊さない。
+/* Auto-refresh: while visible, poll /api/pulse every 30 s and re-read on change.
+ * Does not run in hidden tabs (battery). Does not interrupt screens with active input/edits.
  * Visible-tab only: poll a cheap marker every 30 s and reload everything only when it changed. */
 const PULSE_SECONDS = 30;
 let pulseMark = null;
@@ -2891,18 +2849,17 @@ async function checkPulse() {
     if (pulseMark !== null && mark !== pulseMark && !editingNow()) refreshEverything();
     pulseMark = mark;
   } catch (error) {
-    /* 一時的な失敗は黙って次回に */
   }
 }
 
 setInterval(checkPulse, PULSE_SECONDS * 1000);
 
-/* ---------- 操作が無いときの自動ログアウト / idle auto-logout --------------
+/* ---------- idle auto-logout --------------
  *
- * マウス・キーボード・タッチの操作が IDLE_LOGOUT_MS の間ずっと無ければ、
- * ログアウトしてロック画面に戻す。アクセスキーの Cookie（aipmo_token）は
- * httponly なので JS からは消せず、サーバーの /api/logout を呼んで消して
- * もらう——消えた状態で再読み込みすれば、サーバーが 401 でロック画面を返す。
+ * If there is no mouse/keyboard/touch input for IDLE_LOGOUT_MS, log out and
+ * return to the lock screen. The access-key cookie (aipmo_token) is httponly
+ * and cannot be cleared from JS, so /api/logout is called to clear it —
+ * reloading after that makes the server return 401 and show the lock screen.
  *
  * Logs out and returns to the lock screen after IDLE_LOGOUT_MS with no
  * mouse/keyboard/touch activity at all. The access-key cookie is httponly
@@ -2914,9 +2871,8 @@ let idleTimer;
 
 async function idleLogout() {
   try {
-    await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+    await fetch("/api/logout", { method: "POST", credentials: "include" });
   } catch (error) {
-    /* オフラインでも、とにかく再読み込みしてロック画面に委ねる */
   }
   location.reload();
 }
@@ -2925,6 +2881,17 @@ function resetIdleTimer() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(idleLogout, IDLE_LOGOUT_MS);
 }
+
+async function manualLogout() {
+  try {
+    await fetch("/api/logout", { method: "POST", credentials: "include" });
+  } catch (error) {
+  }
+  // Navigate to / with no token in the URL so the lock screen is shown cleanly.
+  location.href = "/";
+}
+
+document.getElementById("logout-btn").addEventListener("click", manualLogout);
 
 ["mousemove", "mousedown", "keydown", "touchstart", "scroll"].forEach((type) => {
   document.addEventListener(type, resetIdleTimer, { passive: true });
