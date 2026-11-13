@@ -454,7 +454,7 @@ def attach_task_engine(engine: Engine, config: dict[str, Any], base: Path,
         section, enabled = {}, default
     if not enabled:
         return None
-    task_engine = open_ledger(config, base, stale_days=int(section.get("stale_days", 30)))
+    task_engine = open_ledger(config, base, stale_days=int(section.get("stale_days", 90)))
     task_engine.attach(engine)
     return build_pmo_core(config, task_engine, engine, base if launch else None, base=base)
 
