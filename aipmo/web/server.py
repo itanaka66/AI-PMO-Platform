@@ -71,7 +71,7 @@ from typing import Any
 # Hence these imports live at module level.
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from ..adapters.base import AdapterError
@@ -1161,7 +1161,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="WBS is not configured")
         file_path, root = wbs_view
         try:
-            from ..wbs_excel import merge_import, _XLSX_MIME
+            from ..wbs_excel import merge_import
         except ImportError as exc:
             raise HTTPException(status_code=501, detail=str(exc)) from exc
 
@@ -1184,7 +1184,8 @@ def create_app(
 
         # 変換後の YAML を検証する
         from ..wbs import WbsError, load_wbs as _load
-        import tempfile, os
+        import tempfile
+        import os
         with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml",
                                          encoding="utf-8", delete=False) as tmp:
             tmp.write(yaml_text)

@@ -10,7 +10,6 @@ Requirements openpyxl (the `excel` extra or `pip install openpyxl`).
 from __future__ import annotations
 
 import io
-from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Union
 
