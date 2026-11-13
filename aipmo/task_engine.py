@@ -481,7 +481,7 @@ class TaskEngine:
         self,
         path: Path,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
-        stale_days: int = 30,
+        stale_days: int = 90,
         tenant: str | None = None,
         store: LedgerStore | None = None,
         side_storage: str = "auto",

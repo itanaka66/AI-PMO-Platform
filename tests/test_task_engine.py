@@ -80,7 +80,7 @@ def test_ledger_survives_restart_and_stale_tasks_drop(tmp_path):
     te.ingest("a", "r", [cand(key="P-1", title="x")])
     again = make(tmp_path)
     assert "JIRA:P-1" in again.tasks
-    later = make(tmp_path, now=NOW + timedelta(days=40))
+    later = make(tmp_path, now=NOW + timedelta(days=100))
     later.refresh()
     assert later.tasks == {}
 
